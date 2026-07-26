@@ -1,0 +1,23 @@
+# Keep build contexts small and reproducible.
+**/node_modules
+**/dist
+**/build
+**/.next
+**/out
+**/coverage
+**/__pycache__
+**/.venv
+**/venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+**/*.tsbuildinfo
+**/.eslintcache
+.vscode
+.idea

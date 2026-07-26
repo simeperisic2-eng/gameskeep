@@ -1,0 +1,46 @@
+{
+  "name": "gameskeep",
+  "version": "0.0.0",
+  "private": true,
+  "description": "GamesKeep — premium gaming platform (news + bias analysis + ratings). Monorepo root.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "demo": "docker compose up --build",
+    "demo:up": "docker compose up --build -d",
+    "demo:down": "docker compose down",
+    "demo:reset": "docker compose down -v",
+    "demo:logs": "docker compose logs -f",
+    "health": "node scripts/health-check.mjs",
+    "verify:i1": "node scripts/i1-check.mjs",
+    "verify:i2": "node scripts/i2-check.mjs",
+    "verify:i3": "node scripts/i3-check.mjs",
+    "verify:i4a": "node scripts/i4a-check.mjs",
+    "verify:i4b": "node scripts/i4b-check.mjs",
+    "verify:i5a": "node scripts/i5a-check.mjs",
+    "verify:i5b": "node scripts/i5b-check.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.9.3",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "^4.1.8"
+  }
+}

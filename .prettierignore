@@ -1,0 +1,20 @@
+node_modules
+dist
+build
+.next
+out
+coverage
+**/*.tsbuildinfo
+**/next-env.d.ts
+package-lock.json
+services/ai
+
+# Hand-written docs — preserve the author's formatting (tables, spacing).
+*.md
+**/*.md
+
+# Next.js rewrites this file's formatting on every build; don't fight it.
+apps/frontend/tsconfig.json
+
+# Drizzle-generated migrations + metadata (don't reformat generated SQL/JSON).
+apps/backend/drizzle

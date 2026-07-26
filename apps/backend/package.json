@@ -1,0 +1,37 @@
+{
+  "name": "@gameskeep/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GamesKeep backend API (Fastify). API-first so a future mobile app needs no refactor.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start": "tsx src/index.ts",
+    "start:worker": "tsx src/worker.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^11.0.0",
+    "bullmq": "^5.78.1",
+    "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.9.0",
+    "fastify": "^5.8.5",
+    "ioredis": "^5.11.1",
+    "pg": "^8.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4"
+  }
+}

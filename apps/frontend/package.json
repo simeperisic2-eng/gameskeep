@@ -1,0 +1,23 @@
+{
+  "name": "@gameskeep/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "GamesKeep frontend (Next.js, SSR). SEO-ready rendering mode set from the foundation.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3"
+  }
+}

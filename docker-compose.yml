@@ -1,0 +1,158 @@
+# GamesKeep — one-command demo stack.
+#
+#   docker compose up --build
+#
+# Brings up all four pieces (Postgres+pgvector, Redis, the Python AI service,
+# and the Node main app split into API + background worker + frontend) in DEMO
+# mode with ZERO real secrets. Every value below is a safe demo default; an
+# optional .env can override via ${VAR:-default} substitution.
+
+name: gameskeep
+
+services:
+  # ---- PostgreSQL with the pgvector extension ----
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gameskeep}
+      POSTGRES_USER: ${POSTGRES_USER:-gameskeep}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gameskeep_demo}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gameskeep} -d ${POSTGRES_DB:-gameskeep}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- Redis (cache + background-job queue) ----
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- Python AI microservice ----
+  ai:
+    build:
+      context: ./services/ai
+    image: gameskeep/ai:dev
+    restart: unless-stopped
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+    ports:
+      - '${AI_PORT:-8000}:8000'
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- Main app: backend API ----
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    image: gameskeep/backend:dev
+    restart: unless-stopped
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: '4000'
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      AI_SERVICE_URL: http://ai:8000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gameskeep}:${POSTGRES_PASSWORD:-gameskeep_demo}@postgres:5432/${POSTGRES_DB:-gameskeep}
+      REDIS_URL: redis://redis:6379
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-demo-admin-token}
+    ports:
+      - '${BACKEND_PORT:-4000}:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # ---- Main app: background worker (same image, different command) ----
+  worker:
+    image: gameskeep/backend:dev
+    restart: unless-stopped
+    command: ['npm', 'run', 'start:worker']
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # The worker now does DB work too (catalog import, I2; clustering, I3), so
+      # it needs the same Postgres URL as the API — not just Redis.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gameskeep}:${POSTGRES_PASSWORD:-gameskeep_demo}@postgres:5432/${POSTGRES_DB:-gameskeep}
+      REDIS_URL: redis://redis:6379
+      # The article pipeline (I3) calls the AI service for embeddings/summaries
+      # from the worker, so the worker must reach it — not just the API.
+      AI_SERVICE_URL: http://ai:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  # ---- Main app: frontend (Next.js SSR) ----
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    image: gameskeep/frontend:dev
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      HOSTNAME: 0.0.0.0
+      BACKEND_INTERNAL_URL: http://backend:4000
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Admin console proxy injects this token server-side (never sent to the browser).
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-demo-admin-token}
+    ports:
+      - '${FRONTEND_PORT:-3000}:3000'
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  pgdata:

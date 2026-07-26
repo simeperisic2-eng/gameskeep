@@ -1,0 +1,40 @@
+# ───────────── Secrets (NEVER commit) ─────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ───────────── Node ─────────────
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+.eslintcache
+
+# ───────────── Python ─────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ───────────── Editors / OS ─────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ───────────── Docker / data ─────────────
+# (named volumes live in Docker, not the repo; ignore any local dumps)
+*.local
+
+# ───────────── Local review artifacts ─────────────
+_shots/
