@@ -992,7 +992,7 @@ h4 {
 /* Ground-News mid-card: content left, a small licensed cover on the right —
  * ONLY where the story maps to a game (else the card stays clean/typographic). */
 .gk-topiccard.has-cover {
-  grid-template-columns: minmax(0, 1fr) 120px;
+  grid-template-columns: minmax(0, 1fr) 172px;
 }
 .gk-topiccard:hover {
   border-color: var(--gk-card-border-hi);
@@ -1000,11 +1000,17 @@ h4 {
   box-shadow: var(--gk-shadow-hi);
   transform: translateY(-2px);
 }
+/* A1: LANDSCAPE cover slot (16/10, like the catalog tiles / game page) so a
+ * production cover from any source drops in without cropping. Width comes from
+ * the grid column; aspect-ratio derives the height. Contains an absolute
+ * .gk-cover (inset:0) — position:relative is load-bearing (the collapse trap). */
 .gk-topiccard-cover {
   position: relative;
+  align-self: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
   border-radius: var(--r-sm);
   overflow: hidden;
-  min-height: 116px;
 }
 .gk-topiccard-body {
   display: flex;
@@ -1654,7 +1660,7 @@ h4 {
     grid-template-columns: 1fr;
   }
   .gk-topiccard.has-cover {
-    grid-template-columns: minmax(0, 1fr) 92px;
+    grid-template-columns: minmax(0, 1fr) 128px;
     gap: var(--s4);
   }
   .gk-nav,
@@ -3757,5 +3763,124 @@ h4 {
   }
   .gk-source-stat dd {
     font-size: 24px;
+  }
+}
+
+/* =====================  A1: DISCOVERY + PAGINATION  ======================== */
+/* discovery sections share the catalog shell; just give them section rhythm */
+.gk-disco-section {
+  margin-top: var(--gk-section-y);
+}
+.gk-disco-section:first-of-type {
+  margin-top: var(--s6);
+}
+.gk-disco-foot {
+  margin-top: var(--gk-section-y);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s6);
+}
+.gk-disco-foot .gk-slot {
+  width: 100%;
+}
+
+/* the "Browse all N games →" CTA — the one loud door into the exhaustive grid */
+.gk-browse-all {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  white-space: nowrap;
+  padding: var(--s3) var(--s5);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: rgba(var(--gk-amber), 0.06);
+  color: var(--gk-accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  transition: background 0.16s ease;
+}
+.gk-browse-all:hover {
+  background: rgba(var(--gk-amber), 0.12);
+}
+
+/* most-discussed context line on a tile ("12 articles · 6 outlets") — factual */
+.gk-tile-note {
+  margin: auto 0 0;
+  padding-top: var(--s2);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--gk-text-dim);
+}
+
+/* pagination — same chip language as the facet bar; pure anchors, SSR */
+.gk-pagination-wrap {
+  margin-top: var(--s6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+.gk-pagination-range {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--gk-text-dim);
+}
+.gk-pagination-range b {
+  color: var(--gk-text);
+  font-family: var(--gk-font-num);
+  font-variant-numeric: tabular-nums;
+}
+.gk-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+.gk-pagechip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gk-text-dim);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--gk-card-border);
+  text-decoration: none;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.gk-pagechip.num {
+  font-family: var(--gk-font-num);
+  font-variant-numeric: tabular-nums;
+}
+.gk-pagechip:hover {
+  color: var(--gk-text);
+  border-color: var(--gk-card-border-hi);
+}
+.gk-pagechip.is-active {
+  color: var(--gk-accent);
+  border-color: rgba(var(--gk-amber), 0.4);
+  background: rgba(var(--gk-amber), 0.08);
+}
+.gk-pagechip.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.gk-page-gap {
+  color: var(--gk-text-dim);
+  padding: 0 2px;
+}
+
+@media (max-width: 760px) {
+  .gk-catalog-head .gk-browse-all {
+    align-self: flex-start;
   }
 }

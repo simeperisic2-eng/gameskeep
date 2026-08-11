@@ -44,7 +44,14 @@ function TileScore({
   );
 }
 
-export function GameTile({ game }: { game: CatalogGame }): React.JSX.Element {
+export function GameTile({
+  game,
+  note,
+}: {
+  game: CatalogGame;
+  /** Optional factual context line (A1 discovery — e.g. "12 articles · 6 outlets"). */
+  note?: string;
+}): React.JSX.Element {
   const statusLabel = STATUS_LABEL[game.status] ?? game.status;
   // Only surface the gap chip when it actually signals disagreement.
   const showBand =
@@ -77,6 +84,7 @@ export function GameTile({ game }: { game: CatalogGame }): React.JSX.Element {
           <TileScore label="Our" score={game.our} amber />
           <TileScore label="Players" score={game.community} />
         </div>
+        {note ? <p className="gk-tile-note">{note}</p> : null}
       </div>
     </a>
   );

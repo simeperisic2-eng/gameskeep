@@ -1,72 +1,44 @@
 import type { Metadata } from 'next';
-import { getCatalog } from '@/lib/public-api';
+import { getDiscovery } from '@/lib/public-api';
 import { breadcrumbLd, gameCollectionLd } from '@/lib/schema';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
-import { CatalogControls } from '../_components/CatalogControls';
 import { GameTile } from '../_components/GameTile';
+import { UpcomingCard } from '../_components/UpcomingCard';
 import { AdSlot } from '../_components/AdSlot';
 
-// Server-render per request so crawlers get the full catalog (and any filter
-// view) as real HTML, not a client shell.
+// Server-render per request so crawlers get the full curated composition.
 export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+export const metadata: Metadata = {
+  title: 'Games — discover by rating, discussion and genre',
+  description:
+    'Discover games on GamesKeep — top rated, most discussed across outlets, by genre, and coming soon. Separated critic, our and community scores; the full catalog one click away.',
+  alternates: { canonical: `${siteUrl}/games` },
+  openGraph: {
+    type: 'website',
+    url: `${siteUrl}/games`,
+    title: 'Games — discover by rating, discussion and genre',
+    description:
+      'Top rated, most discussed, by genre, and coming soon — with separated critic/community scores and the disconnect surfaced where it matters.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Games — discover by rating, discussion and genre',
+    description:
+      'Top rated, most discussed, by genre, and coming soon — with separated critic/community scores.',
+  },
+};
 
-function first(v: string | string[] | undefined): string | null {
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v ?? null;
-}
-
-/** Title-case a filter value for the heading/meta ("rpg" → "RPG" kept as-is). */
-function pretty(v: string | null): string | null {
-  if (!v) return null;
-  return v.length <= 3 ? v.toUpperCase() : v.charAt(0).toUpperCase() + v.slice(1);
-}
-
-export async function generateMetadata({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}): Promise<Metadata> {
-  const sp = await searchParams;
-  const genre = pretty(first(sp.genre));
-  const platform = pretty(first(sp.platform));
-  const parts = [genre, platform].filter(Boolean);
-  const scope = parts.length > 0 ? `${parts.join(' · ')} games` : 'All games';
-  const title = parts.length > 0 ? `${parts.join(' · ')} games` : 'Games catalog';
-  const description =
-    parts.length > 0
-      ? `Browse ${scope} on GamesKeep — separated critic, our and community scores, the critic↔community disconnect, and content flags.`
-      : 'Browse every game on GamesKeep — separated critic, our and community ratings, the critic↔community disconnect with context, and factual content flags.';
-  return {
-    title,
-    description,
-    // Filter combinations consolidate to the catalog hub (duplicate-content guard).
-    alternates: { canonical: `${siteUrl}/games` },
-    openGraph: { type: 'website', url: `${siteUrl}/games`, title, description },
-    twitter: { card: 'summary_large_image', title, description },
-  };
-}
-
-export default async function GamesPage({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}): Promise<React.JSX.Element> {
-  const sp = await searchParams;
-  const filters = {
-    genre: first(sp.genre),
-    platform: first(sp.platform),
-    sort: first(sp.sort),
-  };
-  const data = await getCatalog(filters);
-
-  const genreLabel = pretty(data.applied.genre);
-  const platformLabel = pretty(data.applied.platform);
-  const activeParts = [genreLabel, platformLabel].filter(Boolean);
-  const heading = activeParts.length > 0 ? `${activeParts.join(' · ')} games` : 'Every game';
+/**
+ * The /games DISCOVERY page (A1, Steam/IMDb model): a big catalog leads with
+ * curation — top rated, most discussed, genres, coming soon — and only shows the
+ * exhaustive grid when asked (→ /games/browse). Every section renders from the
+ * one pre-computed /public/discovery payload; nothing heavy on request.
+ */
+export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
+  const d = await getDiscovery();
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -74,12 +46,18 @@ export default async function GamesPage({
   ];
   const jsonLd: Record<string, unknown>[] = [
     breadcrumbLd(crumbs),
-    gameCollectionLd(data.games, {
-      name: heading,
+    gameCollectionLd(d.topRated, {
+      name: 'Top rated games',
       url: `${siteUrl}/games`,
       siteUrl,
     }),
   ];
+
+  const browseAll = (
+    <a className="gk-browse-all" href="/games/browse">
+      Browse all {d.catalogTotal} games →
+    </a>
+  );
 
   return (
     <>
@@ -96,38 +74,110 @@ export default async function GamesPage({
         <header className="gk-catalog-head">
           <div>
             <span className="gk-eyebrow">Ratings &amp; rankings</span>
-            <h1 className="gk-catalog-title">{heading}</h1>
+            <h1 className="gk-catalog-title">Games</h1>
             <p className="gk-section-sub">
-              Separated critic, our and community scores — never blended into one number — with the
-              gap surfaced where it&apos;s real.
+              Start with what&apos;s rising, argued about, or around the corner — separated critic,
+              our and community scores, never blended into one number.
             </p>
           </div>
-          <span className="gk-catalog-count">
-            <b>{data.total}</b> {data.total === 1 ? 'game' : 'games'}
-            {data.total !== data.catalogTotal ? (
-              <span className="gk-catalog-count-of"> of {data.catalogTotal}</span>
-            ) : null}
-          </span>
+          {browseAll}
         </header>
 
-        <CatalogControls genres={data.genres} platforms={data.platforms} applied={data.applied} />
-
-        {data.games.length > 0 ? (
-          <div className="gk-tile-grid">
-            {data.games.map((g) => (
-              <GameTile key={g.slug} game={g} />
-            ))}
+        {/* TOP RATED */}
+        <section className="gk-disco-section" aria-label="Top rated">
+          <div className="gk-section-head">
+            <div>
+              <span className="gk-eyebrow">The strongest</span>
+              <h2 className="gk-section-title">Top rated</h2>
+            </div>
+            <a className="gk-readlink" href="/games/browse">
+              All by rating →
+            </a>
           </div>
-        ) : (
-          <div className="gk-catalog-empty">
-            <p className="gk-section-sub" style={{ margin: 0 }}>
-              No games match these filters yet. <a href="/games">Clear filters</a> to see the full
-              catalog.
-            </p>
-          </div>
-        )}
+          {d.topRated.length > 0 ? (
+            <div className="gk-tile-grid">
+              {d.topRated.map((g) => (
+                <GameTile key={g.slug} game={g} />
+              ))}
+            </div>
+          ) : (
+            <p className="gk-section-sub">Ratings are computing — check back in a moment.</p>
+          )}
+        </section>
 
-        <div className="gk-catalog-foot">
+        {/* MOST DISCUSSED — coverage volume across outlets (facts, not a score). */}
+        <section className="gk-disco-section" aria-label="Most discussed">
+          <div className="gk-section-head">
+            <div>
+              <span className="gk-eyebrow">In the conversation</span>
+              <h2 className="gk-section-title">Most discussed</h2>
+              <p className="gk-section-sub">
+                The games drawing the most coverage across outlets right now.
+              </p>
+            </div>
+          </div>
+          {d.mostDiscussed.length > 0 ? (
+            <div className="gk-tile-grid">
+              {d.mostDiscussed.map((g) => (
+                <GameTile
+                  key={g.slug}
+                  game={g}
+                  note={`${g.articleCount} ${g.articleCount === 1 ? 'article' : 'articles'} · ${g.sourceCount} ${g.sourceCount === 1 ? 'outlet' : 'outlets'}`}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="gk-section-sub">Coverage is still clustering — check back in a moment.</p>
+          )}
+        </section>
+
+        {/* BROWSE BY GENRE — deep-links into the filtered catalog. */}
+        {d.genres.length > 0 ? (
+          <section className="gk-disco-section" aria-label="Browse by genre">
+            <div className="gk-section-head">
+              <div>
+                <span className="gk-eyebrow">Find your lane</span>
+                <h2 className="gk-section-title">Browse by genre</h2>
+              </div>
+            </div>
+            <div className="gk-genre-rail">
+              {d.genres.map((g) => (
+                <a
+                  key={g.value}
+                  className="gk-genre-chip"
+                  href={`/games/browse?genre=${encodeURIComponent(g.value)}`}
+                >
+                  <span className="gk-genre-name">{g.value}</span>
+                  <span className="gk-genre-count">{g.count}</span>
+                </a>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* COMING SOON — a highlight row; the full slate lives at /upcoming. */}
+        {d.comingSoon.length > 0 ? (
+          <section className="gk-disco-section" aria-label="Coming soon">
+            <div className="gk-section-head">
+              <div>
+                <span className="gk-eyebrow">Around the corner</span>
+                <h2 className="gk-section-title">Coming soon</h2>
+              </div>
+              <a className="gk-readlink" href="/upcoming">
+                Full slate →
+              </a>
+            </div>
+            <div className="gk-upcoming-grid">
+              {d.comingSoon.map((g) => (
+                <UpcomingCard key={g.slug} game={g} />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* The exhaustive grid, one click away (never forced on entry). */}
+        <div className="gk-disco-foot">
+          {browseAll}
           <AdSlot />
         </div>
       </div>

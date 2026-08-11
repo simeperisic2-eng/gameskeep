@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import {
   getCatalogData,
+  getDiscoveryData,
   getGameDetail,
   getHomepageData,
   getSitemapGames,
@@ -71,17 +72,19 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
         }
       });
 
-      // The browsable catalog (BLUEPRINT 2.4) — filtered/sorted server-side from
-      // pre-computed scores; genre/platform facets travel with the payload.
-      pub.get<{ Querystring: { genre?: string; platform?: string; sort?: string } }>(
+      // The browsable catalog (BLUEPRINT 2.4; paginated in A1) — filtered/sorted/
+      // paged server-side from pre-computed scores; facets travel with the payload.
+      pub.get<{ Querystring: { genre?: string; platform?: string; sort?: string; page?: string } }>(
         '/catalog',
         async (req, reply) => {
           try {
+            const parsed = Number.parseInt(req.query.page ?? '', 10);
             reply.send({
               data: await getCatalogData({
                 genre: req.query.genre ?? null,
                 platform: req.query.platform ?? null,
                 sort: req.query.sort ?? null,
+                page: Number.isFinite(parsed) ? parsed : null,
               }),
             });
           } catch (err) {
@@ -89,6 +92,16 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
           }
         },
       );
+
+      // The /games discovery composition (A1) — curated entry into the catalog:
+      // top rated + most discussed + genres + coming soon + the browse-all count.
+      pub.get('/discovery', async (_req, reply) => {
+        try {
+          reply.send({ data: await getDiscoveryData() });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
 
       // The upcoming slate (BLUEPRINT 2.4) — status + release date for countdowns.
       pub.get('/upcoming', async (_req, reply) => {

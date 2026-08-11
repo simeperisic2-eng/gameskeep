@@ -22,8 +22,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const entries: MetadataRoute.Sitemap = [
     { url: `${siteUrl}/`, lastModified: now, changeFrequency: 'hourly', priority: 1 },
-    // Stable browse hubs (the catalog, the upcoming slate, the sources index).
+    // Stable browse hubs (discovery, the paginated catalog, upcoming, sources).
     { url: `${siteUrl}/games`, lastModified: now, changeFrequency: 'daily', priority: 0.8 },
+    { url: `${siteUrl}/games/browse`, lastModified: now, changeFrequency: 'daily', priority: 0.7 },
     { url: `${siteUrl}/upcoming`, lastModified: now, changeFrequency: 'daily', priority: 0.7 },
     { url: `${siteUrl}/sources`, lastModified: now, changeFrequency: 'weekly', priority: 0.6 },
   ];

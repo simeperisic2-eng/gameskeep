@@ -386,6 +386,10 @@ export interface CatalogData {
   genres: CatalogFacet[];
   platforms: CatalogFacet[];
   applied: { genre: string | null; platform: string | null; sort: string };
+  /** Server-side pagination (A1): `games` is this page's slice, never the full set. */
+  page: number;
+  perPage: number;
+  totalPages: number;
 }
 
 const EMPTY_CATALOG: CatalogData = {
@@ -395,19 +399,24 @@ const EMPTY_CATALOG: CatalogData = {
   genres: [],
   platforms: [],
   applied: { genre: null, platform: null, sort: 'rating' },
+  page: 1,
+  perPage: 36,
+  totalPages: 1,
 };
 
-/** Fetch the (server-filtered) catalog for SSR. Never throws — empty on failure. */
+/** Fetch the (server-filtered, server-paged) catalog for SSR. Never throws — empty on failure. */
 export async function getCatalog(filters: {
   genre?: string | null;
   platform?: string | null;
   sort?: string | null;
+  page?: string | null;
 }): Promise<CatalogData> {
   try {
     const qs = new URLSearchParams();
     if (filters.genre) qs.set('genre', filters.genre);
     if (filters.platform) qs.set('platform', filters.platform);
     if (filters.sort) qs.set('sort', filters.sort);
+    if (filters.page) qs.set('page', filters.page);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const res = await fetch(`${backendUrl}/public/catalog${suffix}`, { cache: 'no-store' });
     if (!res.ok) return EMPTY_CATALOG;
@@ -415,6 +424,40 @@ export async function getCatalog(filters: {
     return body.data ?? EMPTY_CATALOG;
   } catch {
     return EMPTY_CATALOG;
+  }
+}
+
+// ── discovery (A1) — the curated /games entry ────────────────────────────────
+
+export interface MostDiscussedGame extends CatalogGame {
+  articleCount: number;
+  sourceCount: number;
+}
+export interface DiscoveryData {
+  catalogTotal: number;
+  topRated: CatalogGame[];
+  mostDiscussed: MostDiscussedGame[];
+  genres: CatalogFacet[];
+  comingSoon: UpcomingGame[];
+}
+
+const EMPTY_DISCOVERY: DiscoveryData = {
+  catalogTotal: 0,
+  topRated: [],
+  mostDiscussed: [],
+  genres: [],
+  comingSoon: [],
+};
+
+/** Fetch the /games discovery composition for SSR. Never throws — empty on failure. */
+export async function getDiscovery(): Promise<DiscoveryData> {
+  try {
+    const res = await fetch(`${backendUrl}/public/discovery`, { cache: 'no-store' });
+    if (!res.ok) return EMPTY_DISCOVERY;
+    const body = (await res.json()) as { data?: DiscoveryData };
+    return body.data ?? EMPTY_DISCOVERY;
+  } catch {
+    return EMPTY_DISCOVERY;
   }
 }
 

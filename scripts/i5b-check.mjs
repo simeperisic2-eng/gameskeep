@@ -13,7 +13,8 @@
  *   6.  source-detail API returns a profile (flags + recent coverage + ownership)
  *   7.  unknown source slug 404s (graceful, not a 500)
  *   8.  every public payload is leak-proof (no internal_assessment in JSON)
- *   9.  catalog SSR: tiles + filter chips in HTML, canonical → /games, leak-proof
+ *   9.  catalog SSR (/games/browse since A1): tiles + filter chips in HTML,
+ *       canonical → /games/browse, leak-proof
  *   10. upcoming SSR: cards + countdown in HTML, leak-proof
  *   11. sources SSR: source cards + ownership-concentration in HTML, leak-proof
  *   12. source-detail SSR: coverage profile + ownership in HTML, canonical → self,
@@ -198,15 +199,15 @@ async function main() {
       !leakRe.test(JSON.stringify(src.json ?? {})),
   );
 
-  // ── 9. catalog SSR ──────────────────────────────────────────────────────────
-  const catHtml = (await getText(`${FRONT}/games`)).text;
+  // ── 9. catalog SSR (the exhaustive grid lives at /games/browse since A1) ────
+  const catHtml = (await getText(`${FRONT}/games/browse`)).text;
   const canon = catHtml.match(/<link rel="canonical" href="([^"]+)"/);
   check(
-    '9. Catalog SSR: tiles + filter chips in HTML, canonical → /games, leak-proof',
+    '9. Catalog SSR: tiles + filter chips in HTML, canonical → /games/browse, leak-proof',
     count(catHtml, 'gk-tile-cover') >= 6 &&
       count(catHtml, 'gk-facetchip') >= 6 &&
       canon &&
-      canon[1].endsWith('/games') &&
+      canon[1].endsWith('/games/browse') &&
       count(catHtml, 'internal_assessment') === 0,
     `${count(catHtml, 'gk-tile-cover')} tiles, ${count(catHtml, 'gk-facetchip')} chips`,
   );

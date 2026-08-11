@@ -134,7 +134,7 @@ export default async function HomePage(): Promise<React.JSX.Element> {
             <span className="gk-eyebrow">Ratings, not just news</span>
             <h2 className="gk-section-title">Top rated right now</h2>
           </div>
-          <a className="gk-readlink" href="/games">
+          <a className="gk-readlink" href="/games/browse">
             Browse all games →
           </a>
         </div>

@@ -1,11 +1,12 @@
 import type { CatalogFacet } from '@/lib/public-api';
 
 /**
- * Catalog filter bar (SPEC I5b; BLUEPRINT 2.4) — genre + platform facets and a
- * sort, all as plain anchor links so filtering is pure SSR (crawlable, instant,
- * no client JS). Each chip preserves the OTHER active filters; clicking an active
- * chip toggles it off. Canonical stays on /games so filter combinations never
- * create duplicate-content (CLAUDE.md SEO rule).
+ * Catalog filter bar (SPEC I5b; BLUEPRINT 2.4; lives at /games/browse since A1) —
+ * genre + platform facets and a sort, all as plain anchor links so filtering is
+ * pure SSR (crawlable, instant, no client JS). Each chip preserves the OTHER
+ * active filters; clicking an active chip toggles it off — and deliberately drops
+ * any `page` param, so changing a filter always restarts at page 1. Canonical
+ * consolidates filtered views to /games/browse (CLAUDE.md SEO rule).
  */
 type Applied = { genre: string | null; platform: string | null; sort: string };
 
@@ -22,7 +23,7 @@ function hrefFor(applied: Applied, change: Partial<Applied>): string {
   if (next.platform) qs.set('platform', next.platform);
   if (next.sort && next.sort !== 'rating') qs.set('sort', next.sort);
   const s = qs.toString();
-  return s ? `/games?${s}` : '/games';
+  return s ? `/games/browse?${s}` : '/games/browse';
 }
 
 function FacetRow({

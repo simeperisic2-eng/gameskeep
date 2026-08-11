@@ -9,6 +9,7 @@ import {
 } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
 import {
+  appSettings,
   articleSubjects,
   articleTopics,
   articles,
@@ -1474,6 +1475,8 @@ export interface CatalogFilters {
   genre?: string | null;
   platform?: string | null;
   sort?: string | null;
+  /** 1-based page (A1). Out-of-range values clamp into [1..totalPages]. */
+  page?: number | null;
 }
 
 export interface CatalogData {
@@ -1485,9 +1488,34 @@ export interface CatalogData {
   platforms: CatalogFacet[];
   /** Echoes the APPLIED filters (normalized) so the page can mark them active. */
   applied: { genre: string | null; platform: string | null; sort: string };
+  /** Server-side pagination (A1): `games` is THIS page's slice, never the full set. */
+  page: number;
+  perPage: number;
+  totalPages: number;
 }
 
 const CATALOG_SORTS = new Set(['rating', 'name', 'newest']);
+
+/**
+ * Games per catalog page (A1). Admin-tunable via the `catalog` app_setting
+ * (`{ pageSize }`), like the clustering knobs — nothing hardcoded; 36 is only
+ * the fallback when the setting is absent/invalid.
+ */
+const CATALOG_PAGE_SIZE_DEFAULT = 36;
+async function catalogPageSize(): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, 'catalog'))
+      .limit(1);
+    const n = row?.value?.pageSize;
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 6 && n <= 500) return n;
+  } catch {
+    /* fall through to the default */
+  }
+  return CATALOG_PAGE_SIZE_DEFAULT;
+}
 
 function facetTally(values: string[]): CatalogFacet[] {
   const map = new Map<string, number>();
@@ -1526,13 +1554,8 @@ function sortCatalog(list: CatalogGame[], sort: string): CatalogGame[] {
   );
 }
 
-/**
- * The browsable catalog (SPEC I5b). Reads the whole catalog once (bounded, no
- * per-request heavy work), derives the genre/platform facets from it, then
- * applies the requested filter + sort. Effective scores only (override ?? auto);
- * the internal rating internals are never selected.
- */
-export async function getCatalogData(filters: CatalogFilters = {}): Promise<CatalogData> {
+/** The whole catalog as leak-proof CatalogGame rows (shared by browse + discovery). */
+async function loadCatalogRows(): Promise<CatalogGame[]> {
   const rows = await db
     .select({
       slug: subjects.slug,
@@ -1554,7 +1577,7 @@ export async function getCatalogData(filters: CatalogFilters = {}): Promise<Cata
     .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
     .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id));
 
-  const all: CatalogGame[] = rows.map((r) => ({
+  return rows.map((r) => ({
     slug: r.slug,
     name: r.name,
     status: r.status,
@@ -1568,6 +1591,17 @@ export async function getCatalogData(filters: CatalogFilters = {}): Promise<Cata
     disconnectValue: r.disconnectValue ?? null,
     disconnectBand: (r.disconnectBand as DisconnectBand) ?? null,
   }));
+}
+
+/**
+ * The browsable catalog (SPEC I5b; paginated in A1). Reads the whole catalog once
+ * (bounded, no per-request heavy work), derives the genre/platform facets from it,
+ * applies the requested filter + sort, then returns ONE page slice — the full set
+ * is never shipped in one response (production has thousands of games). Effective
+ * scores only (override ?? auto); the internal rating internals are never selected.
+ */
+export async function getCatalogData(filters: CatalogFilters = {}): Promise<CatalogData> {
+  const all = await loadCatalogRows();
 
   // Facets are derived from the FULL catalog so the option list is stable.
   const genres = facetTally(all.flatMap((g) => g.genres));
@@ -1583,13 +1617,91 @@ export async function getCatalogData(filters: CatalogFilters = {}): Promise<Cata
   const sort = CATALOG_SORTS.has(filters.sort ?? '') ? (filters.sort as string) : 'rating';
   const sorted = sortCatalog(filtered, sort);
 
+  // Server-side pagination (A1). Malformed pages coerce to 1; out-of-range pages
+  // clamp to the last real page — a crawler or hand-typed URL never gets a
+  // broken/empty page when games exist.
+  const perPage = await catalogPageSize();
+  const totalPages = Math.max(1, Math.ceil(sorted.length / perPage));
+  const requested =
+    typeof filters.page === 'number' && Number.isFinite(filters.page)
+      ? Math.trunc(filters.page)
+      : 1;
+  const page = Math.min(totalPages, Math.max(1, requested));
+  const start = (page - 1) * perPage;
+
   return {
-    games: sorted,
+    games: sorted.slice(start, start + perPage),
     total: sorted.length,
     catalogTotal: all.length,
     genres,
     platforms,
     applied: { genre, platform, sort },
+    page,
+    perPage,
+    totalPages,
+  };
+}
+
+// ── discovery (A1) — the curated /games entry (Steam/IMDb model) ─────────────
+
+/** A most-discussed entry: a catalog game + how much coverage it's drawing. */
+export interface MostDiscussedGame extends CatalogGame {
+  articleCount: number;
+  sourceCount: number;
+}
+
+export interface DiscoveryData {
+  /** Full catalog size — powers the "Browse all N games →" CTA. */
+  catalogTotal: number;
+  topRated: CatalogGame[];
+  /** Games drawing the most coverage across outlets (article + outlet counts). */
+  mostDiscussed: MostDiscussedGame[];
+  genres: CatalogFacet[];
+  comingSoon: UpcomingGame[];
+}
+
+/**
+ * The /games discovery page (A1). Big catalogs lead with curation and only show
+ * the exhaustive grid when asked (→ /games/browse), so this reuses the same
+ * pre-computed rows as the catalog plus one coverage aggregate — same leak-proof
+ * surface, nothing recomputes on request.
+ */
+export async function getDiscoveryData(): Promise<DiscoveryData> {
+  const all = await loadCatalogRows();
+  const bySlug = new Map(all.map((g) => [g.slug, g]));
+
+  // Coverage counts per game across the aggregated feed (facts, not a score).
+  const discussedRows = await db
+    .select({
+      slug: subjects.slug,
+      articleCount: sql<number>`count(distinct ${articles.id})`,
+      sourceCount: sql<number>`count(distinct ${articles.sourceId})`,
+    })
+    .from(articleSubjects)
+    .innerJoin(subjects, and(eq(subjects.id, articleSubjects.subjectId), eq(subjects.type, 'game')))
+    .innerJoin(articles, eq(articles.id, articleSubjects.articleId))
+    .groupBy(subjects.slug)
+    .orderBy(desc(sql`count(distinct ${articles.id})`))
+    .limit(12);
+
+  const mostDiscussed: MostDiscussedGame[] = [];
+  for (const r of discussedRows) {
+    const game = bySlug.get(r.slug);
+    if (!game) continue; // coverage on a subject not (yet) in the catalog
+    mostDiscussed.push({
+      ...game,
+      articleCount: Number(r.articleCount) || 0,
+      sourceCount: Number(r.sourceCount) || 0,
+    });
+    if (mostDiscussed.length >= 6) break;
+  }
+
+  return {
+    catalogTotal: all.length,
+    topRated: sortCatalog(all, 'rating').slice(0, 6),
+    mostDiscussed,
+    genres: facetTally(all.flatMap((g) => g.genres)),
+    comingSoon: (await getUpcomingData()).slice(0, 4),
   };
 }
 
