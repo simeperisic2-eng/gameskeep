@@ -25,6 +25,7 @@
     "verify:i4b": "node scripts/i4b-check.mjs",
     "verify:i5a": "node scripts/i5a-check.mjs",
     "verify:i5b": "node scripts/i5b-check.mjs",
+    "verify:i5c": "node scripts/i5c-check.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
