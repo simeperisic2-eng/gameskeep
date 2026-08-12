@@ -1,41 +1,133 @@
 import type { GamePlayerCount, PlayerCountPoint } from '@/lib/public-api';
 
 /**
- * Player activity (BLUEPRINT 2.3 premium analytics) — Steam concurrent players
- * with CONTEXT, not just a raw number: playing-now, 24h peak, week-over-week
- * change, and a momentum sparkline. Steam-only and clearly labeled "sample data"
- * in the demo (no live calls; production fills this from the Steam API). Renders
- * only where data exists. Green/red are NOT used here (reserved for bias/
- * disconnect) — the trend uses amber (up) / dim (down).
+ * Player activity (BLUEPRINT 2.3 premium analytics; chart upgraded in B2) —
+ * Steam concurrent players as a PROPER dated time series, not a bare number:
+ * current / peak (recorded) / week-change above a y-scaled, dated area chart
+ * with per-point dots and the latest point highlighted.
+ *
+ * HONESTY RULE (B2): Steam's Web API has NO historical player-count endpoint —
+ * SteamDB/SteamCharts built their archives by recording the current number
+ * themselves for years. We do the same: this chart shows the history WE have
+ * recorded (seeded in demo; the production sweep appends), and the "More
+ * stats" link hands off to SteamDB for the deep past. The copy says so.
+ *
+ * The chart is ONE viewBox'd SVG at width:100% (no media queries) so it
+ * reflows at any width — the CSS-collapse lesson applied. Amber/neutral only;
+ * green/red stay reserved for bias/disconnect.
  */
-function Sparkline({ points }: { points: number[] }): React.JSX.Element | null {
+const W = 640;
+const H = 230;
+const PAD_L = 46;
+const PAD_R = 12;
+const PAD_T = 12;
+const PAD_B = 30;
+
+/** Round a maximum up to a "nice" axis ceiling (1/2/2.5/5 × 10^n). */
+function niceCeil(n: number): number {
+  if (n <= 0) return 1;
+  const exp = Math.floor(Math.log10(n));
+  const base = 10 ** exp;
+  for (const m of [1, 2, 2.5, 5, 10]) {
+    if (n <= m * base) return m * base;
+  }
+  return 10 * base;
+}
+
+function compact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
+function tickDate(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+interface ChartPoint {
+  at: string;
+  v: number;
+}
+
+function TimeSeriesChart({ points }: { points: ChartPoint[] }): React.JSX.Element | null {
   if (points.length < 2) return null;
-  const w = 320;
-  const h = 52;
-  const pad = 5;
-  const max = Math.max(...points);
-  const min = Math.min(...points);
-  const range = max - min || 1;
-  const step = (w - pad * 2) / (points.length - 1);
-  const coords = points.map((v, i) => {
-    const x = pad + i * step;
-    const y = pad + (h - pad * 2) * (1 - (v - min) / range);
-    return [x, y] as const;
-  });
-  const line = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x},${y}`).join(' ');
-  const first = coords[0]!;
-  const last = coords[coords.length - 1]!;
-  const area = `${line} L${last[0]},${h - pad} L${first[0]},${h - pad} Z`;
+
+  const yMax = niceCeil(Math.max(...points.map((p) => p.v)));
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+  const x = (i: number): number => PAD_L + (plotW * i) / (points.length - 1);
+  const y = (v: number): number => PAD_T + plotH * (1 - v / yMax);
+
+  const line = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`)
+    .join(' ');
+  const area = `${line} L${x(points.length - 1).toFixed(1)},${PAD_T + plotH} L${PAD_L},${PAD_T + plotH} Z`;
+
+  // ~4 dated x ticks, first → last, evenly spread across the recorded window.
+  const tickIdx = [0, 1, 2, 3].map((k) => Math.round(((points.length - 1) * k) / 3));
+  const gridVals = [0, yMax / 2, yMax];
+  const last = points.length - 1;
+
   return (
     <svg
-      className="gk-spark"
-      viewBox={`0 0 ${w} ${h}`}
-      preserveAspectRatio="none"
+      className="gk-chart"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label="Player-count trend, recent weeks"
+      aria-label={`Recorded Steam concurrent players, ${tickDate(points[0]!.at)} to ${tickDate(points[last]!.at)}`}
     >
-      <path className="gk-spark-area" d={area} />
-      <path className="gk-spark-line" d={line} />
+      <defs>
+        <linearGradient id="gk-chart-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgb(245, 179, 1)" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="rgb(245, 179, 1)" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+
+      {/* y grid + scale labels */}
+      {gridVals.map((v) => (
+        <g key={v}>
+          <line
+            className="gk-chart-grid"
+            x1={PAD_L}
+            x2={W - PAD_R}
+            y1={y(v)}
+            y2={y(v)}
+            aria-hidden
+          />
+          <text className="gk-chart-ylabel" x={PAD_L - 8} y={y(v) + 3.5} textAnchor="end">
+            {compact(v)}
+          </text>
+        </g>
+      ))}
+
+      {/* dated x ticks */}
+      {tickIdx.map((i) => (
+        <text
+          key={i}
+          className="gk-chart-xlabel"
+          x={x(i)}
+          y={H - 8}
+          textAnchor={i === 0 ? 'start' : i === last ? 'end' : 'middle'}
+        >
+          {tickDate(points[i]!.at)}
+        </text>
+      ))}
+
+      <path className="gk-chart-area" d={area} fill="url(#gk-chart-fill)" />
+      <path className="gk-chart-line" d={line} />
+
+      {/* per-point dots; the latest is highlighted */}
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          className={i === last ? 'gk-chart-dot is-latest' : 'gk-chart-dot'}
+          cx={x(i)}
+          cy={y(p.v)}
+          r={i === last ? 4 : 2.2}
+        />
+      ))}
     </svg>
   );
 }
@@ -51,11 +143,19 @@ export function PlayerActivity({
    * never scrape or ingest their numbers; same rule as article excerpts). */
   steamAppId?: number | null;
 }): React.JSX.Element | null {
-  const series = history.map((p) => p.current).filter((n): n is number => n != null);
-  if (!playerCount && series.length === 0) return null;
+  const points: ChartPoint[] = history
+    .filter((p): p is PlayerCountPoint & { current: number } => p.current != null)
+    .map((p) => ({ at: p.capturedAt, v: p.current }));
+  if (!playerCount && points.length === 0) return null;
 
+  const series = points.map((p) => p.v);
   const current = playerCount?.current ?? series[series.length - 1] ?? null;
-  const peak = playerCount?.peak ?? (series.length > 0 ? Math.max(...series) : null);
+  // Peak = the highest number in OUR recorded history (incl. any stored 24h
+  // peak) — "recorded" because that's genuinely all anyone has (see above).
+  const peakRecorded =
+    series.length > 0 || playerCount?.peak != null
+      ? Math.max(...series, playerCount?.peak ?? 0)
+      : null;
   let change: number | null = null;
   if (series.length >= 2) {
     const prev = series[series.length - 2]!;
@@ -75,8 +175,10 @@ export function PlayerActivity({
           <span className="gk-players-label">Playing now</span>
         </div>
         <div className="gk-players-stat">
-          <span className="gk-players-num">{peak != null ? peak.toLocaleString() : '—'}</span>
-          <span className="gk-players-label">24h peak</span>
+          <span className="gk-players-num">
+            {peakRecorded != null && peakRecorded > 0 ? peakRecorded.toLocaleString() : '—'}
+          </span>
+          <span className="gk-players-label">Peak (recorded)</span>
         </div>
         {change != null ? (
           <div className="gk-players-stat">
@@ -87,10 +189,11 @@ export function PlayerActivity({
           </div>
         ) : null}
       </div>
-      <Sparkline points={series} />
+      <TimeSeriesChart points={points} />
       <div className="gk-players-foot">
         <p className="gk-players-note">
-          Steam concurrent players only — consoles don&apos;t publish live counts.
+          Steam concurrent players only (consoles don&apos;t publish live counts) — this is the
+          history we&apos;ve recorded; Steam has no past-players API, we accumulate our own.
         </p>
         {steamAppId ? (
           <a

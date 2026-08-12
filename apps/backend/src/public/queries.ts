@@ -1340,7 +1340,9 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       .from(gamePlayerCounts)
       .where(eq(gamePlayerCounts.gameId, g.gameId))
       .orderBy(desc(gamePlayerCounts.capturedAt))
-      .limit(24),
+      // B2: ~6 months of weekly history for the dated chart (seeded 26 points;
+      // in production the sweep appends and this window slides).
+      .limit(40),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(gameUserRatings)

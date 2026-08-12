@@ -827,13 +827,21 @@ async function seedRatings(opts: {
   }
 
   /**
-   * Steam player-count series — 8 weekly points shaped like a launch spike that
-   * settles toward `current`, with the latest carrying the 24h `peak`. Feeds the
-   * momentum sparkline + current/peak readout (Steam-only, labeled in the UI).
+   * Steam player-count series (B2) — ~26 WEEKLY points (~6 months) in a
+   * realistic launch → decay → content-bump → settle shape, so the dated
+   * area chart has a real form to draw in the demo. The latest row carries
+   * the recorded `peak`. This seeds the SAME `game_player_counts` store the
+   * production sweep appends to — Steam has no past-players API, so history
+   * only ever accumulates from recording the current number over time.
    */
   async function players(gameId: string, current: number, peak: number): Promise<void> {
     if (await hasAny(gamePlayerCounts, gameId)) return;
-    const shape = [1.95, 1.6, 1.32, 1.18, 1.27, 1.06, 0.93, 1.0];
+    // 26 weekly multipliers of the settled `current`: launch spike, long decay,
+    // a mid-life content-patch bump, then settle around 1.0.
+    const shape = [
+      5.8, 4.6, 3.6, 2.9, 2.35, 1.95, 1.68, 1.48, 1.34, 1.24, 1.16, 1.1, 1.05, 1.01, 0.98, 0.96,
+      1.72, 1.5, 1.28, 1.13, 1.05, 0.99, 0.96, 0.94, 0.97, 1.0,
+    ];
     const rows = shape.map((f, i) => ({
       gameId,
       source: 'steam',

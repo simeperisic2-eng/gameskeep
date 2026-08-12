@@ -4057,6 +4057,46 @@ a.gk-tile-cover {
   display: block;
 }
 
+/* =====================  B2: PLAYER-ACTIVITY TIME-SERIES CHART  ============= */
+/* One viewBox'd SVG at width:100% — reflows at any width, no media queries
+ * (the CSS-collapse lesson). Amber/neutral ONLY — green/red stay reserved for
+ * bias/disconnect. */
+.gk-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: var(--s3);
+}
+.gk-chart-grid {
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 1;
+}
+.gk-chart-ylabel,
+.gk-chart-xlabel {
+  fill: var(--gk-text-dim);
+  font-family: var(--gk-font-num);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.gk-chart-line {
+  fill: none;
+  stroke: var(--gk-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.gk-chart-area {
+  stroke: none;
+}
+.gk-chart-dot {
+  fill: #d9a51a;
+}
+.gk-chart-dot.is-latest {
+  fill: var(--gk-accent);
+  stroke: rgba(var(--gk-amber), 0.35);
+  stroke-width: 5;
+}
+
 /* player-activity footer: note + the outbound SteamDB deep-stats link */
 .gk-players-foot {
   display: flex;
