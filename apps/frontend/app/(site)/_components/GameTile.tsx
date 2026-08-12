@@ -58,8 +58,11 @@ export function GameTile({
     game.disconnectValue != null &&
     (game.disconnectBand === 'notable' || game.disconnectBand === 'large');
   return (
-    <a className="gk-tile" href={`/games/${game.slug}`}>
-      <div className="gk-tile-cover">
+    /* B1 structure: a plain CONTAINER — cover + name are the game links, the
+     * genre chips are SIBLING links into the filtered catalog. Never nested
+     * anchors (max depth = 1). */
+    <article className="gk-tile">
+      <a className="gk-tile-cover" href={`/games/${game.slug}`} tabIndex={-1} aria-hidden>
         <CoverArt label={game.name} imageUrl={game.coverUrl} variant="thumb" />
         {/* "Released" is the default — only label the states that stand out. */}
         {game.status !== 'released' ? (
@@ -71,11 +74,27 @@ export function GameTile({
             {BAND_LABEL[game.disconnectBand ?? 'mild']}
           </span>
         ) : null}
-      </div>
+      </a>
       <div className="gk-tile-body">
-        <h3 className="gk-tile-name">{game.name}</h3>
+        <h3 className="gk-tile-name">
+          <a className="gk-title-link" href={`/games/${game.slug}`}>
+            {game.name}
+          </a>
+        </h3>
         {game.genres.length > 0 ? (
-          <p className="gk-tile-genres">{game.genres.slice(0, 3).join(' · ')}</p>
+          <p className="gk-tile-genres">
+            {game.genres.slice(0, 3).map((g, i) => (
+              <span key={g}>
+                {i > 0 ? ' · ' : ''}
+                <a
+                  className="gk-tile-genre-link"
+                  href={`/games/browse?genre=${encodeURIComponent(g)}`}
+                >
+                  {g}
+                </a>
+              </span>
+            ))}
+          </p>
         ) : (
           <p className="gk-tile-genres gk-tile-genres-empty">Catalog entry</p>
         )}
@@ -86,6 +105,6 @@ export function GameTile({
         </div>
         {note ? <p className="gk-tile-note">{note}</p> : null}
       </div>
-    </a>
+    </article>
   );
 }

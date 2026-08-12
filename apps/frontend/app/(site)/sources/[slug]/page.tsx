@@ -280,7 +280,21 @@ export default async function SourcePage({
                           <span className="gk-srcrow-type">{a.articleType}</span>
                           {a.origin === 'ours' ? <span className="gk-chip amber">Ours</span> : null}
                         </div>
-                        <h3 className="gk-srcrow-title">{a.title}</h3>
+                        {/* B1: headline links out to the original article. */}
+                        <h3 className="gk-srcrow-title">
+                          {a.url ? (
+                            <a
+                              className="gk-title-link"
+                              href={a.url}
+                              target="_blank"
+                              rel="noopener noreferrer nofollow"
+                            >
+                              {a.title}
+                            </a>
+                          ) : (
+                            a.title
+                          )}
+                        </h3>
                         {excerpt ? <p className="gk-srcrow-excerpt">{excerpt}</p> : null}
                         <div className="gk-srcrow-foot">
                           <ArticleFlags flags={a.flags} reasons={a.reasons} />

@@ -1774,6 +1774,9 @@ h4 {
   border-radius: var(--r-md);
   overflow: hidden;
 }
+.gk-chip-link {
+  text-decoration: none;
+}
 .gk-chip-link:hover {
   border-color: var(--gk-card-border-hi);
   color: var(--gk-text);
@@ -4021,6 +4024,37 @@ h4 {
 }
 .gk-buy-link:hover .gk-out-arrow {
   color: var(--gk-accent);
+}
+
+/* =====================  B1: CLICKABLE TITLES + TAG FILTERS  ================ */
+/* Headline links inherit their heading's look; hover = amber (the site-wide
+ * "this navigates" cue). Used by spotlight/topic-card/tile/coverage titles. */
+.gk-title-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+.gk-title-link:hover {
+  color: var(--gk-accent);
+}
+/* tile genre chips — read like the old dim text, hover reveals the filter */
+.gk-tile-genre-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+.gk-tile-genre-link:hover {
+  color: var(--gk-accent);
+  text-decoration: underline;
+}
+/* trend rows + card covers are now real anchors — keep their block layout */
+a.gk-trend-item {
+  text-decoration: none;
+  color: inherit;
+}
+a.gk-topiccard-cover,
+a.gk-tile-cover {
+  display: block;
 }
 
 /* player-activity footer: note + the outbound SteamDB deep-stats link */

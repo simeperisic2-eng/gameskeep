@@ -74,13 +74,15 @@ export function Hero({
         <ul className="gk-trend-list">
           {topics.map((t, i) => (
             <li key={t.id}>
-              <button
-                type="button"
+              {/* B1: the row is a real LINK to its story (headlines navigate).
+                  Hover/focus still drives the spotlight selection — the locked
+                  I5a interaction — so pointing selects, clicking goes. */}
+              <a
                 className={`gk-trend-item${i === active ? ' is-active' : ''}`}
-                aria-pressed={i === active}
+                href={`/topics/${t.slug}`}
+                aria-current={i === active ? 'true' : undefined}
                 onMouseEnter={() => setActive(i)}
                 onFocus={() => setActive(i)}
-                onClick={() => setActive(i)}
               >
                 <span className="gk-trend-rank">{i + 1}</span>
                 <span style={{ minWidth: 0 }}>
@@ -94,7 +96,7 @@ export function Hero({
                     </span>
                   </span>
                 </span>
-              </button>
+              </a>
             </li>
           ))}
         </ul>
@@ -119,10 +121,18 @@ export function Hero({
                     <span className="gk-chip-dot" style={{ opacity: 0.7 }} aria-hidden />
                     {t.status}
                   </span>
-                  {t.primaryGame ? <span className="gk-chip">{t.primaryGame.name}</span> : null}
+                  {t.primaryGame ? (
+                    <a className="gk-chip gk-chip-link" href={`/games/${t.primaryGame.slug}`}>
+                      {t.primaryGame.name}
+                    </a>
+                  ) : null}
                 </div>
 
-                <h3 className="gk-spot-title">{t.title}</h3>
+                <h3 className="gk-spot-title">
+                  <a className="gk-title-link" href={`/topics/${t.slug}`}>
+                    {t.title}
+                  </a>
+                </h3>
 
                 {summary ? (
                   <div>

@@ -70,7 +70,22 @@ function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
           <span className="gk-srcrow-type">{a.articleType}</span>
           {a.isPrimary ? <span className="gk-chip amber">Lead source</span> : null}
         </div>
-        <h3 className="gk-srcrow-title">{a.title}</h3>
+        {/* B1: the headline itself links out to the original (same target as
+            "Read at" — excerpt + link only, the I1 copyright posture). */}
+        <h3 className="gk-srcrow-title">
+          {a.url ? (
+            <a
+              className="gk-title-link"
+              href={a.url}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+            >
+              {a.title}
+            </a>
+          ) : (
+            a.title
+          )}
+        </h3>
         {excerpt ? <p className="gk-srcrow-excerpt">{excerpt}</p> : null}
         <div className="gk-srcrow-foot">
           <ArticleFlags flags={a.flags} reasons={a.reasons} />

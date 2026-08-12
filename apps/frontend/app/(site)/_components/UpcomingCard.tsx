@@ -69,15 +69,24 @@ export function UpcomingCard({ game }: { game: UpcomingGame }): React.JSX.Elemen
 
         {game.genres.length > 0 || game.platforms.length > 0 ? (
           <div className="gk-upcard-taxos">
+            {/* B1: taxonomy chips deep-link into the filtered catalog (A1 URLs). */}
             {game.genres.slice(0, 2).map((g) => (
-              <span key={`g-${g}`} className="gk-chip">
+              <a
+                key={`g-${g}`}
+                className="gk-chip gk-chip-link"
+                href={`/games/browse?genre=${encodeURIComponent(g)}`}
+              >
                 {g}
-              </span>
+              </a>
             ))}
             {game.platforms.slice(0, 3).map((p) => (
-              <span key={`p-${p}`} className="gk-chip ghost">
+              <a
+                key={`p-${p}`}
+                className="gk-chip ghost gk-chip-link"
+                href={`/games/browse?platform=${encodeURIComponent(p)}`}
+              >
                 {p}
-              </span>
+              </a>
             ))}
           </div>
         ) : null}

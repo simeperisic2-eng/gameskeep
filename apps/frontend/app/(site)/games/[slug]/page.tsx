@@ -177,15 +177,26 @@ export default async function GamePage({
             ) : null}
 
             <div className="gk-game-taxos">
+              {/* B1: genre/platform chips deep-link into the filtered catalog
+                  (A1 URLs). Mode chips stay plain — the catalog has no mode
+                  facet, and a chip that filters nothing shouldn't pretend to. */}
               {game.genres.map((g) => (
-                <span key={`ge-${g}`} className="gk-chip">
+                <a
+                  key={`ge-${g}`}
+                  className="gk-chip gk-chip-link"
+                  href={`/games/browse?genre=${encodeURIComponent(g)}`}
+                >
                   {g}
-                </span>
+                </a>
               ))}
               {game.platforms.map((p) => (
-                <span key={`pl-${p}`} className="gk-chip ghost">
+                <a
+                  key={`pl-${p}`}
+                  className="gk-chip ghost gk-chip-link"
+                  href={`/games/browse?platform=${encodeURIComponent(p)}`}
+                >
                   {p}
-                </span>
+                </a>
               ))}
               {game.mode.map((m) => (
                 <span key={`mo-${m}`} className="gk-chip ghost">
