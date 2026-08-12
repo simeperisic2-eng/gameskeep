@@ -860,6 +860,10 @@ export interface GameVideoEntry {
   provider: string;
   url: string;
   title: string | null;
+  /** Channel/author from the provider (A2) — shown on the card. */
+  channel: string | null;
+  /** Provider thumbnail (A2). Null in demo → the frontend draws its designed cover. */
+  thumbnailUrl: string | null;
   kind: string;
   isLive: boolean;
 }
@@ -886,6 +890,8 @@ export interface GameDlcEntry {
   priceCents: number | null;
   currency: string;
   releaseDate: string | null;
+  /** Outbound store page for the DLC (A2) — link out, never scraped content. */
+  url: string | null;
 }
 export interface GamePlayerCount {
   current: number | null;
@@ -926,6 +932,11 @@ export interface GameDetail {
   /** Licensed-cover slot (null in demo — the frontend renders a designed cover). */
   coverUrl: string | null;
   backgroundUrl: string | null;
+  /**
+   * Public Steam app id (A2) — powers the outbound Steam store + SteamDB
+   * "More stats" links. A public fact (it's in every Steam URL), not internal.
+   */
+  steamAppId: number | null;
   hltbMainHours: number | null;
   hltbCompletionistHours: number | null;
   steamCompletionRate: number | null;
@@ -1229,6 +1240,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       tags: games.tags,
       coverUrl: games.coverUrl,
       backgroundUrl: games.backgroundUrl,
+      steamAppId: games.steamAppId,
       hltbMainHours: games.hltbMainHours,
       hltbCompletionistHours: games.hltbCompletionistHours,
       steamCompletionRate: games.steamCompletionRate,
@@ -1272,6 +1284,8 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
         provider: gameVideos.provider,
         url: gameVideos.videoUrl,
         title: gameVideos.title,
+        channel: gameVideos.channel,
+        thumbnailUrl: gameVideos.thumbnailUrl,
         kind: gameVideos.kind,
         isLive: gameVideos.isLive,
         isPinned: gameVideos.isPinned,
@@ -1279,8 +1293,9 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       })
       .from(gameVideos)
       .where(eq(gameVideos.gameId, g.gameId))
+      // A2 display rule: editor-pinned first, then sort order, take 3.
       .orderBy(desc(gameVideos.isPinned), asc(gameVideos.sort))
-      .limit(6),
+      .limit(3),
     db
       .select({
         store: gamePrices.store,
@@ -1312,6 +1327,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
         priceCents: gameDlc.priceCents,
         currency: gameDlc.currency,
         releaseDate: gameDlc.releaseDate,
+        url: gameDlc.url,
       })
       .from(gameDlc)
       .where(eq(gameDlc.gameId, g.gameId)),
@@ -1393,6 +1409,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     tags: g.tags ?? [],
     coverUrl: publicAssetUrl(g.coverUrl),
     backgroundUrl: publicAssetUrl(g.backgroundUrl),
+    steamAppId: g.steamAppId ?? null,
     hltbMainHours: g.hltbMainHours ?? null,
     hltbCompletionistHours: g.hltbCompletionistHours ?? null,
     steamCompletionRate: g.steamCompletionRate ?? null,
@@ -1405,6 +1422,8 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       provider: v.provider,
       url: v.url,
       title: v.title ?? null,
+      channel: v.channel ?? null,
+      thumbnailUrl: publicAssetUrl(v.thumbnailUrl),
       kind: v.kind,
       isLive: v.isLive,
     })),
@@ -1431,6 +1450,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       priceCents: d.priceCents ?? null,
       currency: d.currency,
       releaseDate: d.releaseDate ?? null,
+      url: d.url ?? null,
     })),
     playerCount: player
       ? {

@@ -265,6 +265,10 @@ export interface GameVideoEntry {
   provider: string;
   url: string;
   title: string | null;
+  /** Channel/author (A2) — shown on the card. */
+  channel: string | null;
+  /** Provider thumbnail (A2). Null in demo → the designed CoverArt placeholder. */
+  thumbnailUrl: string | null;
   kind: string;
   isLive: boolean;
 }
@@ -291,6 +295,8 @@ export interface GameDlcEntry {
   priceCents: number | null;
   currency: string;
   releaseDate: string | null;
+  /** Outbound store page for the DLC (A2). */
+  url: string | null;
 }
 export interface GamePlayerCount {
   current: number | null;
@@ -328,6 +334,8 @@ export interface GameDetail {
   tags: string[];
   coverUrl: string | null;
   backgroundUrl: string | null;
+  /** Public Steam app id (A2) — outbound Steam store + SteamDB "More stats" links. */
+  steamAppId: number | null;
   hltbMainHours: number | null;
   hltbCompletionistHours: number | null;
   steamCompletionRate: number | null;

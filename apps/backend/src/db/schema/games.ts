@@ -292,6 +292,11 @@ export const gameVideos = pgTable(
     provider: videoProviderEnum('provider').notNull().default('youtube'),
     videoUrl: text('video_url').notNull(),
     title: varchar('title', { length: 300 }),
+    // A2: channel + thumbnail from the provider (YouTube Data API in production;
+    // null in demo → the frontend renders its designed placeholder, no broken
+    // network image offline). Thumbnails LINK OUT — never an embedded player.
+    channel: varchar('channel', { length: 120 }),
+    thumbnailUrl: text('thumbnail_url'),
     kind: varchar('kind', { length: 40 }).notNull().default('gameplay'),
     isPinned: boolean('is_pinned').notNull().default(false),
     isLive: boolean('is_live').notNull().default(false),

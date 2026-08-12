@@ -243,7 +243,11 @@ export default async function GamePage({
             </section>
           )}
 
-          <PlayerActivity playerCount={game.playerCount} history={game.playerCountHistory} />
+          <PlayerActivity
+            playerCount={game.playerCount}
+            history={game.playerCountHistory}
+            steamAppId={game.steamAppId}
+          />
 
           {contentFlags ? <ContentFlags flags={contentFlags} /> : null}
 
@@ -254,6 +258,7 @@ export default async function GamePage({
             prices={game.prices}
             sysReqs={game.sysReqs}
             dlc={game.dlc}
+            gameName={game.name}
           />
 
           <GameArticles articles={game.articles} />

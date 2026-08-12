@@ -12,6 +12,7 @@ import {
   badges,
   gameContentFlags,
   gameCriticReviews,
+  gameDlc,
   gameExternalRatings,
   gamePlayerCounts,
   gamePrices,
@@ -20,6 +21,7 @@ import {
   games,
   gameSystemRequirements,
   gameUserRatings,
+  gameVideos,
   roles,
   sources,
   sourceTypes,
@@ -661,7 +663,12 @@ async function seedRatings(opts: {
   // never SteamDB-style dev internals. Idempotent: child rows guarded by hasAny,
   // metadata set once (where still null) so a later editor edit is never clobbered.
   async function hasAny(
-    table: typeof gamePrices | typeof gameSystemRequirements | typeof gamePlayerCounts,
+    table:
+      | typeof gamePrices
+      | typeof gameSystemRequirements
+      | typeof gamePlayerCounts
+      | typeof gameVideos
+      | typeof gameDlc,
     gameId: string,
   ): Promise<boolean> {
     const [row] = await db
@@ -705,19 +712,95 @@ async function seedRatings(opts: {
       .where(and(eq(games.id, gameId), isNull(games.releaseDate)));
   }
 
-  /** Steam price (USD cents) + optional discount. */
-  async function price(gameId: string, cents: number, discPct = 0): Promise<void> {
+  /**
+   * A2 "Where to buy": outbound store links + price + discount per store. The
+   * Steam URL is built from the game's PUBLIC steam_app_id (read off the row —
+   * no duplication); Epic/GOG rows are seeded only where the store genuinely
+   * carries the title (GOG = DRM-free-friendly), so the demo reads authentically.
+   * Outbound links only (attribution + utility) — never embedded store content.
+   */
+  async function price(
+    gameId: string,
+    cents: number,
+    discPct = 0,
+    storeOpts: { epicSlug?: string; gogSlug?: string } = {},
+  ): Promise<void> {
     if (await hasAny(gamePrices, gameId)) return;
+    const [g] = await db
+      .select({ steamAppId: games.steamAppId })
+      .from(games)
+      .where(eq(games.id, gameId))
+      .limit(1);
     const onSale = discPct > 0;
-    await db.insert(gamePrices).values({
+    const paid = onSale ? Math.round(cents * (1 - discPct / 100)) : cents;
+    const base = {
       gameId,
-      store: 'Steam',
       platform: 'PC',
       currency: 'USD',
-      priceCents: onSale ? Math.round(cents * (1 - discPct / 100)) : cents,
+      priceCents: paid,
       discountPct: discPct,
       isOnSale: onSale,
-    });
+    };
+    const rows = [
+      {
+        ...base,
+        store: 'Steam',
+        url: g?.steamAppId ? `https://store.steampowered.com/app/${g.steamAppId}/` : null,
+      },
+    ];
+    if (storeOpts.epicSlug) {
+      rows.push({
+        ...base,
+        store: 'Epic Games',
+        url: `https://store.epicgames.com/en-US/p/${storeOpts.epicSlug}`,
+      });
+    }
+    if (storeOpts.gogSlug) {
+      rows.push({ ...base, store: 'GOG', url: `https://www.gog.com/en/game/${storeOpts.gogSlug}` });
+    }
+    await db.insert(gamePrices).values(rows);
+  }
+
+  /**
+   * A2 videos: mock YouTube entries (title + channel; thumbnail null → the
+   * frontend's designed placeholder, so nothing breaks offline). These seeded
+   * rows ARE the demo's curated list; production autofill (YouTube Data API)
+   * only ever proposes into EMPTY slots, never over curation.
+   */
+  async function videos(
+    gameId: string,
+    entries: { id: string; title: string; channel: string; kind: string }[],
+  ): Promise<void> {
+    if (await hasAny(gameVideos, gameId)) return;
+    await db.insert(gameVideos).values(
+      entries.map((e, i) => ({
+        gameId,
+        provider: 'youtube' as const,
+        videoUrl: `https://www.youtube.com/watch?v=${e.id}`,
+        title: e.title,
+        channel: e.channel,
+        kind: e.kind,
+        sort: i,
+      })),
+    );
+  }
+
+  /** A2 DLC slot: name + price + date (+ outbound Steam DLC page where known). */
+  async function dlc(
+    gameId: string,
+    entries: { name: string; cents: number; date: string; steamAppId?: number }[],
+  ): Promise<void> {
+    if (await hasAny(gameDlc, gameId)) return;
+    await db.insert(gameDlc).values(
+      entries.map((e) => ({
+        gameId,
+        name: e.name,
+        priceCents: e.cents,
+        currency: 'USD',
+        releaseDate: e.date,
+        url: e.steamAppId ? `https://store.steampowered.com/app/${e.steamAppId}/` : null,
+      })),
+    );
   }
 
   /** A min + recommended PC requirement pair (one of three weight templates). */
@@ -782,10 +865,25 @@ async function seedRatings(opts: {
     hltbComplete: 140,
     steamCompletion: 31,
   });
-  await price(opts.bg3Id, 5999);
+  await price(opts.bg3Id, 5999, 0, { gogSlug: 'baldurs_gate_iii' });
   await sysreq(opts.bg3Id, 'mid');
   await players(opts.bg3Id, 68_000, 95_000);
   await steamPct(opts.bg3Id, 96, 742_000);
+  await videos(opts.bg3Id, [
+    {
+      id: 'gkbg3trailr',
+      title: "Baldur's Gate 3 — Launch Trailer",
+      channel: 'Larian Studios',
+      kind: 'trailer',
+    },
+    { id: 'gkbg3review', title: "Baldur's Gate 3 Review", channel: 'GameSpot', kind: 'review' },
+    {
+      id: 'gkbg3guide1',
+      title: "Baldur's Gate 3 — Beginner's Guide to Act One",
+      channel: 'Fextralife',
+      kind: 'gameplay',
+    },
+  ]);
 
   // Cyberpunk 2077 — recovered, frequently discounted.
   await meta(opts.cyberpunkId, {
@@ -799,10 +897,36 @@ async function seedRatings(opts: {
     hltbComplete: 62,
     steamCompletion: 42,
   });
-  await price(opts.cyberpunkId, 5999, 50);
+  await price(opts.cyberpunkId, 5999, 50, {
+    epicSlug: 'cyberpunk-2077',
+    gogSlug: 'cyberpunk_2077',
+  });
   await sysreq(opts.cyberpunkId, 'heavy');
   await players(opts.cyberpunkId, 31_000, 58_000);
   await steamPct(opts.cyberpunkId, 85, 680_000);
+  await videos(opts.cyberpunkId, [
+    {
+      id: 'gkcp77trail',
+      title: 'Cyberpunk 2077 — Official 2.0 Trailer',
+      channel: 'CD PROJEKT RED',
+      kind: 'trailer',
+    },
+    {
+      id: 'gkcp77revw1',
+      title: 'Cyberpunk 2077: Phantom Liberty Review',
+      channel: 'IGN',
+      kind: 'review',
+    },
+    {
+      id: 'gkcp77play1',
+      title: 'Cyberpunk 2077 2.0 — One Hour in Night City',
+      channel: 'Night City Central',
+      kind: 'gameplay',
+    },
+  ]);
+  await dlc(opts.cyberpunkId, [
+    { name: 'Phantom Liberty', cents: 2999, date: '2023-09-26', steamAppId: 2138330 },
+  ]);
 
   // Stellar Drifter — the big-disconnect demo title (monetization friction).
   await meta(opts.stellarId, {
@@ -817,10 +941,30 @@ async function seedRatings(opts: {
     hltbComplete: 40,
     steamCompletion: 22,
   });
-  await price(opts.stellarId, 4999);
+  await price(opts.stellarId, 4999, 0, { gogSlug: 'stellar_drifter' });
   await sysreq(opts.stellarId, 'heavy');
   await players(opts.stellarId, 4_200, 9_800);
   await steamPct(opts.stellarId, 58, 41_000);
+  await videos(opts.stellarId, [
+    {
+      id: 'gksdrftrail',
+      title: 'Stellar Drifter — Launch Trailer',
+      channel: 'Voidlight Studios',
+      kind: 'trailer',
+    },
+    {
+      id: 'gksdrfrevw1',
+      title: 'Stellar Drifter Review — Ambition vs Depth',
+      channel: 'Frame & Verdict',
+      kind: 'review',
+    },
+    {
+      id: 'gksdrfplay1',
+      title: '30 Minutes of Stellar Drifter Deep-Space Exploration',
+      channel: 'Orbit Notes',
+      kind: 'gameplay',
+    },
+  ]);
 
   // Elden Ring — huge, enduring audience.
   await meta(opts.eldenId, {
@@ -839,6 +983,24 @@ async function seedRatings(opts: {
   await sysreq(opts.eldenId, 'mid');
   await players(opts.eldenId, 112_000, 184_000);
   await steamPct(opts.eldenId, 92, 690_000);
+  await videos(opts.eldenId, [
+    {
+      id: 'gkeldntrail',
+      title: 'Elden Ring: Shadow of the Erdtree — Story Trailer',
+      channel: 'BANDAI NAMCO Europe',
+      kind: 'trailer',
+    },
+    { id: 'gkeldnrevw1', title: 'Elden Ring Review', channel: 'IGN', kind: 'review' },
+    {
+      id: 'gkeldnplay1',
+      title: 'Elden Ring — Limgrave Done Right (No Summons)',
+      channel: 'Tarnished Academy',
+      kind: 'gameplay',
+    },
+  ]);
+  await dlc(opts.eldenId, [
+    { name: 'Shadow of the Erdtree', cents: 3999, date: '2024-06-21', steamAppId: 2778580 },
+  ]);
 
   // The Witcher 3 — evergreen, deeply discounted.
   await meta(opts.witcher3Id, {
@@ -853,10 +1015,37 @@ async function seedRatings(opts: {
     hltbComplete: 172,
     steamCompletion: 35,
   });
-  await price(opts.witcher3Id, 3999, 80);
+  await price(opts.witcher3Id, 3999, 80, {
+    epicSlug: 'the-witcher-3-wild-hunt',
+    gogSlug: 'the_witcher_3_wild_hunt_game',
+  });
   await sysreq(opts.witcher3Id, 'light');
   await players(opts.witcher3Id, 28_000, 45_000);
   await steamPct(opts.witcher3Id, 97, 820_000);
+  await videos(opts.witcher3Id, [
+    {
+      id: 'gkw3trailer',
+      title: 'The Witcher 3: Wild Hunt — Killing Monsters Trailer',
+      channel: 'The Witcher',
+      kind: 'trailer',
+    },
+    {
+      id: 'gkw3review1',
+      title: 'The Witcher 3: Wild Hunt Review',
+      channel: 'GameSpot',
+      kind: 'review',
+    },
+    {
+      id: 'gkw3playth1',
+      title: 'The Witcher 3 in 2026 — Still the Benchmark?',
+      channel: 'Kaer Morhen Files',
+      kind: 'gameplay',
+    },
+  ]);
+  await dlc(opts.witcher3Id, [
+    { name: 'Hearts of Stone', cents: 999, date: '2015-10-13', steamAppId: 378648 },
+    { name: 'Blood and Wine', cents: 1999, date: '2016-05-31', steamAppId: 378649 },
+  ]);
 
   // Hades II — early access darling.
   await meta(opts.hades2Id, {
@@ -871,10 +1060,30 @@ async function seedRatings(opts: {
     hltbComplete: 60,
     steamCompletion: 28,
   });
-  await price(opts.hades2Id, 2999);
+  await price(opts.hades2Id, 2999, 0, { epicSlug: 'hades-ii' });
   await sysreq(opts.hades2Id, 'light');
   await players(opts.hades2Id, 22_000, 41_000);
   await steamPct(opts.hades2Id, 96, 95_000);
+  await videos(opts.hades2Id, [
+    {
+      id: 'gkhd2trailr',
+      title: 'Hades II — The Unseen Update Trailer',
+      channel: 'Supergiant Games',
+      kind: 'trailer',
+    },
+    {
+      id: 'gkhd2review',
+      title: 'Hades II Review — Supergiant Sticks the Landing',
+      channel: 'Eurogamer',
+      kind: 'review',
+    },
+    {
+      id: 'gkhd2playt1',
+      title: 'Hades II — Melinoë Full Run (Fear 16)',
+      channel: 'Underworld Lab',
+      kind: 'gameplay',
+    },
+  ]);
 
   // Helldivers 2 — live co-op, monetization friction (mixed community).
   await meta(opts.helldivers2Id, {
@@ -893,6 +1102,21 @@ async function seedRatings(opts: {
   await sysreq(opts.helldivers2Id, 'mid');
   await players(opts.helldivers2Id, 35_000, 78_000);
   await steamPct(opts.helldivers2Id, 60, 510_000);
+  await videos(opts.helldivers2Id, [
+    {
+      id: 'gkhd2trail2',
+      title: 'Helldivers 2 — Omens of Tyranny Trailer',
+      channel: 'PlayStation',
+      kind: 'trailer',
+    },
+    { id: 'gkhdvreview', title: 'Helldivers 2 Review', channel: 'IGN', kind: 'review' },
+    {
+      id: 'gkhdvplayt1',
+      title: 'Helldivers 2 — Helldive Difficulty, No Deaths',
+      channel: 'Managed Democracy',
+      kind: 'gameplay',
+    },
+  ]);
 
   // Final Fantasy XVI — newer PC port.
   await meta(opts.ffxviId, {
@@ -907,10 +1131,25 @@ async function seedRatings(opts: {
     hltbComplete: 75,
     steamCompletion: 45,
   });
-  await price(opts.ffxviId, 4999, 20);
+  await price(opts.ffxviId, 4999, 20, { epicSlug: 'final-fantasy-xvi' });
   await sysreq(opts.ffxviId, 'heavy');
   await players(opts.ffxviId, 9_000, 21_000);
   await steamPct(opts.ffxviId, 82, 38_000);
+  await videos(opts.ffxviId, [
+    {
+      id: 'gkff16trail',
+      title: 'FINAL FANTASY XVI — PC Launch Trailer',
+      channel: 'FINAL FANTASY',
+      kind: 'trailer',
+    },
+    { id: 'gkff16revw1', title: 'Final Fantasy XVI Review', channel: 'GameSpot', kind: 'review' },
+    {
+      id: 'gkff16play1',
+      title: 'FF16 — Eikon Battles Ranked (Spoiler-Light)',
+      channel: 'Crystal Codex',
+      kind: 'gameplay',
+    },
+  ]);
 
   // Seed ONE disconnect context tag (editor-entered) so the "why the gap" feature
   // — a key differentiator — is visible in the demo. Stellar Drifter is the large-

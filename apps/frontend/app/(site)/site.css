@@ -2767,9 +2767,15 @@ h4 {
   font-size: var(--fs-sm);
   color: var(--gk-text);
 }
+/* A2: discount badge is AMBER — green/red stay reserved for bias/disconnect. */
 .gk-price-disc {
-  color: #7fd29a;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  color: var(--gk-accent);
+  background: rgba(var(--gk-amber), 0.1);
+  border: 1px solid rgba(var(--gk-amber), 0.35);
   font-size: 11px;
+  font-weight: 700;
 }
 .gk-sysreqs {
   display: grid;
@@ -3883,4 +3889,158 @@ h4 {
   .gk-catalog-head .gk-browse-all {
     align-self: flex-start;
   }
+}
+
+/* =====================  A2: GAME-PAGE ENRICHMENT  ========================== */
+/* video thumbnail cards — LINK OUT to YouTube; deliberately no embedded player */
+.gk-vidgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--s4);
+}
+.gk-vidcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid var(--gk-card-border);
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  transition:
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+.gk-vidcard:hover {
+  border-color: var(--gk-card-border-hi);
+  transform: translateY(-2px);
+}
+/* 16/9 thumb slot; contains an absolute CoverArt — position:relative is
+ * load-bearing (the collapse trap). */
+.gk-vidcard-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-bottom: 1px solid var(--gk-card-border);
+}
+.gk-vidcard-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gk-vidcard-play {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  color: #fff;
+  text-indent: 3px;
+}
+.gk-vidcard-play::before {
+  content: '';
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(10, 9, 6, 0.66);
+  border: 1px solid rgba(var(--gk-amber), 0.5);
+  transition: background 0.16s ease;
+}
+.gk-vidcard:hover .gk-vidcard-play::before {
+  background: rgba(var(--gk-amber), 0.28);
+}
+.gk-vidcard-kind {
+  position: absolute;
+  top: var(--s2);
+  left: var(--s2);
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--gk-accent);
+  background: rgba(10, 9, 6, 0.72);
+  border: 1px solid rgba(var(--gk-amber), 0.4);
+  backdrop-filter: blur(4px);
+}
+.gk-vidcard-title {
+  padding: 0 var(--s3);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-snug);
+  color: var(--gk-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.gk-vidcard:hover .gk-vidcard-title {
+  color: var(--gk-accent);
+}
+.gk-vidcard-channel {
+  padding: 0 var(--s3) var(--s3);
+  font-size: 11.5px;
+  color: var(--gk-text-dim);
+}
+.gk-media-videos {
+  margin-bottom: var(--s5);
+}
+.gk-media-note {
+  margin: var(--s3) 0 0;
+  font-size: 11.5px;
+  color: var(--gk-text-dim);
+}
+
+/* where-to-buy / DLC outbound rows */
+.gk-buy-link {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  text-decoration: none;
+  color: inherit;
+}
+.gk-buy-link .gk-media-label {
+  flex: 1;
+}
+.gk-buy-link:hover .gk-media-label {
+  color: var(--gk-accent);
+}
+.gk-out-arrow {
+  flex: 0 0 auto;
+  color: var(--gk-text-dim);
+  font-size: 12px;
+  transition: color 0.16s ease;
+}
+.gk-buy-link:hover .gk-out-arrow {
+  color: var(--gk-accent);
+}
+
+/* player-activity footer: note + the outbound SteamDB deep-stats link */
+.gk-players-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+}
+.gk-players-foot .gk-players-note {
+  margin: 0;
+}
+.gk-more-stats {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gk-accent);
+  text-decoration: none;
+}
+.gk-more-stats:hover {
+  text-decoration: underline;
 }

@@ -43,9 +43,13 @@ function Sparkline({ points }: { points: number[] }): React.JSX.Element | null {
 export function PlayerActivity({
   playerCount,
   history,
+  steamAppId,
 }: {
   playerCount: GamePlayerCount | null;
   history: PlayerCountPoint[];
+  /** A2: powers the outbound SteamDB "More stats" link (link out ONLY — we
+   * never scrape or ingest their numbers; same rule as article excerpts). */
+  steamAppId?: number | null;
 }): React.JSX.Element | null {
   const series = history.map((p) => p.current).filter((n): n is number => n != null);
   if (!playerCount && series.length === 0) return null;
@@ -84,9 +88,21 @@ export function PlayerActivity({
         ) : null}
       </div>
       <Sparkline points={series} />
-      <p className="gk-players-note">
-        Steam concurrent players only — consoles don&apos;t publish live counts.
-      </p>
+      <div className="gk-players-foot">
+        <p className="gk-players-note">
+          Steam concurrent players only — consoles don&apos;t publish live counts.
+        </p>
+        {steamAppId ? (
+          <a
+            className="gk-more-stats"
+            href={`https://steamdb.info/app/${steamAppId}/charts/`}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+          >
+            More stats on SteamDB <span aria-hidden>↗</span>
+          </a>
+        ) : null}
+      </div>
     </section>
   );
 }

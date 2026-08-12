@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { and, eq } from 'drizzle-orm';
 import {
   gameResolveInput,
   unmatchedDismiss,
@@ -15,7 +16,11 @@ import {
   resolveOrQueue,
   retryUnmatched,
 } from '../catalog/resolve';
+import { autofillGameVideos, describeVideoProvider } from '../data-source/videos';
+import { db } from '../db/client';
+import { games, subjects } from '../db/schema';
 import { actorOf, sendError } from './http';
+import { writeAudit } from './audit';
 
 /**
  * Catalog + unmatched-queue admin routes (SPEC I2 §3/§4/§5/§6). Registered
@@ -132,6 +137,41 @@ export async function registerCatalogAdminRoutes(admin: FastifyInstance): Promis
         return;
       }
       reply.send({ data: { status: 'dismissed' } });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // Editor: auto-fill a game's video slots from the video provider (A2).
+  // Auto + manual override: candidates land ONLY when the game has no stored
+  // videos — an editor-curated list is never touched. Curation itself happens
+  // via the generic `game-videos` resource (pin/reorder/remove). Demo: the mock
+  // provider proposes nothing (no network), so this is an honest no-op.
+  admin.post('/games/:slug/videos/autofill', async (req, reply) => {
+    try {
+      const { slug } = req.params as { slug: string };
+      const [game] = await db
+        .select({ id: games.id, name: subjects.name })
+        .from(games)
+        .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+        .where(eq(subjects.slug, slug))
+        .limit(1);
+      if (!game) {
+        reply.code(404).send({ error: 'not_found', message: 'Unknown game slug' });
+        return;
+      }
+      const result = await autofillGameVideos(game.id, game.name);
+      if (result.added > 0) {
+        await writeAudit({
+          action: 'update',
+          entityType: 'game-videos',
+          entityId: game.id,
+          changes: { autofill: result },
+          summary: `video autofill added ${result.added} candidate(s) for ${game.name}`,
+          actor: actorOf(req),
+        });
+      }
+      reply.send({ data: { provider: describeVideoProvider().provider, ...result } });
     } catch (err) {
       sendError(reply, err);
     }
