@@ -14,6 +14,7 @@ import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
+import { constantTimeEqual } from '../lib/crypto';
 import { actorOf, sendError, type Actor } from './http';
 import { RESOURCE_BY_NAME, listResourceMeta, uniqueSlug, type ResourceDef } from './registry';
 
@@ -24,6 +25,31 @@ function requireResource(reply: FastifyReply, name: string): ResourceDef | null 
     return null;
   }
   return resource;
+}
+
+/**
+ * I6 hardening (MED — audit leak): strip a resource's secret columns from
+ * every CRUD payload AND every audit snapshot. `passwordHash` (and any future
+ * secret column) must never appear in an admin response or an audit row.
+ */
+function redactRow(resource: ResourceDef, row: Row | null): Row | null {
+  const fields = resource.redactFields;
+  if (!row || !fields || fields.length === 0) return row;
+  const out: Row = { ...row };
+  for (const f of fields) {
+    if (f in out) out[f] = out[f] == null ? null : '[REDACTED]';
+  }
+  return out;
+}
+
+function redactDiff(resource: ResourceDef, diff: Row): Row {
+  const fields = resource.redactFields;
+  if (!fields || fields.length === 0) return diff;
+  const out: Row = { ...diff };
+  for (const f of fields) {
+    if (f in out) out[f] = '[REDACTED]';
+  }
+  return out;
 }
 
 // ── generic CRUD operations ──────────────────────────────────────────────────
@@ -39,10 +65,10 @@ async function createOne(resource: ResourceDef, body: unknown, actor: Actor): Pr
     action: 'create',
     entityType: resource.name,
     entityId: String(row.id),
-    changes: { created: row },
+    changes: { created: redactRow(resource, row) },
     actor,
   });
-  return row;
+  return redactRow(resource, row)!;
 }
 
 async function updateOne(
@@ -65,10 +91,10 @@ async function updateOne(
     action: 'update',
     entityType: resource.name,
     entityId: id,
-    changes: diffRows(before, after),
+    changes: redactDiff(resource, diffRows(before, after)),
     actor,
   });
-  return after;
+  return redactRow(resource, after)!;
 }
 
 async function deleteOne(resource: ResourceDef, id: string, actor: Actor): Promise<Row | null> {
@@ -80,10 +106,10 @@ async function deleteOne(resource: ResourceDef, id: string, actor: Actor): Promi
     action: 'delete',
     entityType: resource.name,
     entityId: id,
-    changes: { deleted: before },
+    changes: { deleted: redactRow(resource, before) },
     actor,
   });
-  return before;
+  return redactRow(resource, before);
 }
 
 /** Which columns are pgvector — proves the embedding columns exist (verify #6). */
@@ -101,11 +127,14 @@ async function vectorColumns(): Promise<{ table: string; column: string }[]> {
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   await app.register(
     async (admin) => {
-      // Token guard for the whole admin surface (full RBAC arrives in I8).
+      // Token guard for the whole admin surface. I6 hardening (LOW): the
+      // compare is CONSTANT-TIME (hash-then-timingSafeEqual — hashing first
+      // also removes the length side-channel). Staff-session auth joins in
+      // Slice 3; this service credential is RETAINED for automation.
       admin.addHook('onRequest', async (req, reply) => {
         const token = req.headers['x-admin-token'];
         const provided = Array.isArray(token) ? token[0] : token;
-        if (provided !== env.ADMIN_API_TOKEN) {
+        if (!provided || !constantTimeEqual(provided, env.ADMIN_API_TOKEN)) {
           reply
             .code(401)
             .send({ error: 'unauthorized', message: 'Missing or invalid admin token' });
@@ -278,7 +307,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           const rows = resource.ops?.list
             ? await resource.ops.list()
             : await listRows(resource.table);
-          reply.send({ data: rows });
+          reply.send({ data: rows.map((r) => redactRow(resource, r)) });
         } catch (err) {
           sendError(reply, err);
         }
@@ -296,7 +325,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             reply.code(404).send({ error: 'not_found' });
             return;
           }
-          reply.send({ data: row });
+          reply.send({ data: redactRow(resource, row) });
         } catch (err) {
           sendError(reply, err);
         }

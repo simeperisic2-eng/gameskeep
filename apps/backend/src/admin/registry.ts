@@ -115,6 +115,12 @@ export interface ResourceDef {
   hasSlug?: boolean;
   slugFrom?: string;
   ops?: ResourceOps;
+  /**
+   * I6 hardening (MED): secret columns stripped from every CRUD payload and
+   * every audit snapshot (e.g. users.passwordHash). Values render as
+   * '[REDACTED]' when set, null when null — never the stored secret.
+   */
+  redactFields?: string[];
 }
 
 /** Generate a slug that isn't already taken in the table (base, base-2, …). */
@@ -448,6 +454,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.users,
     create: userCreate,
     update: userCreate.partial(),
+    redactFields: ['passwordHash'],
     labelColumn: 'username',
     fields: [
       F.text('username', true),

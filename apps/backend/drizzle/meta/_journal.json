@@ -43,6 +43,13 @@
       "when": 1786531100742,
       "tag": "0005_a2_videos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786610251907,
+      "tag": "0006_i6_auth",
+      "breakpoints": true
     }
   ]
 }

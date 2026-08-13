@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { env } from '../config/env';
+import { constantTimeEqual } from '../lib/crypto';
 
 /**
  * Baseline security hardening (CLAUDE.md security rules): secure headers,
@@ -36,7 +37,8 @@ export async function registerSecurity(app: FastifyInstance): Promise<void> {
       if (req.url.startsWith('/health')) return true;
       const token = req.headers['x-admin-token'];
       const provided = Array.isArray(token) ? token[0] : token;
-      return provided === env.ADMIN_API_TOKEN;
+      // I6 hardening (LOW): constant-time here too — same secret, same rule.
+      return Boolean(provided && constantTimeEqual(provided, env.ADMIN_API_TOKEN));
     },
   });
 }

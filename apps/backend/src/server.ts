@@ -1,8 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { env } from './config/env';
+import fastifyCookie from '@fastify/cookie';
+import { env, trustProxyValue } from './config/env';
 import { registerSecurity } from './plugins/security';
 import { registerHealthRoutes } from './routes/health';
 import { registerAdminRoutes } from './admin/routes';
+import { registerAuthRoutes } from './auth/routes';
 import { registerPublicRoutes } from './public/routes';
 
 /**
@@ -12,15 +14,22 @@ import { registerPublicRoutes } from './public/routes';
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: env.LOG_LEVEL },
-    // Behind Cloudflare/Nginx later: trust the proxy for client IP + rate limit.
-    trustProxy: true,
+    // I6 hardening (HIGH): default FALSE — req.ip is the unspoofable socket
+    // peer and X-Forwarded-For is ignored, so per-IP throttles can't be
+    // defeated by a forged header. Production behind a real proxy sets
+    // TRUST_PROXY to a hop count / CIDR list (see config/env.ts).
+    trustProxy: trustProxyValue(),
     // Reject oversized bodies early (anti-abuse / anti-bug).
     bodyLimit: 1_048_576, // 1 MiB
   });
 
+  // Signed cookies for the I6 session (HttpOnly; the secret never leaves env).
+  await app.register(fastifyCookie, { secret: env.SESSION_SECRET });
+
   await registerSecurity(app);
   await registerHealthRoutes(app);
   await registerPublicRoutes(app);
+  await registerAuthRoutes(app);
   await registerAdminRoutes(app);
 
   // Friendly API root — confirms the foundation is serving.

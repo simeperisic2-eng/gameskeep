@@ -38,6 +38,9 @@ export const users = pgTable('users', {
   reputation: integer('reputation').notNull().default(0),
   isEmailVerified: boolean('is_email_verified').notNull().default(false),
   passwordHash: text('password_hash'), // filled by auth in I6
+  // Which hash scheme produced password_hash (I6, locked decision 3) — lets a
+  // future parameter bump re-hash lazily at the next successful login.
+  passwordAlgo: varchar('password_algo', { length: 40 }),
 
   // --- hidden internal fields (never shown to users) ---
   voteWeight: real('vote_weight').notNull().default(0), // 0 → 1.0, anti-abuse (I6)

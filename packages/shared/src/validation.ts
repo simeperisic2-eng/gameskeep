@@ -223,6 +223,23 @@ export const userCreate = z.object({
   status: z.enum(USER_STATUSES).default('active'),
 });
 
+// ── auth (SPEC I6, Slice 1) ──────────────────────────────────────────────────
+export const authRegisterInput = z.object({
+  username: z
+    .string()
+    .min(3)
+    .max(32)
+    .regex(/^[a-zA-Z0-9_]+$/, 'letters, numbers and underscores only'),
+  email: z.string().email().max(254),
+  password: z.string().min(8, 'at least 8 characters').max(200),
+});
+
+export const authLoginInput = z.object({
+  /** Username OR email — resolved server-side to ONE stable account. */
+  identifier: z.string().min(1).max(254),
+  password: z.string().min(1).max(200),
+});
+
 // ── game sub-resources (auto + manual override surfaces) ─────────────────────
 export const gameReviewCreate = z.object({
   gameId: uuid,
