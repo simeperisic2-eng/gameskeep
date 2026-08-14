@@ -132,8 +132,10 @@ export async function seedDemo(): Promise<void> {
       roleId: ownerRole.id,
       levelId: legendLevel.id,
       isEmailVerified: true,
-      // No password yet — real auth lands in I6.
-      // [[OWNER-TODO: set a real owner account + password before launch (demo seeds username "admin")]]
+      // No password by design — the owner sets it in I6 (Slice 3) via
+      // `npm run set-owner-password` (src/scripts/set-owner-password.ts);
+      // Argon2id-hashed, never in source, so the demo boots with zero secrets.
+      // [[OWNER-TODO: run set-owner-password before launch (demo seeds username "admin", no password)]]
     },
     eq(users.username, 'admin'),
   );

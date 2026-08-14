@@ -79,6 +79,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-gameskeep}:${POSTGRES_PASSWORD:-gameskeep_demo}@postgres:5432/${POSTGRES_DB:-gameskeep}
       REDIS_URL: redis://redis:6379
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-demo-admin-token}
+      # Demo headroom for the single-host verify suite; prod default is 100.
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-1000}
     ports:
       - '${BACKEND_PORT:-4000}:4000'
     depends_on:

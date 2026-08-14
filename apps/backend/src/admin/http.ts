@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
+import { getAdminAuth } from './guard';
 
 /**
  * Shared HTTP helpers for the admin surface — the actor extractor and the
@@ -8,9 +9,25 @@ import { ZodError } from 'zod';
  */
 export interface Actor {
   label: string;
+  /** The acting staff user's id when a session drives the action (null for the service token). */
+  userId?: string | null;
 }
 
+/**
+ * The audit actor for a request. Slice 3: a staff SESSION records the real
+ * username (immutable in the audit trail even if the account is later renamed
+ * or deleted — decision 7 keeps the denormalized label); the service token
+ * records its `x-admin-actor` label or 'service'. Falls back to the raw header
+ * only if the guard somehow didn't run.
+ */
 export function actorOf(req: FastifyRequest): Actor {
+  const auth = getAdminAuth(req);
+  if (auth) {
+    return {
+      label: auth.actorLabel,
+      userId: auth.kind === 'staff' ? auth.userId : null,
+    };
+  }
   const raw = req.headers['x-admin-actor'];
   const label = (Array.isArray(raw) ? raw[0] : raw)?.toString().slice(0, 120) || 'admin';
   return { label };

@@ -42,6 +42,16 @@ const EnvSchema = z.object({
   // ('1') or CIDR list — never blanket 'true' unless every hop is trusted.
   TRUST_PROXY: z.string().default('false'),
 
+  // --- anonymous rate limit (I6 Slice 3 — de-hardcode the abuse threshold) ---
+  // Max anonymous requests per IP per window before a 429. Health probes and
+  // service-token (x-admin-token) traffic are exempt. Default 100 keeps the
+  // production posture; the demo raises it via compose so the growing
+  // prove-the-attack-fails verify suite (all from ONE host) doesn't self-
+  // throttle. The real DDoS/bot shield is Cloudflare (CLAUDE.md); this is a
+  // backstop. Previously hardcoded — now a knob (no hardcoded thresholds rule).
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+  RATE_LIMIT_WINDOW: z.string().min(1).default('1 minute'),
+
   DATABASE_URL: z
     .string()
     .min(1)

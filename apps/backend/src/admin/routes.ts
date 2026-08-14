@@ -5,7 +5,6 @@ import {
   articleTopicLink,
   topicSubjectLink,
 } from '@gameskeep/shared/validation';
-import { env } from '../config/env';
 import { db } from '../db/client';
 import { articleSubjects, articleTopics, auditLogs, topicSubjects } from '../db/schema';
 import { diffRows, writeAudit } from './audit';
@@ -14,8 +13,8 @@ import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
-import { constantTimeEqual } from '../lib/crypto';
 import { actorOf, sendError, type Actor } from './http';
+import { adminAuthHook } from './guard';
 import { RESOURCE_BY_NAME, listResourceMeta, uniqueSlug, type ResourceDef } from './registry';
 
 function requireResource(reply: FastifyReply, name: string): ResourceDef | null {
@@ -127,19 +126,12 @@ async function vectorColumns(): Promise<{ table: string; column: string }[]> {
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   await app.register(
     async (admin) => {
-      // Token guard for the whole admin surface. I6 hardening (LOW): the
-      // compare is CONSTANT-TIME (hash-then-timingSafeEqual — hashing first
-      // also removes the length side-channel). Staff-session auth joins in
-      // Slice 3; this service credential is RETAINED for automation.
-      admin.addHook('onRequest', async (req, reply) => {
-        const token = req.headers['x-admin-token'];
-        const provided = Array.isArray(token) ? token[0] : token;
-        if (!provided || !constantTimeEqual(provided, env.ADMIN_API_TOKEN)) {
-          reply
-            .code(401)
-            .send({ error: 'unauthorized', message: 'Missing or invalid admin token' });
-        }
-      });
+      // Dual-path guard for the whole admin surface (SPEC I6, Slice 3): a
+      // rank-gated staff SESSION (the primary human path, CSRF-checked on
+      // mutations) OR the `x-admin-token` service credential (RETAINED for
+      // automation — a hard constraint; verify:i1…b2 depend on it). See
+      // ./guard.ts for the full contract.
+      admin.addHook('onRequest', adminAuthHook);
 
       admin.get('/_meta', async () => ({
         resources: listResourceMeta(),

@@ -31,8 +31,8 @@ export async function registerSecurity(app: FastifyInstance): Promise<void> {
   // must not be throttled like anonymous hits. Per-account login/abuse limits
   // arrive with real auth in I6 — that's where rate-limiting actually matters.
   await app.register(rateLimit, {
-    max: 100,
-    timeWindow: '1 minute',
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: env.RATE_LIMIT_WINDOW,
     allowList: (req) => {
       if (req.url.startsWith('/health')) return true;
       const token = req.headers['x-admin-token'];

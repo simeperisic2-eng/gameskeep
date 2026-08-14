@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "set-owner-password": "tsx src/scripts/set-owner-password.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

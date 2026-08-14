@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { PASSWORD_ALGO, hashPassword, verifyPassword } from '../src/auth/password';
-import { coarsenIp, hashToken, newCsrfToken } from '../src/auth/session';
+import { coarsenIp, csrfOk, hashToken, newCsrfToken } from '../src/auth/session';
 import { consumeToken } from '../src/auth/tokens';
+import { requireAuth, requireRole, requireStaff, requireVerified } from '../src/auth/guards';
+import { DEFAULT_SECTION_RANK, RANK, SECTION_RANK_DEFAULTS, sectionOf } from '../src/admin/rbac';
 import { assertProductionSecrets, trustProxyValue, type Env } from '../src/config/env';
 import { constantTimeEqual } from '../src/lib/crypto';
 import { accountExistsEmail, passwordResetEmail, verificationEmail } from '../src/email/templates';
@@ -142,6 +145,86 @@ describe('email: token consume shape gate (I6 Slice 2)', () => {
     // so this stays hermetic (no Postgres needed).
     expect(await consumeToken('not-a-token', 'verify_email')).toBeNull();
     expect(await consumeToken('abc123', 'password_reset')).toBeNull();
+  });
+});
+
+describe('auth: CSRF double-submit check (I6 Slice 3 — shared by admin path)', () => {
+  const mk = (cookie?: string, header?: string | string[]): FastifyRequest =>
+    ({
+      cookies: cookie ? { gk_csrf: cookie } : {},
+      headers: header ? { 'x-csrf-token': header } : {},
+    }) as unknown as FastifyRequest;
+
+  it('passes only when a present header equals the present cookie', () => {
+    const tok = 'ab'.repeat(32);
+    expect(csrfOk(mk(tok, tok))).toBe(true);
+    expect(csrfOk(mk(tok, 'different'))).toBe(false);
+    expect(csrfOk(mk(tok, undefined))).toBe(false); // header missing
+    expect(csrfOk(mk(undefined, tok))).toBe(false); // cookie missing
+    expect(csrfOk(mk(undefined, undefined))).toBe(false);
+  });
+});
+
+describe('auth: permission guards deny without a session (I6 Slice 3, no DB)', () => {
+  // A request with no session cookie is rejected by the shape gate before any
+  // DB hit, so these stay hermetic. The ALLOW paths run live in i6-check.mjs.
+  const noCookieReq = () => ({ cookies: {} }) as unknown as FastifyRequest;
+  const fakeReply = () => {
+    const r = {
+      statusCode: 0,
+      body: undefined as unknown,
+      code(n: number) {
+        r.statusCode = n;
+        return r;
+      },
+      send(o: unknown) {
+        r.body = o;
+        return r;
+      },
+    };
+    return r as unknown as FastifyReply & { statusCode: number; body: { error?: string } };
+  };
+
+  it('requireAuth → 401 unauthorized', async () => {
+    const reply = fakeReply();
+    expect(await requireAuth(noCookieReq(), reply)).toBeNull();
+    expect(reply.statusCode).toBe(401);
+    expect(reply.body.error).toBe('unauthorized');
+  });
+
+  it('requireVerified / requireStaff / requireRole all 401 (auth checked first)', async () => {
+    for (const guard of [requireVerified, requireStaff, requireRole(40)]) {
+      const reply = fakeReply();
+      expect(await guard(noCookieReq(), reply)).toBeNull();
+      expect(reply.statusCode).toBe(401);
+    }
+  });
+});
+
+describe('admin: per-section rank map (I6 Slice 3)', () => {
+  it('classifies the section from the admin URL', () => {
+    expect(sectionOf('/admin/api/games')).toBe('games');
+    expect(sectionOf('/admin/api/users/abc-123')).toBe('users');
+    expect(sectionOf('/admin/api/relations/topic-subject')).toBe('relations');
+    expect(sectionOf('/admin/api/_meta?x=1')).toBe('_meta');
+    expect(sectionOf('/admin/api/')).toBe('');
+  });
+
+  it('gates identity at owner, moderation at moderator, the rest at admin', () => {
+    // privilege/identity — owner only
+    expect(SECTION_RANK_DEFAULTS.users).toBe(RANK.owner);
+    expect(SECTION_RANK_DEFAULTS.roles).toBe(RANK.owner);
+    // content moderation — moderator
+    expect(SECTION_RANK_DEFAULTS.topics).toBe(RANK.moderator);
+    expect(SECTION_RANK_DEFAULTS.articles).toBe(RANK.moderator);
+    // system tuning — admin, NOT moderator: bias weights drive every public
+    // number, so bias falls through to admin like ratings/catalog.
+    expect(SECTION_RANK_DEFAULTS.bias).toBeUndefined();
+    expect(SECTION_RANK_DEFAULTS.games).toBeUndefined();
+    expect(DEFAULT_SECTION_RANK).toBe(RANK.admin);
+    // the ladder is strictly increasing
+    expect(RANK.moderator).toBeLessThan(RANK.admin);
+    expect(RANK.admin).toBeLessThan(RANK.owner);
   });
 });
 

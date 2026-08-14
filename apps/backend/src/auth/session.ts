@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import type { FastifyRequest } from 'fastify';
 import { and, eq, gt, ne } from 'drizzle-orm';
 import { db } from '../db/client';
 import { roles, sessions, userLevels, users } from '../db/schema';
@@ -32,6 +33,19 @@ export function hashToken(raw: string): string {
 /** New CSRF double-submit value (non-HttpOnly cookie + echoed header). */
 export function newCsrfToken(): string {
   return randomBytes(32).toString('hex');
+}
+
+/**
+ * Double-submit CSRF check: the `x-csrf-token` header must be present AND equal
+ * the readable `gk_csrf` cookie. An attacker's cross-site page can neither read
+ * the cookie (to echo it) nor set the header on a form post, so a forged
+ * request fails. Shared by the /auth scope and the staff-session admin path.
+ */
+export function csrfOk(req: FastifyRequest): boolean {
+  const cookie = req.cookies[CSRF_COOKIE];
+  const header = req.headers[CSRF_HEADER];
+  const provided = Array.isArray(header) ? header[0] : header;
+  return Boolean(cookie && provided && cookie === provided);
 }
 
 /**

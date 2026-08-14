@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–2: auth core +
- * email flows). Every check PROVES AN ATTACK FAILS on the live stack — not that
- * a page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–3: auth core +
+ * email flows + RBAC). Every check PROVES AN ATTACK FAILS on the live stack —
+ * not that a page renders:
  *
  *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
@@ -38,11 +38,23 @@
  *  19.  send throttle (per-IP): distinct-email registers from ONE host cap at
  *       sendMaxPerIp — a spammer cannot dodge the cap by rotating recipients
  *
+ *  Slice 3 — RBAC + admin hardening
+ *  20.  no credentials → 401; a signed-in NON-staff user → 403 (authed but
+ *       forbidden is DISTINCT from anonymous)
+ *  21.  moderator (rank 30) reaches a moderation section but is 403 on the
+ *       admin-only and owner-only sections (per-section rank gating)
+ *  22.  admin (rank 40) reaches an admin section but is 403 on the owner-only
+ *       roles section (a privilege-escalation surface)
+ *  23.  owner (rank 50) reaches the owner section; a cookie-authed mutation is
+ *       403 without CSRF, 200 with it; the audit row names the REAL staff user
+ *  24.  the x-admin-token service credential bypasses the gate — reaches the
+ *       owner-only section a mere admin cannot (automation retention)
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  20.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  25.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  21.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  22.  the x-admin-token service credential still authorizes (retention is a
+ *  26.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  27.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -662,11 +674,11 @@ async function main() {
   // read from app_settings (the "everything configurable from admin" rule), not
   // a hardcoded 20.
   //
-  // These POSTs carry x-admin-token ONLY to opt out of the anonymous 100/min
-  // global limiter (plugins/security.ts allowList) — that unrelated request
-  // counter would otherwise mask the email throttle AND spend the shared budget
-  // check 20's flood relies on. The token does NOT bypass canSend(): the per-IP
-  // EMAIL throttle is route logic keyed on req.ip, so this isolates exactly it.
+  // These POSTs carry x-admin-token ONLY to opt out of the anonymous global
+  // rate limiter (plugins/security.ts allowList) — that unrelated request
+  // counter would otherwise mask the email throttle. The token does NOT bypass
+  // canSend(): the per-IP EMAIL throttle is route logic keyed on req.ip, so
+  // this isolates exactly it.
   cleanEmailThrottle();
   const perIpCap =
     Number(
@@ -693,10 +705,121 @@ async function main() {
     `sent ${ipSends}/${ipFlood} (per-IP cap ${perIpCap})`,
   );
 
+  // ══ SLICE 3 — RBAC + ADMIN HARDENING ════════════════════════════════════════
+  // Prove the staff-session admin path enforces per-section rank gating (403s
+  // for insufficient rank / non-staff), that cookie-authed mutations need CSRF,
+  // that staff actions are attributed to the real user in the audit trail, and
+  // that the x-admin-token service credential still bypasses the gate (the
+  // retention hard constraint keeping verify:i1…b2 green).
+  const SVC = { 'x-admin-token': ADMIN_TOKEN };
+  const rolesResp = await api(BACK, '/admin/api/roles', { headers: SVC });
+  const roleId = (key) => (rolesResp.json?.data ?? []).find((r) => r.key === key)?.id;
+
+  // A signed-in user at a given role: register (sets the password), resolve the
+  // id (register is enumeration-safe → no id in the body), elevate via the
+  // service token, then log in for a session + CSRF pair in one jar.
+  async function makeUser(tag, roleKey) {
+    const u = {
+      username: `gk_${tag}_${RUN}`,
+      email: `${tag}_${RUN}@example.test`,
+      password: `Str0ng-pass-${tag}9!`,
+    };
+    const { jar: rj, csrf: rc } = await withCsrf(BACK);
+    await api(BACK, '/auth/register', { method: 'POST', jar: rj, csrf: rc, body: u });
+    const id = sqlOne(`SELECT id FROM users WHERE email='${u.email}'`);
+    if (roleKey !== 'registered') {
+      await api(BACK, `/admin/api/users/${id}`, {
+        method: 'PATCH',
+        headers: SVC,
+        body: { roleId: roleId(roleKey) },
+      });
+    }
+    const { jar, csrf } = await withCsrf(BACK);
+    const login = await api(BACK, '/auth/login', {
+      method: 'POST',
+      jar,
+      csrf,
+      body: { identifier: u.email, password: u.password },
+    });
+    jarFrom(login.res, jar);
+    return { u, id, jar, csrf };
+  }
+
+  // ── 20. anonymous → 401; authenticated NON-staff → 403 (distinguished) ──────
+  const registered = await makeUser('reg', 'registered');
+  const anonMeta = await api(BACK, '/admin/api/_meta'); // no token, no cookie
+  const regMeta = await api(BACK, '/admin/api/_meta', { jar: registered.jar });
+  check(
+    '20. RBAC: no credentials → 401; a signed-in NON-staff user → 403 (authed-but-forbidden, not anonymous)',
+    anonMeta.status === 401 && regMeta.status === 403,
+    `anon ${anonMeta.status}, registered ${regMeta.status}`,
+  );
+
+  // ── 21. moderator (30): moderation section ok; admin/owner sections 403 ─────
+  const mod = await makeUser('mod', 'moderator');
+  const modTopics = await api(BACK, '/admin/api/topics', { jar: mod.jar }); // 30 → ok
+  const modGames = await api(BACK, '/admin/api/games', { jar: mod.jar }); // 40 → 403
+  const modUsers = await api(BACK, '/admin/api/users', { jar: mod.jar }); // 50 → 403
+  check(
+    '21. RBAC moderator (rank 30): moderation section 200; admin-only + owner-only sections 403',
+    modTopics.status === 200 && modGames.status === 403 && modUsers.status === 403,
+    `topics ${modTopics.status}, games ${modGames.status}, users ${modUsers.status}`,
+  );
+
+  // ── 22. admin (40): admin section ok; owner-only section 403 ────────────────
+  const adminU = await makeUser('adm', 'admin');
+  const admGames = await api(BACK, '/admin/api/games', { jar: adminU.jar }); // 40 → ok
+  const admRoles = await api(BACK, '/admin/api/roles', { jar: adminU.jar }); // 50 → 403
+  check(
+    '22. RBAC admin (rank 40): admin section 200; owner-only (roles — a privilege-escalation surface) 403',
+    admGames.status === 200 && admRoles.status === 403,
+    `games ${admGames.status}, roles ${admRoles.status}`,
+  );
+
+  // ── 23. owner (50): full access + staff-mutation CSRF + real-actor audit ────
+  const owner = await makeUser('own', 'owner');
+  const ownRoles = await api(BACK, '/admin/api/roles', { jar: owner.jar }); // 50 → ok
+  const modRoleId = roleId('moderator');
+  const modSort = Number(sqlOne(`SELECT sort FROM roles WHERE id='${modRoleId}'`)) || 0;
+  // A cookie-authed mutation MUST carry the CSRF header (ambient-cookie defense).
+  const noCsrf = await api(BACK, `/admin/api/roles/${modRoleId}`, {
+    method: 'PATCH',
+    jar: owner.jar, // cookie present, but NO x-csrf-token header
+    body: { sort: modSort },
+  });
+  const withCsrfWrite = await api(BACK, `/admin/api/roles/${modRoleId}`, {
+    method: 'PATCH',
+    jar: owner.jar,
+    csrf: owner.csrf,
+    body: { sort: modSort }, // idempotent — same value back
+  });
+  // The audit row for that write must name the REAL staff user, not 'service'.
+  const auditActor = sqlOne(
+    `SELECT actor_label FROM audit_logs WHERE entity_type='roles' AND entity_id='${modRoleId}' ORDER BY created_at DESC LIMIT 1`,
+  );
+  check(
+    '23. RBAC owner (rank 50): owner section 200; staff mutation needs CSRF (no header 403, with 200); audit names the real staff user',
+    ownRoles.status === 200 &&
+      noCsrf.status === 403 &&
+      withCsrfWrite.status === 200 &&
+      auditActor === owner.u.username,
+    `roles ${ownRoles.status}, noCsrf ${noCsrf.status}, csrf ${withCsrfWrite.status}, actor=${auditActor}`,
+  );
+
+  // ── 24. retention: the service token still reaches an OWNER-only section ─────
+  // A mere admin got 403 on /roles in check 22; the trusted service credential
+  // gets 200 — automation keeps full authority (verify:i1…b2 depend on this).
+  const svcRoles = await api(BACK, '/admin/api/roles', { headers: SVC });
+  check(
+    '24. Retention: x-admin-token reaches the owner-only section a mere admin cannot (automation keeps full authority)',
+    svcRoles.status === 200,
+    `service→roles ${svcRoles.status}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 20. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 25. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -715,14 +838,14 @@ async function main() {
     }
   }
   check(
-    '20. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '25. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 21. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 26. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -731,7 +854,7 @@ async function main() {
   });
   const userRow = (adminUsers.json?.data ?? []).find((u) => u.username === userA.username);
   check(
-    '21. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '26. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -739,13 +862,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}`,
   );
 
-  // ── 22. the service credential is retained ──────────────────────────────────
+  // ── 27. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '22. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '27. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -758,7 +881,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth core + email flows (Slices 1–2): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 auth core + email flows + RBAC (Slices 1–3): prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

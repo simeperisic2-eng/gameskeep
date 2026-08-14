@@ -20,7 +20,7 @@
 | About / Methodology / Privacy / Terms text | Static pages (arrive I5/I8) | demo | Not built yet |
 | `SESSION_SECRET` | `.env` (see `.env.example`) | **production** | Insecure demo default in code; set a real one before prod |
 | `ADMIN_API_TOKEN` (guards `/admin/api`) | `.env` (see `.env.example`); demo default `demo-admin-token` | demo→**production** | Set a strong token before exposing the admin; full login/RBAC arrives I8 |
-| Real owner account | Admin → Users (demo seeds username `admin`, no password) — `apps/backend/src/db/seed.ts` | demo→**production** | Placeholder owner until real auth (I6) |
+| **Owner password** (seed `admin` has none by design) | Run `docker compose exec backend npm run set-owner-password -- --username admin` (prompts hidden; or `-e OWNER_PASSWORD=…`). Argon2id-hashed, never in source — `apps/backend/src/scripts/set-owner-password.ts` | demo→**production** | Set before exposing the admin; login/RBAC live since I6 Slice 3 |
 | IGDB / RAWG / Steam / YouTube / email / OAuth keys | `.env` secret fields (documented in `.env.example`) | **production** | Blank — demo runs without them |
 | **IGDB game metadata (primary)** — `IGDB_CLIENT_ID` + `IGDB_CLIENT_SECRET` | `.env` (create a Twitch app at dev.twitch.tv → these are the Twitch app's Client ID + Secret; IGDB uses Twitch OAuth client-credentials) | **production** | Blank in demo. The live provider (`apps/backend/src/data-source/games/live-provider.ts`) is fully wired but dormant until set + `APP_MODE=production`. |
 | **RAWG game metadata (fallback)** — `RAWG_API_KEY` | `.env` (free key from rawg.io/apidocs) | **production** | Blank in demo. Used only if IGDB fails/misses. |
