@@ -3,6 +3,35 @@ import { users } from './users';
 import { primaryId } from './_shared';
 
 /**
+ * Single-use, hashed-at-rest tokens for the email flows (SPEC I6, Slice 2):
+ * `verify_email` (TTL 24h) and `password_reset` (TTL 1h). Same hash-at-rest
+ * discipline as `sessions` — only the SHA-256 of the raw token is stored, the
+ * raw value exists solely inside the emailed link. `consumedAt` makes each
+ * token single-use; the consume is a conditional `UPDATE … WHERE consumed_at
+ * IS NULL` so two concurrent redemptions can never both win (race-safe). At
+ * most one un-consumed token per (user, purpose) — issuing a new one deletes
+ * the prior.
+ */
+export const userTokens = pgTable(
+  'user_tokens',
+  {
+    id: primaryId(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** verify_email | password_reset */
+    purpose: varchar('purpose', { length: 20 }).notNull(),
+    /** SHA-256 hex of the raw token. NEVER the raw token itself. */
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Set when redeemed — the single-use marker (NULL = still valid). */
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => [index('user_tokens_user_purpose_idx').on(t.userId, t.purpose)],
+);
+
+/**
  * Auth tables (SPEC I6, Slice 1 — sessions-not-JWT, locked decision 1).
  *
  * `sessions` holds ONLY the SHA-256 hash of the opaque 256-bit token — the raw

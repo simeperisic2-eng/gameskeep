@@ -21,6 +21,12 @@ const EnvSchema = z.object({
   BACKEND_PORT: z.coerce.number().int().positive().default(4000),
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
+  // --- public site URL (I6 Slice 2 — email link bases) ---
+  // The origin the browser reaches (the frontend / BFF). Verification and
+  // password-reset emails build their links from this. Demo default is the
+  // local frontend; production sets the real https origin.
+  PUBLIC_SITE_URL: z.string().min(1).default('http://localhost:3000'),
+
   // --- dependencies ---
   AI_SERVICE_URL: z.string().min(1).default('http://localhost:8000'),
 

@@ -8,6 +8,7 @@ import { describeDataSource } from '../data-source';
 import { describeGameProvider } from '../data-source/games';
 import { describeArticleSource } from '../data-source/articles';
 import { describeSteamProvider } from '../data-source/steam';
+import { describeEmailSender } from '../email';
 import { readCatalogImportState } from '../catalog/jobs';
 import { readArticleIngestState } from '../articles/jobs';
 import { readSteamSyncState } from '../steam/jobs';
@@ -91,6 +92,10 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
             : { note: 'no sweep recorded yet (dormant in demo — seeded history)' }),
         },
       },
+      // I6 Slice 2: the email seam. Mock in demo (messages land in the
+      // email_outbox dev mailbox, zero network, no secret); Live is dormant
+      // until a provider is wired.
+      email: describeEmailSender(),
       dependencies: {
         postgres: {
           ok: database.ok,

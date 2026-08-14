@@ -1,11 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq, sql } from 'drizzle-orm';
-import { authLoginInput, authRegisterInput } from '@gameskeep/shared/validation';
+import {
+  authEmailRequestInput,
+  authLoginInput,
+  authRegisterInput,
+  authResetPasswordInput,
+  authVerifyEmailInput,
+} from '@gameskeep/shared/validation';
 import { db } from '../db/client';
 import { roles, users } from '../db/schema';
 import { env, isProduction } from '../config/env';
 import { sendError } from '../admin/http';
+import {
+  sendAccountExistsNotice,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from '../email/send';
+import { canSend } from '../email/throttle';
 import { PASSWORD_ALGO, dummyVerify, hashPassword, verifyPassword } from './password';
+import { consumeToken, issueToken } from './tokens';
 import {
   ABSOLUTE_CAP_MS,
   CSRF_COOKIE,
@@ -35,6 +48,19 @@ import { clearFailures, isLocked, registerFailure } from './lockout';
 const GENERIC_REGISTER_BODY = {
   status: 'pending_verification',
   message: 'If the details are valid, a verification email is on its way.',
+} as const;
+
+// Enumeration-safe generic bodies for the email-flow endpoints (Slice 2): the
+// response is IDENTICAL whether or not the email maps to an account, so a
+// requester learns nothing about who is registered.
+const GENERIC_VERIFY_BODY = {
+  status: 'pending_verification',
+  message: 'If that account needs verification, an email is on its way.',
+} as const;
+
+const GENERIC_RESET_BODY = {
+  status: 'reset_requested',
+  message: 'If an account exists for that email, a reset link is on its way.',
 } as const;
 
 const INVALID_CREDENTIALS = {
@@ -172,9 +198,14 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
           if (byEmail) {
             // Enumeration-safe: SAME generic 202, and burn a hash so timing
-            // matches the fresh path. (Slice 2 emails the "account exists"
-            // notice to the REAL owner — never the requester.)
+            // matches the fresh path. The "account exists" notice goes to the
+            // REAL owner of that address (byEmail.id) — NEVER the requester, who
+            // gets nothing that confirms the email is registered. Throttled so
+            // this can't be used to spam the real owner.
             await hashPassword(input.password);
+            if (await canSend(emailLower, req.ip)) {
+              await sendAccountExistsNotice(emailLower, byEmail.id);
+            }
             reply.code(202).send(GENERIC_REGISTER_BODY);
             return;
           }
@@ -187,14 +218,25 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           if (!role) throw new Error('roles seed missing "registered"');
 
           const passwordHash = await hashPassword(input.password);
-          await db.insert(users).values({
-            username: input.username,
-            email: emailLower,
-            roleId: role.id,
-            passwordHash,
-            passwordAlgo: PASSWORD_ALGO,
-            isEmailVerified: false,
-          });
+          const [created] = await db
+            .insert(users)
+            .values({
+              username: input.username,
+              email: emailLower,
+              roleId: role.id,
+              passwordHash,
+              passwordAlgo: PASSWORD_ALGO,
+              isEmailVerified: false,
+            })
+            .returning({ id: users.id });
+
+          // Issue a single-use verification token (hashed at rest, 24h TTL) and
+          // email the link (throttled per email + IP; a throttle silently skips
+          // the send and the response is unchanged).
+          if (created && (await canSend(emailLower, req.ip))) {
+            const token = await issueToken(created.id, 'verify_email');
+            await sendVerificationEmail(emailLower, token, created.id);
+          }
 
           // NO session cookie here (locked consequence): the verify link or a
           // password login signs them in. Response identical to the taken-email
@@ -295,6 +337,127 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         const revoked = await revokeAllSessions(session.user.id);
         clearSessionCookie(reply);
         reply.send({ ok: true, revoked });
+      });
+
+      // ── POST /auth/verify-email — confirm the address (and sign in) ─────────
+      auth.post('/verify-email', async (req, reply) => {
+        try {
+          const { token } = authVerifyEmailInput.parse(req.body);
+          // Single-use, race-safe consume: a replay or a second concurrent use
+          // matches zero rows and returns null.
+          const consumed = await consumeToken(token, 'verify_email');
+          if (!consumed) {
+            reply.code(400).send({
+              error: 'invalid_or_expired_token',
+              message: 'This link is invalid or has expired.',
+            });
+            return;
+          }
+          await db
+            .update(users)
+            .set({ isEmailVerified: true })
+            .where(eq(users.id, consumed.userId));
+
+          // The verify link signs them in (the locked flip-side of register not
+          // auto-logging-in) — but only if the account is active.
+          const [u] = await db
+            .select({ status: users.status })
+            .from(users)
+            .where(eq(users.id, consumed.userId))
+            .limit(1);
+          if (u?.status === 'active') {
+            const { rawToken } = await createSession(consumed.userId, {
+              ip: req.ip,
+              userAgent: req.headers['user-agent'],
+            });
+            setSessionCookie(reply, rawToken);
+            ensureCsrfCookie(req, reply);
+            const session = await validateSession(rawToken);
+            reply.send({ verified: true, user: session ? publicUser(session.user) : null });
+            return;
+          }
+          reply.send({ verified: true, user: null });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── POST /auth/request-verification — resend, enumeration-safe ──────────
+      auth.post('/request-verification', async (req, reply) => {
+        try {
+          const { email } = authEmailRequestInput.parse(req.body);
+          const emailLower = email.trim().toLowerCase();
+          const [u] = await db
+            .select({
+              id: users.id,
+              isEmailVerified: users.isEmailVerified,
+              status: users.status,
+            })
+            .from(users)
+            .where(sql`lower(${users.email}) = ${emailLower}`)
+            .limit(1);
+          // Only a real, active, still-unverified account triggers a send — but
+          // the response is generic either way (no existence signal). Throttled.
+          if (
+            u &&
+            !u.isEmailVerified &&
+            u.status === 'active' &&
+            (await canSend(emailLower, req.ip))
+          ) {
+            const token = await issueToken(u.id, 'verify_email');
+            await sendVerificationEmail(emailLower, token, u.id);
+          }
+          reply.code(202).send(GENERIC_VERIFY_BODY);
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── POST /auth/request-password-reset — enumeration-safe ────────────────
+      auth.post('/request-password-reset', async (req, reply) => {
+        try {
+          const { email } = authEmailRequestInput.parse(req.body);
+          const emailLower = email.trim().toLowerCase();
+          const [u] = await db
+            .select({ id: users.id, status: users.status })
+            .from(users)
+            .where(sql`lower(${users.email}) = ${emailLower}`)
+            .limit(1);
+          if (u && u.status === 'active' && (await canSend(emailLower, req.ip))) {
+            const token = await issueToken(u.id, 'password_reset');
+            await sendPasswordResetEmail(emailLower, token, u.id);
+          }
+          reply.code(202).send(GENERIC_RESET_BODY);
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── POST /auth/reset-password — set new password, revoke ALL sessions ───
+      auth.post('/reset-password', async (req, reply) => {
+        try {
+          const { token, password } = authResetPasswordInput.parse(req.body);
+          const consumed = await consumeToken(token, 'password_reset');
+          if (!consumed) {
+            reply.code(400).send({
+              error: 'invalid_or_expired_token',
+              message: 'This link is invalid or has expired.',
+            });
+            return;
+          }
+          const passwordHash = await hashPassword(password);
+          // Controlling the reset mailbox proves address ownership → mark verified.
+          await db
+            .update(users)
+            .set({ passwordHash, passwordAlgo: PASSWORD_ALGO, isEmailVerified: true })
+            .where(eq(users.id, consumed.userId));
+          // A password reset revokes EVERY session (locked decision 1) — any
+          // stolen or stale cookie dies here. They log in fresh with the new one.
+          const revoked = await revokeAllSessions(consumed.userId);
+          reply.send({ ok: true, revoked });
+        } catch (err) {
+          sendError(reply, err);
+        }
       });
     },
     { prefix: '/auth' },

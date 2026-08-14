@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; currently SLICE 1: auth
- * core). Every check PROVES AN ATTACK FAILS on the live stack — not that a
- * page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–2: auth core +
+ * email flows). Every check PROVES AN ATTACK FAILS on the live stack — not that
+ * a page renders:
  *
+ *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
  *   3.  enumeration-safe register: taken email → byte-identical 202; only the
  *       public username 409s
@@ -20,15 +21,33 @@
  *  11.  enumeration-safe login: unknown-user vs wrong-password → identical
  *       bodies AND comparable timing (dummy Argon2 burn)
  *  12.  BFF: cookie relay works end-to-end; `.`/`..` path segments → 400
- *  13.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *
+ *  Slice 2 — email flows
+ *  13.  register emails a verify link to the outbox; DB truth: user_tokens
+ *       holds sha256(token) ≠ raw, TTL ~24h, unconsumed; no token in the reply
+ *  14.  verify-email consumes the token (single-use), flips is_email_verified,
+ *       signs the user in; a REPLAY of the same token → 400
+ *  15.  taken-email register: the "account exists" notice goes to the REAL
+ *       owner's address — the requester's reply is byte-identical & tokenless
+ *  16.  password reset: request → outbox reset link → reset-password sets a new
+ *       working password AND revokes ALL sessions (old cookie → 401)
+ *  17.  reset token is single-use (replay → 400); reset is enumeration-safe (a
+ *       ghost email → identical 202 and NO outbox row)
+ *  18.  send throttle (per-email): repeated resets to ONE address are capped —
+ *       a real inbox cannot be flooded; tokens hashed at rest, never in a reply
+ *  19.  send throttle (per-IP): distinct-email registers from ONE host cap at
+ *       sendMaxPerIp — a spammer cannot dodge the cap by rotating recipients
+ *
+ *  Hardening / retention (run last — the flood locks this host's IP)
+ *  20.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  14.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  15.  the x-admin-token service credential still authorizes (retention is a
+ *  21.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  22.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
  * DB/Redis TRUTH checks (hash-at-rest can't be proven through the API alone)
- * and cleans ONLY its own gk:auth:* keys (never flushall).
+ * and cleans ONLY its own gk:auth:* / gk:email:send:* keys (never flushall).
  */
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -58,16 +77,38 @@ function sqlOne(query) {
   }
 }
 
-/** Targeted cleanup of this check's lockout keys — NEVER flushall. */
-function cleanAuthKeys() {
+/** Targeted cleanup of this check's Redis keys — NEVER flushall. */
+function cleanRedisKeys(pattern) {
   try {
     execSync(
-      `docker exec gameskeep-redis-1 sh -c "redis-cli --scan --pattern 'gk:auth:*' | xargs -r redis-cli del"`,
+      `docker exec gameskeep-redis-1 sh -c "redis-cli --scan --pattern '${pattern}' | xargs -r redis-cli del"`,
       { encoding: 'utf8' },
     );
   } catch {
     /* best-effort */
   }
+}
+const cleanAuthKeys = () => cleanRedisKeys('gk:auth:*');
+const cleanEmailThrottle = () => cleanRedisKeys('gk:email:send:*');
+
+// ── email outbox (dev mailbox) TRUTH helpers ─────────────────────────────────
+function outboxLatestBody(email, purpose) {
+  return sqlOne(
+    `SELECT body_text FROM email_outbox WHERE to_email='${email}' AND purpose='${purpose}' ORDER BY created_at DESC LIMIT 1`,
+  );
+}
+function outboxCount(email, purpose) {
+  return Number(outboxCountRaw(email, purpose)) || 0;
+}
+function outboxCountRaw(email, purpose) {
+  return sqlOne(
+    `SELECT count(*) FROM email_outbox WHERE to_email='${email}' AND purpose='${purpose}'`,
+  );
+}
+/** Pull the 64-hex single-use token out of an emailed link. */
+function extractToken(body) {
+  const m = (body ?? '').match(/token=([a-f0-9]{64})/);
+  return m ? m[1] : '';
 }
 
 // ── cookie jar ───────────────────────────────────────────────────────────────
@@ -130,6 +171,7 @@ async function waitForReady() {
 
 async function main() {
   cleanAuthKeys();
+  cleanEmailThrottle();
   if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
 
   const userA = {
@@ -146,6 +188,18 @@ async function main() {
     username: `gk_c_${RUN}`,
     email: `c_${RUN}@example.test`,
     password: 'Str0ng-pass-C!',
+  };
+  // Slice 2 — dedicated users so the email flows don't collide with the Slice 1
+  // sessions/lockouts above.
+  const userE = {
+    username: `gk_e_${RUN}`,
+    email: `e_${RUN}@example.test`,
+    password: 'Str0ng-pass-E!',
+  };
+  const userF = {
+    username: `gk_f_${RUN}`,
+    email: `f_${RUN}@example.test`,
+    password: 'Str0ng-pass-F!',
   };
 
   // ── 2. register: generic 202, NO auto-login ─────────────────────────────────
@@ -416,7 +470,233 @@ async function main() {
     `login ${bffLogin.status}, me ${bffMe.status}, trav ${trav1.status}/${trav2.status}`,
   );
 
-  // ── 13. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ══ SLICE 2 — EMAIL FLOWS ═══════════════════════════════════════════════════
+
+  // ── 13. register emails a hashed, TTL'd verify token to the dev outbox ──────
+  const { jar: eJar, csrf: eCsrf } = await withCsrf(BACK);
+  const regE = await api(BACK, '/auth/register', {
+    method: 'POST',
+    jar: eJar,
+    csrf: eCsrf,
+    body: userE,
+  });
+  const verifyToken = extractToken(outboxLatestBody(userE.email, 'verify_email'));
+  const vtHash = verifyToken ? createHash('sha256').update(verifyToken).digest('hex') : '';
+  const dbVtHash = sqlOne(
+    `SELECT token_hash FROM user_tokens WHERE user_id=(SELECT id FROM users WHERE email='${userE.email}') AND purpose='verify_email' ORDER BY created_at DESC LIMIT 1`,
+  );
+  const vtTtlOk = sqlOne(
+    `SELECT (consumed_at IS NULL AND expires_at > now() + interval '23 hours' AND expires_at < now() + interval '25 hours')::text FROM user_tokens WHERE user_id=(SELECT id FROM users WHERE email='${userE.email}') AND purpose='verify_email' ORDER BY created_at DESC LIMIT 1`,
+  );
+  check(
+    '13. Register → verify link in outbox; DB truth: user_tokens = sha256(token) ≠ raw, ~24h TTL, unconsumed; reply is tokenless',
+    regE.status === 202 &&
+      /^[a-f0-9]{64}$/.test(verifyToken) &&
+      dbVtHash === vtHash &&
+      dbVtHash !== verifyToken &&
+      vtTtlOk === 'true' &&
+      !/[a-f0-9]{64}/.test(regE.text),
+    `token=${verifyToken.slice(0, 8)}… ttlOk=${vtTtlOk}`,
+  );
+
+  // ── 14. verify-email: single-use consume, flips verified, signs in ──────────
+  const { jar: evJar, csrf: evCsrf } = await withCsrf(BACK);
+  const verify1 = await api(BACK, '/auth/verify-email', {
+    method: 'POST',
+    jar: evJar,
+    csrf: evCsrf,
+    body: { token: verifyToken },
+  });
+  jarFrom(verify1.res, evJar);
+  const verifyReplay = await api(BACK, '/auth/verify-email', {
+    method: 'POST',
+    jar: evJar,
+    csrf: evCsrf,
+    body: { token: verifyToken },
+  });
+  const dbVerified = sqlOne(
+    `SELECT is_email_verified::text FROM users WHERE email='${userE.email}'`,
+  );
+  check(
+    '14. verify-email: token consumed (single-use) → verified + signed in; REPLAY of the same token → 400',
+    verify1.status === 200 &&
+      verify1.json?.verified === true &&
+      Boolean(evJar.gk_session) &&
+      dbVerified === 'true' &&
+      verifyReplay.status === 400 &&
+      verifyReplay.json?.error === 'invalid_or_expired_token' &&
+      !/[a-f0-9]{64}/.test(verify1.text),
+    `verify ${verify1.status}, replay ${verifyReplay.status}, dbVerified=${dbVerified}`,
+  );
+
+  // ── 15. taken-email register → notice to the REAL owner, not the requester ──
+  const noticeBefore = outboxCount(userE.email, 'account_exists');
+  const { jar: dupJar, csrf: dupCsrf } = await withCsrf(BACK);
+  const dupE = await api(BACK, '/auth/register', {
+    method: 'POST',
+    jar: dupJar,
+    csrf: dupCsrf,
+    body: { username: `gk_e2_${RUN}`, email: userE.email, password: 'Different-pass-9!' },
+  });
+  const noticeAfter = outboxCount(userE.email, 'account_exists');
+  const dupCookies = dupE.res.headers.getSetCookie?.() ?? [];
+  check(
+    '15. Taken email: "account exists" notice goes to the REAL owner; requester gets a byte-identical, tokenless, cookieless 202',
+    dupE.status === 202 &&
+      dupE.text === regA.text &&
+      noticeAfter === noticeBefore + 1 &&
+      !dupCookies.some((c) => c.startsWith('gk_session=')) &&
+      !/[a-f0-9]{64}/.test(dupE.text),
+    `notices ${noticeBefore}→${noticeAfter}`,
+  );
+
+  // ── 16. password reset revokes ALL sessions + sets a new working password ───
+  const { jar: fReg, csrf: fRegCsrf } = await withCsrf(BACK);
+  await api(BACK, '/auth/register', { method: 'POST', jar: fReg, csrf: fRegCsrf, body: userF });
+  const { jar: fSess, csrf: fSessCsrf } = await withCsrf(BACK);
+  await api(BACK, '/auth/login', {
+    method: 'POST',
+    jar: fSess,
+    csrf: fSessCsrf,
+    body: { identifier: userF.email, password: userF.password },
+  }).then((r) => jarFrom(r.res, fSess));
+  const fMeBefore = await api(BACK, '/auth/me', { jar: fSess });
+  const { jar: fReq, csrf: fReqCsrf } = await withCsrf(BACK);
+  const reqReset = await api(BACK, '/auth/request-password-reset', {
+    method: 'POST',
+    jar: fReq,
+    csrf: fReqCsrf,
+    body: { email: userF.email },
+  });
+  const resetToken = extractToken(outboxLatestBody(userF.email, 'password_reset'));
+  const newPass = 'Rotated-pass-Z9!';
+  const { jar: rpJar, csrf: rpCsrf } = await withCsrf(BACK);
+  const doReset = await api(BACK, '/auth/reset-password', {
+    method: 'POST',
+    jar: rpJar,
+    csrf: rpCsrf,
+    body: { token: resetToken, password: newPass },
+  });
+  const fMeAfter = await api(BACK, '/auth/me', { jar: fSess }); // old session must be dead
+  const { jar: lo, csrf: loCsrf } = await withCsrf(BACK);
+  const loginOld = await api(BACK, '/auth/login', {
+    method: 'POST',
+    jar: lo,
+    csrf: loCsrf,
+    body: { identifier: userF.email, password: userF.password },
+  });
+  const { jar: ln, csrf: lnCsrf } = await withCsrf(BACK);
+  const loginNew = await api(BACK, '/auth/login', {
+    method: 'POST',
+    jar: ln,
+    csrf: lnCsrf,
+    body: { identifier: userF.email, password: newPass },
+  });
+  check(
+    '16. Password reset: NEW password works, OLD fails, and EVERY prior session is revoked (old cookie → 401)',
+    reqReset.status === 202 &&
+      /^[a-f0-9]{64}$/.test(resetToken) &&
+      doReset.status === 200 &&
+      (doReset.json?.revoked ?? 0) >= 1 &&
+      fMeBefore.status === 200 &&
+      fMeAfter.status === 401 &&
+      loginOld.status === 401 &&
+      loginNew.status === 200,
+    `revoked=${doReset.json?.revoked}, oldSession ${fMeAfter.status}, oldPw ${loginOld.status}, newPw ${loginNew.status}`,
+  );
+
+  // ── 17. reset token single-use + reset enumeration-safe ─────────────────────
+  const { jar: rp2, csrf: rp2Csrf } = await withCsrf(BACK);
+  const resetReplay = await api(BACK, '/auth/reset-password', {
+    method: 'POST',
+    jar: rp2,
+    csrf: rp2Csrf,
+    body: { token: resetToken, password: 'Another-pass-1!' },
+  });
+  const ghostEmail = `ghost_${RUN}@example.test`;
+  const { jar: gh, csrf: ghCsrf } = await withCsrf(BACK);
+  const ghostReq = await api(BACK, '/auth/request-password-reset', {
+    method: 'POST',
+    jar: gh,
+    csrf: ghCsrf,
+    body: { email: ghostEmail },
+  });
+  const ghostRows = outboxCount(ghostEmail, 'password_reset');
+  check(
+    '17. Reset token single-use (replay → 400); reset enumeration-safe (ghost email → identical 202, NO outbox row)',
+    resetReplay.status === 400 &&
+      resetReplay.json?.error === 'invalid_or_expired_token' &&
+      ghostReq.status === 202 &&
+      ghostReq.text === reqReset.text &&
+      ghostRows === 0,
+    `replay ${resetReplay.status}, ghostRows ${ghostRows}`,
+  );
+
+  // ── 18. send throttle caps outbound email per recipient address ─────────────
+  // Fresh counters, then 8 reset requests to ONE address: the per-email cap
+  // (default 5) trips before the per-IP cap (20), so exactly 5 land in the
+  // outbox — a real inbox can't be flooded via the enumeration-safe endpoint.
+  cleanEmailThrottle();
+  const throttleBefore = outboxCount(userF.email, 'password_reset');
+  const { jar: tj, csrf: tc } = await withCsrf(BACK);
+  for (let i = 0; i < 8; i += 1) {
+    await api(BACK, '/auth/request-password-reset', {
+      method: 'POST',
+      jar: tj,
+      csrf: tc,
+      body: { email: userF.email },
+    });
+  }
+  const sent = outboxCount(userF.email, 'password_reset') - throttleBefore;
+  check(
+    '18. Send throttle (per-email): 8 resets to one address yield only 5 sends (a real inbox cannot be flooded)',
+    sent === 5,
+    `sent ${sent}/8 (per-email cap 5)`,
+  );
+
+  // ── 19. send throttle also caps per CLIENT IP (distinct addresses) ──────────
+  // The per-email cap alone can't stop a spammer who cycles addresses. Register
+  // sendMaxPerIp+2 accounts, each with a DISTINCT email (so the per-email cap of
+  // 5 never trips) from ONE socket peer: verify sends cut off at sendMaxPerIp,
+  // so a single host cannot flood the mailer by rotating recipients. The cap is
+  // read from app_settings (the "everything configurable from admin" rule), not
+  // a hardcoded 20.
+  //
+  // These POSTs carry x-admin-token ONLY to opt out of the anonymous 100/min
+  // global limiter (plugins/security.ts allowList) — that unrelated request
+  // counter would otherwise mask the email throttle AND spend the shared budget
+  // check 20's flood relies on. The token does NOT bypass canSend(): the per-IP
+  // EMAIL throttle is route logic keyed on req.ip, so this isolates exactly it.
+  cleanEmailThrottle();
+  const perIpCap =
+    Number(
+      sqlOne(`SELECT (value->>'sendMaxPerIp')::int FROM app_settings WHERE key='email'`) || '',
+    ) || 20;
+  const ipFlood = perIpCap + 2;
+  const svc = { 'x-admin-token': ADMIN_TOKEN };
+  const { jar: ij, csrf: ic } = await withCsrf(BACK); // one CSRF pair, reused
+  let ipSends = 0;
+  for (let i = 0; i < ipFlood; i += 1) {
+    const em = `ipcap_${RUN}_${i}@example.test`;
+    await api(BACK, '/auth/register', {
+      method: 'POST',
+      jar: ij,
+      csrf: ic,
+      headers: svc,
+      body: { username: `gk_ipc_${RUN}_${i}`, email: em, password: 'Str0ng-pass-Q9!' },
+    });
+    ipSends += outboxCount(em, 'verify_email');
+  }
+  check(
+    `19. Send throttle (per-IP): ${ipFlood} distinct-email registers from one host cap at sendMaxPerIp verify sends`,
+    ipSends === perIpCap,
+    `sent ${ipSends}/${ipFlood} (per-IP cap ${perIpCap})`,
+  );
+
+  // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
+  cleanAuthKeys(); // clear any incidental auth counters before the flood
+
+  // ── 20. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -435,14 +715,14 @@ async function main() {
     }
   }
   check(
-    '13. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '20. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 14. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 21. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -451,7 +731,7 @@ async function main() {
   });
   const userRow = (adminUsers.json?.data ?? []).find((u) => u.username === userA.username);
   check(
-    '14. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '21. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -459,13 +739,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}`,
   );
 
-  // ── 15. the service credential is retained ──────────────────────────────────
+  // ── 22. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '15. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '22. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -477,7 +757,9 @@ async function main() {
 function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
-  process.stdout.write('\nGamesKeep — I6 auth (Slice 1): prove-the-attack-fails\n\n');
+  process.stdout.write(
+    '\nGamesKeep — I6 auth core + email flows (Slices 1–2): prove-the-attack-fails\n\n',
+  );
   let allOk = true;
   for (const r of results) {
     if (!r.ok) allOk = false;

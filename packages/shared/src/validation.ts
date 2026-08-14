@@ -240,6 +240,24 @@ export const authLoginInput = z.object({
   password: z.string().min(1).max(200),
 });
 
+// ── auth email flows (SPEC I6, Slice 2) ──────────────────────────────────────
+/** Request a verification or password-reset email (enumeration-safe endpoints). */
+export const authEmailRequestInput = z.object({
+  email: z.string().email().max(254),
+});
+
+/** A single-use email token — 256-bit, hex-encoded (shape-gated before any DB hit). */
+const emailToken = z.string().regex(/^[a-f0-9]{64}$/, 'invalid token');
+
+/** Confirm an email address with the token from the verification link. */
+export const authVerifyEmailInput = z.object({ token: emailToken });
+
+/** Set a new password using the token from the reset link. */
+export const authResetPasswordInput = z.object({
+  token: emailToken,
+  password: z.string().min(8, 'at least 8 characters').max(200),
+});
+
 // ── game sub-resources (auto + manual override surfaces) ─────────────────────
 export const gameReviewCreate = z.object({
   gameId: uuid,

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PASSWORD_ALGO, hashPassword, verifyPassword } from '../src/auth/password';
 import { coarsenIp, hashToken, newCsrfToken } from '../src/auth/session';
+import { consumeToken } from '../src/auth/tokens';
 import { assertProductionSecrets, trustProxyValue, type Env } from '../src/config/env';
 import { constantTimeEqual } from '../src/lib/crypto';
+import { accountExistsEmail, passwordResetEmail, verificationEmail } from '../src/email/templates';
 
 /**
  * Hermetic I6 Slice-1 tests — pure logic only (no DB/Redis): the Argon2id
@@ -100,6 +102,46 @@ describe('env: TRUST_PROXY parsing (I6 hardening, HIGH — spoofable IP)', () =>
     expect(trustProxyValue('1')).toBe(1);
     expect(trustProxyValue('2')).toBe(2);
     expect(trustProxyValue('10.0.0.0/8,172.16.0.0/12')).toBe('10.0.0.0/8,172.16.0.0/12');
+  });
+});
+
+describe('email: templates (I6 Slice 2 — links, TTL, no token leak)', () => {
+  const TOKEN = 'ab'.repeat(32); // shape of a real 256-bit hex token
+
+  it('verification email embeds the token link and normalizes the base', () => {
+    const m = verificationEmail('user@example.test', TOKEN, 'https://games.keep/');
+    expect(m.purpose).toBe('verify_email');
+    expect(m.toEmail).toBe('user@example.test');
+    // Trailing slash on the base must not double up.
+    expect(m.bodyText).toContain(`https://games.keep/verify-email?token=${TOKEN}`);
+    expect(m.bodyText).not.toContain('keep//verify-email');
+    expect(m.bodyText).toMatch(/24 hours/);
+  });
+
+  it('password-reset email embeds a one-hour, single-use link', () => {
+    const m = passwordResetEmail('user@example.test', TOKEN, 'https://games.keep');
+    expect(m.purpose).toBe('password_reset');
+    expect(m.bodyText).toContain(`https://games.keep/reset-password?token=${TOKEN}`);
+    expect(m.bodyText).toMatch(/1 hour/);
+  });
+
+  it('account-exists notice carries NO token and goes to the real owner', () => {
+    const m = accountExistsEmail('owner@example.test', 'https://games.keep');
+    expect(m.purpose).toBe('account_exists');
+    expect(m.toEmail).toBe('owner@example.test');
+    // The whole point: this notice can never carry a redeemable token.
+    expect(m.bodyText).not.toContain('token=');
+    expect(m.bodyText).toContain('https://games.keep/login');
+    expect(m.bodyText).toContain('https://games.keep/reset-password');
+  });
+});
+
+describe('email: token consume shape gate (I6 Slice 2)', () => {
+  it('rejects a malformed token without any DB hit', async () => {
+    // Non-64-hex tokens are rejected by the shape gate before touching the DB,
+    // so this stays hermetic (no Postgres needed).
+    expect(await consumeToken('not-a-token', 'verify_email')).toBeNull();
+    expect(await consumeToken('abc123', 'password_reset')).toBeNull();
   });
 });
 

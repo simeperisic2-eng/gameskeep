@@ -9,7 +9,8 @@
  *   subjects   — the generic entity hub (Game/Studio/Publisher/Platform)
  *   sources    — news outlets + pull/reputation settings
  *   users      — accounts, roles, levels, badges (auth itself is I6)
- *   auth       — server-side sessions (hashed opaque tokens; I6 Slice 1)
+ *   auth       — server-side sessions + single-use email tokens (I6 Slice 1/2)
+ *   email      — outbound email log / dev mailbox (I6 Slice 2)
  *   topics     — stories (top of the news hierarchy) + M2M links + embedding
  *   articles   — aggregated/ours + bias axes + M2M links + embedding
  *   games      — Subject specialization + ratings/review/flags/videos/prices/…
@@ -25,6 +26,7 @@ export * from './subjects';
 export * from './sources';
 export * from './users';
 export * from './auth';
+export * from './email';
 export * from './topics';
 export * from './articles';
 export * from './games';
