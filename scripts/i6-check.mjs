@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–3: auth core +
- * email flows + RBAC). Every check PROVES AN ATTACK FAILS on the live stack —
- * not that a page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–4: auth core +
+ * email flows + RBAC + community writes). Every check PROVES AN ATTACK FAILS on
+ * the live stack — not that a page renders:
  *
  *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
@@ -50,11 +50,30 @@
  *  24.  the x-admin-token service credential bypasses the gate — reaches the
  *       owner-only section a mere admin cannot (automation retention)
  *
+ *  Slice 4 — community writes (real accounts through the gated /community scope)
+ *  25.  verified-email gate: an unverified user cannot write (403); verified can
+ *  26.  CSRF required on the cookie-authed write path
+ *  27.  one rating row per (user, game) — re-rating UPDATES, never duplicates
+ *  28.  per-user write rate limit (cap from app_settings) → 429 over the cap
+ *  29.  UGC: a <script> comment is stored RAW and returned as a JSON string
+ *  30.  comment reports auto-hide a comment at the (tunable) threshold
+ *  31.  a moderator (rank 30) can restore an auto-hidden comment (audited)
+ *  32.  article trust votes are credibility-weighted (weighted ≠ naive)
+ *  33.  topic bias votes: one row per (user, axis); re-vote updates, 0 clears
+ *  34.  upcoming hype: one-per-user toggle, credibility-weighted count
+ *  35.  REVIEW-BOMB via real accounts (proven base + verified-new + unverified
+ *       ring): the flag raises and the WEIGHTED score resists (proven dominate)
+ *       while the naive average collapses; nothing silently dropped
+ *  36.  per-vote weight at rest — uniform 0→1.0: proven ~1.0, verified-new
+ *       ~0.45, unverified ~0 (decision 13; inspectable, no opaque number)
+ *  37.  counter-case: a proven-voter LOW score MOVES the score and is NOT
+ *       flagged (legitimate dissatisfaction is honored, never blanket-muted)
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  25.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  38.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  26.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  27.  the x-admin-token service credential still authorizes (retention is a
+ *  39.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  40.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -816,10 +835,392 @@ async function main() {
     `service→roles ${svcRoles.status}`,
   );
 
+  // ══ SLICE 4 — COMMUNITY WRITES ══════════════════════════════════════════════
+  // Real verified accounts write through the gated /community scope; the I4b
+  // engine + the uniform credibility weighting (decision 13) defend every
+  // signal. Every write is verified-email gated, CSRF-checked, per-user
+  // rate-limited, and one-per-user.
+
+  // register → consume the outbox verify token → verify-email (signs in): a
+  // verified session + CSRF pair in one jar. Callers clean the email throttle
+  // per BATCH (each register sends a verify email; the per-IP cap is 20).
+  async function makeVerified(tag) {
+    const u = {
+      username: `gk_${tag}_${RUN}`,
+      email: `${tag}_${RUN}@example.test`,
+      password: `Str0ng-pass-${tag}9!`,
+    };
+    const { jar, csrf } = await withCsrf(BACK);
+    await api(BACK, '/auth/register', { method: 'POST', jar, csrf, body: u });
+    const token = extractToken(outboxLatestBody(u.email, 'verify_email'));
+    const v = await api(BACK, '/auth/verify-email', { method: 'POST', jar, csrf, body: { token } });
+    jarFrom(v.res, jar); // capture the signed-in session cookie
+    const id = sqlOne(`SELECT id FROM users WHERE email='${u.email}'`);
+    return { u, id, jar, csrf };
+  }
+  const cRate = (userJar, userCsrf, gameId, score) =>
+    api(BACK, `/community/games/${gameId}/rating`, {
+      method: 'POST',
+      jar: userJar,
+      csrf: userCsrf,
+      body: { score },
+    });
+  // Fresh RUN-scoped games (via the service token) so score/count assertions are
+  // deterministic and RE-RUN-SAFE — seeded games accumulate votes across runs.
+  const createGame = async (name) =>
+    (
+      await api(BACK, '/admin/api/games', {
+        method: 'POST',
+        headers: SVC,
+        body: { name, status: 'released' },
+      })
+    ).json?.data?.id;
+
+  // ── account pools (clean the email throttle before each batch of ≤20) ───────
+  cleanEmailThrottle();
+  const alice = await makeVerified('c_alice');
+  // an UNVERIFIED, logged-in user (register does NOT auto-login; log in explicitly)
+  const mal = {
+    username: `gk_c_mal_${RUN}`,
+    email: `c_mal_${RUN}@example.test`,
+    password: 'Str0ng-pass-M9!',
+  };
+  {
+    const { jar: mj, csrf: mc } = await withCsrf(BACK);
+    await api(BACK, '/auth/register', { method: 'POST', jar: mj, csrf: mc, body: mal });
+  }
+  const { jar: malJar, csrf: malCsrf } = await withCsrf(BACK);
+  await api(BACK, '/auth/login', {
+    method: 'POST',
+    jar: malJar,
+    csrf: malCsrf,
+    body: { identifier: mal.email, password: mal.password },
+  }).then((r) => jarFrom(r.res, malJar));
+
+  cleanEmailThrottle();
+  const proven = [];
+  for (let i = 0; i < 4; i += 1) proven.push(await makeVerified(`c_pv${i}`));
+  // Elevate to proven/aged voters (weight → ~1.0): reputation + backdated age.
+  for (const p of proven)
+    sqlOne(
+      `UPDATE users SET reputation=80, created_at=now() - interval '60 days' WHERE id='${p.id}'`,
+    );
+
+  cleanEmailThrottle();
+  const bomb = [];
+  for (let i = 0; i < 6; i += 1) bomb.push(await makeVerified(`c_bmb${i}`));
+
+  // pick a released game to rate (verify-safe: RUN-scoped ratings, upsert-guarded)
+  const ratingGame = sqlOne(
+    `SELECT g.id FROM games g JOIN subjects s ON s.id=g.subject_id WHERE g.status='released' ORDER BY s.name LIMIT 1`,
+  );
+
+  // ── 25. verified-email GATE: unverified write 403, verified write 200 ───────
+  const gateUnverified = await cRate(malJar, malCsrf, ratingGame, 70);
+  const gateVerified = await cRate(alice.jar, alice.csrf, ratingGame, 70);
+  check(
+    '25. Verified-email gate: an UNVERIFIED user cannot write (403 email_unverified); a verified user can (200)',
+    gateUnverified.status === 403 &&
+      gateUnverified.json?.error === 'email_unverified' &&
+      gateVerified.status === 200,
+    `unverified ${gateUnverified.status}/${gateUnverified.json?.error}, verified ${gateVerified.status}`,
+  );
+
+  // ── 26. CSRF on the cookie-authed write path ────────────────────────────────
+  const noCsrfWrite = await api(BACK, `/community/games/${ratingGame}/rating`, {
+    method: 'POST',
+    jar: alice.jar, // cookie present, no x-csrf-token header
+    body: { score: 55 },
+  });
+  const withCsrfW = await cRate(alice.jar, alice.csrf, ratingGame, 55);
+  check(
+    '26. CSRF: a community write without the header is 403; with it, 200',
+    noCsrfWrite.status === 403 && noCsrfWrite.json?.error === 'csrf' && withCsrfW.status === 200,
+    `noCsrf ${noCsrfWrite.status}, csrf ${withCsrfW.status}`,
+  );
+
+  // ── 27. one-per-user rating (upsert, not a second row) ──────────────────────
+  await cRate(alice.jar, alice.csrf, ratingGame, 42);
+  const aliceRows = Number(
+    sqlOne(
+      `SELECT count(*)::int FROM game_user_ratings WHERE game_id='${ratingGame}' AND user_id='${alice.id}'`,
+    ),
+  );
+  const aliceScore = Number(
+    sqlOne(
+      `SELECT score FROM game_user_ratings WHERE game_id='${ratingGame}' AND user_id='${alice.id}'`,
+    ),
+  );
+  check(
+    '27. One-per-user rating: re-rating UPDATES the single row (no duplicate)',
+    aliceRows === 1 && aliceScore === 42,
+    `rows=${aliceRows}, score=${aliceScore}`,
+  );
+
+  // ── 28. per-user write rate limit (app_settings-tunable) ────────────────────
+  sqlOne(
+    `INSERT INTO app_settings(key,value) VALUES('community','{"writesPerUser":3}'::jsonb) ON CONFLICT (key) DO UPDATE SET value='{"writesPerUser":3}'::jsonb`,
+  );
+  cleanRedisKeys('gk:community:write:*');
+  const rlStatuses = [];
+  for (let i = 0; i < 4; i += 1)
+    rlStatuses.push((await cRate(alice.jar, alice.csrf, ratingGame, 60)).status);
+  sqlOne(`DELETE FROM app_settings WHERE key='community'`); // restore defaults
+  cleanRedisKeys('gk:community:write:*');
+  check(
+    '28. Per-user rate limit: with cap 3, the 4th write in the window is 429 (cap from app_settings)',
+    rlStatuses.slice(0, 3).every((s) => s === 200) && rlStatuses[3] === 429,
+    `statuses ${rlStatuses.join(',')}`,
+  );
+
+  // ── 29. UGC: a <script> comment is stored RAW and returned as a JSON string ──
+  const xss = '<script>alert(1)</script>';
+  const cmt = await api(BACK, `/community/comment/game/${ratingGame}`, {
+    method: 'POST',
+    jar: alice.jar,
+    csrf: alice.csrf,
+    body: { body: xss },
+  });
+  const storedBody = sqlOne(`SELECT body FROM comments WHERE id='${cmt.json?.data?.id}'`);
+  const list = await api(BACK, `/community/comment/game/${ratingGame}`, { jar: alice.jar });
+  const returned = (list.json?.data ?? []).find((c) => c.id === cmt.json?.data?.id)?.body;
+  check(
+    '29. UGC: <script> comment stored RAW (no server mangling) and returned as a JSON string (escaped at render)',
+    cmt.status === 200 && storedBody === xss && returned === xss,
+    `stored==input ${storedBody === xss}, returned==input ${returned === xss}`,
+  );
+
+  // ── 30. comment report auto-hide at N (tunable) ─────────────────────────────
+  sqlOne(
+    `INSERT INTO app_settings(key,value) VALUES('community','{"autoHideReports":3}'::jsonb) ON CONFLICT (key) DO UPDATE SET value='{"autoHideReports":3}'::jsonb`,
+  );
+  const targetCmt = cmt.json?.data?.id;
+  const reportStatuses = [];
+  for (let i = 0; i < 3; i += 1) {
+    const r = await api(BACK, `/community/report/comment/${targetCmt}`, {
+      method: 'POST',
+      jar: bomb[i].jar,
+      csrf: bomb[i].csrf,
+      body: { reason: 'spam' },
+    });
+    reportStatuses.push(r.status);
+  }
+  const hiddenAfter = sqlOne(`SELECT is_removed::text FROM comments WHERE id='${targetCmt}'`);
+  check(
+    '30. Comment reports: 3 distinct reporters cross the threshold → the comment is AUTO-HIDDEN (is_removed)',
+    reportStatuses.every((s) => s === 200) && hiddenAfter === 'true',
+    `reports ${reportStatuses.join(',')}, isRemoved=${hiddenAfter}`,
+  );
+
+  // ── 31. moderator restore (decision 8) ──────────────────────────────────────
+  const restore = await api(BACK, `/admin/api/comments/${targetCmt}/restore`, {
+    method: 'POST',
+    jar: mod.jar,
+    csrf: mod.csrf,
+  });
+  const restoredState = sqlOne(`SELECT is_removed::text FROM comments WHERE id='${targetCmt}'`);
+  sqlOne(`DELETE FROM app_settings WHERE key='community'`); // restore defaults
+  check(
+    '31. A MODERATOR (rank 30) can restore an auto-hidden comment (is_removed back to false); audited',
+    restore.status === 200 && restoredState === 'false',
+    `restore ${restore.status}, isRemoved=${restoredState}`,
+  );
+
+  // ── 32. article trust vote is credibility-weighted (decision 13) ────────────
+  const trustArticle = sqlOne(`SELECT id FROM articles ORDER BY publish_date DESC LIMIT 1`);
+  sqlOne(`DELETE FROM article_trust_votes WHERE article_id='${trustArticle}'`); // clean slate (re-run-safe)
+  await api(BACK, `/community/articles/${trustArticle}/trust-vote`, {
+    method: 'POST',
+    jar: proven[0].jar,
+    csrf: proven[0].csrf,
+    body: { value: 1 },
+  });
+  for (let i = 0; i < 3; i += 1)
+    await api(BACK, `/community/articles/${trustArticle}/trust-vote`, {
+      method: 'POST',
+      jar: bomb[i].jar,
+      csrf: bomb[i].csrf,
+      body: { value: -1 },
+    });
+  const trustAgg = (
+    await api(BACK, `/community/articles/${trustArticle}/trust`, { jar: proven[0].jar })
+  ).json?.data;
+  check(
+    '32. Trust vote weighting: 1 proven +1 vs 3 throwaway −1 → the WEIGHTED mean is pulled well ABOVE the naive count toward the credible voter',
+    trustAgg &&
+      trustAgg.count === 4 &&
+      trustAgg.naiveMean <= -0.4 &&
+      trustAgg.weightedMean > trustAgg.naiveMean + 0.15,
+    `weighted=${trustAgg?.weightedMean} naive=${trustAgg?.naiveMean} count=${trustAgg?.count}`,
+  );
+
+  // ── 33. topic bias vote: one-per-user-per-axis, change + clear ──────────────
+  const biasTopic = sqlOne(`SELECT id FROM topics ORDER BY created_at DESC LIMIT 1`);
+  const biasVote = (value) =>
+    api(BACK, `/community/topics/${biasTopic}/bias-vote`, {
+      method: 'POST',
+      jar: alice.jar,
+      csrf: alice.csrf,
+      body: { axis: 'influence', value },
+    });
+  await biasVote(1);
+  await biasVote(-1); // same axis → UPDATE, not a second row
+  const biasRows1 = Number(
+    sqlOne(
+      `SELECT count(*)::int FROM topic_bias_votes WHERE topic_id='${biasTopic}' AND user_id='${alice.id}' AND axis='influence'`,
+    ),
+  );
+  const biasVal = Number(
+    sqlOne(
+      `SELECT value FROM topic_bias_votes WHERE topic_id='${biasTopic}' AND user_id='${alice.id}' AND axis='influence'`,
+    ),
+  );
+  await biasVote(0); // 0 clears the stance → row deleted
+  const biasRows2 = Number(
+    sqlOne(
+      `SELECT count(*)::int FROM topic_bias_votes WHERE topic_id='${biasTopic}' AND user_id='${alice.id}' AND axis='influence'`,
+    ),
+  );
+  check(
+    '33. Bias vote: one row per (user, axis) — re-voting UPDATES (value −1), value 0 CLEARS (row deleted)',
+    biasRows1 === 1 && biasVal === -1 && biasRows2 === 0,
+    `afterChange rows=${biasRows1} val=${biasVal}, afterClear rows=${biasRows2}`,
+  );
+
+  // ── 34. upcoming hype: one-per-user toggle, credibility-weighted count ───────
+  const hypeGame =
+    sqlOne(
+      `SELECT g.id FROM games g WHERE g.status IN ('announced','in_development','early_access') ORDER BY g.created_at DESC LIMIT 1`,
+    ) || ratingGame;
+  sqlOne(`DELETE FROM game_hype_votes WHERE game_id='${hypeGame}'`); // clean slate (re-run-safe)
+  const h1 = await api(BACK, `/community/games/${hypeGame}/hype`, {
+    method: 'POST',
+    jar: proven[0].jar,
+    csrf: proven[0].csrf,
+  });
+  const hAgg1 = (await api(BACK, `/community/games/${hypeGame}/hype`, { jar: proven[0].jar })).json
+    ?.data;
+  const h2 = await api(BACK, `/community/games/${hypeGame}/hype`, {
+    method: 'POST',
+    jar: proven[0].jar,
+    csrf: proven[0].csrf,
+  });
+  const hAgg2 = (await api(BACK, `/community/games/${hypeGame}/hype`, { jar: proven[0].jar })).json
+    ?.data;
+  check(
+    '34. Hype: toggle on → count 1 (mine); toggle off → count 0 (one-per-user, weighted)',
+    h1.json?.data?.hyped === true &&
+      hAgg1?.count === 1 &&
+      hAgg1?.mine === true &&
+      h2.json?.data?.hyped === false &&
+      hAgg2?.count === 0,
+    `on={hyped:${h1.json?.data?.hyped},count:${hAgg1?.count}} off={hyped:${h2.json?.data?.hyped},count:${hAgg2?.count}}`,
+  );
+
+  // ── 35. REVIEW-BOMB through real accounts: flag raises + weighted resists ────
+  // A realistic ring is MOSTLY unverified throwaways (weight ~0). Base: 4
+  // proven/aged voters (write flow, score 80, backdated OUTSIDE the 48h window).
+  // Bomb: 4 verified-new throwaways (write flow, score 0 — proves the gated path
+  // still can't move the WEIGHTED score) + 16 UNVERIFIED accounts injected via
+  // the service path (score 3 — the bulk a real ring would be). Distinct scores
+  // (80 / 0 / 3) so check 36 can read each cohort's weight at rest.
+  const bombGame = await createGame(`Bombtest ${RUN}`); // fresh → deterministic count
+  for (const p of proven) await cRate(p.jar, p.csrf, bombGame, 80);
+  sqlOne(
+    `UPDATE game_user_ratings SET rated_at=now() - interval '20 days' WHERE game_id='${bombGame}' AND user_id IN (${proven.map((p) => `'${p.id}'`).join(',')})`,
+  );
+  for (let i = 0; i < 4; i += 1) await cRate(bomb[i].jar, bomb[i].csrf, bombGame, 0);
+  const regRole = roleId('registered');
+  for (let i = 0; i < 16; i += 1) {
+    const uid = (
+      await api(BACK, '/admin/api/users', {
+        method: 'POST',
+        headers: SVC,
+        body: {
+          username: `gk_c_uv${i}_${RUN}`,
+          email: `c_uv${i}_${RUN}@example.test`,
+          roleId: regRole,
+          isEmailVerified: false,
+          reputation: 0,
+        },
+      })
+    ).json?.data?.id;
+    await api(BACK, '/admin/api/game-user-ratings', {
+      method: 'POST',
+      headers: SVC,
+      body: { gameId: bombGame, userId: uid, score: 3 },
+    });
+  }
+  // Recompute on the background engine, then poll until ALL 24 votes are
+  // counted — robust to the recomputes the writes themselves enqueue (an
+  // intermediate one might land mid-poll with fewer votes).
+  await api(BACK, '/admin/api/ratings/recompute', {
+    method: 'POST',
+    headers: SVC,
+    body: { gameId: bombGame },
+  });
+  let com = null;
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(1000);
+    const g = (await api(BACK, `/admin/api/ratings/game/${bombGame}`, { headers: SVC })).json?.data;
+    com = g?.community;
+    if (com?.count === 24) break;
+  }
+  check(
+    '35. Review-bomb (real accounts): the flag raises, the WEIGHTED score resists (proven dominate) while the naive average collapses; nothing dropped',
+    com &&
+      com.burstFlag === true &&
+      com.score >= 50 &&
+      com.naive <= 22 &&
+      com.score - com.naive >= 30 &&
+      com.count === 24,
+    `flag=${com?.burstFlag} weighted=${com?.score} naive=${com?.naive} count=${com?.count}`,
+  );
+
+  // ── 36. per-vote credibility at rest — the uniform 0→1.0 curve (decision 13) ─
+  const votes =
+    (await api(BACK, `/admin/api/ratings/game/${bombGame}/votes`, { headers: SVC })).json?.data
+      ?.votes ?? [];
+  const provenVote = votes.find((v) => v.score === 80); // verified + aged + rep
+  const verifiedNew = votes.find((v) => v.score === 0); // verified but brand-new
+  const unverified = votes.find((v) => v.score === 3); // unverified throwaway
+  check(
+    '36. Per-vote weight at rest: proven ~1.0, verified-new ~0.45, UNVERIFIED ~0 — the uniform 0→1.0 curve, inspectable, no opaque number',
+    provenVote &&
+      verifiedNew &&
+      unverified &&
+      provenVote.credibility.total >= 0.95 &&
+      verifiedNew.credibility.total > 0.3 &&
+      verifiedNew.credibility.total < 0.6 &&
+      unverified.credibility.total <= 0.01,
+    `proven=${provenVote?.credibility.total} verified-new=${verifiedNew?.credibility.total} unverified=${unverified?.credibility.total}`,
+  );
+
+  // ── 37. counter-case: a proven LOW surge MOVES the score and is NOT flagged ──
+  const lowGame = await createGame(`Lowtest ${RUN}`); // fresh → deterministic
+  for (const p of proven) await cRate(p.jar, p.csrf, lowGame, 35);
+  await api(BACK, '/admin/api/ratings/recompute', {
+    method: 'POST',
+    headers: SVC,
+    body: { gameId: lowGame },
+  });
+  let lc = null;
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(1000);
+    const g = (await api(BACK, `/admin/api/ratings/game/${lowGame}`, { headers: SVC })).json?.data;
+    lc = g?.community;
+    if (lc?.count === 4) break;
+  }
+  check(
+    '37. Counter-case: a genuine proven-voter LOW score MOVES the weighted score (~35) and is NOT flagged (legit dissatisfaction honored)',
+    lc && lc.burstFlag === false && lc.score >= 25 && lc.score <= 45,
+    `flag=${lc?.burstFlag} weighted=${lc?.score} naive=${lc?.naive}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 25. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 38. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -838,37 +1239,39 @@ async function main() {
     }
   }
   check(
-    '25. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '38. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 26. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 39. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const auditRows = await api(BACK, '/admin/api/_audit?limit=200', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
-  const userRow = (adminUsers.json?.data ?? []).find((u) => u.username === userA.username);
+  // Fetch userA by id (the list caps at 200 rows; re-runs accumulate users).
+  const userAId = sqlOne(`SELECT id FROM users WHERE username='${userA.username}'`);
+  const userRow = (await api(BACK, `/admin/api/users/${userAId}`, { headers: SVC })).json?.data;
   check(
-    '26. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '39. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
       !auditRows.text.includes('$argon2'),
-    `users=${adminUsers.status}, audit=${auditRows.status}`,
+    `users=${adminUsers.status}, audit=${auditRows.status}, userA=${userRow?.passwordHash}`,
   );
 
-  // ── 27. the service credential is retained ──────────────────────────────────
+  // ── 40. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '27. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '40. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -881,7 +1284,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth core + email flows + RBAC (Slices 1–3): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 auth core + email + RBAC + community (Slices 1–4): prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

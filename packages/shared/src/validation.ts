@@ -258,6 +258,49 @@ export const authResetPasswordInput = z.object({
   password: z.string().min(8, 'at least 8 characters').max(200),
 });
 
+// ── community writes (SPEC I6, Slice 4) ──────────────────────────────────────
+// PUBLIC, session-scoped schemas: the acting user comes from the session (never
+// the body), and per-vote credibility WEIGHT is computed by the engine (never
+// the client) — unlike the admin-shaped `gameUserRatingCreate` which trusts a
+// caller-supplied userId/weight. Everything one-per-user, verified-email gated.
+export const COMMENT_ENTITY_TYPES = ['topic', 'article', 'game'] as const;
+export const BIAS_AXES = ['influence', 'quality', 'trust'] as const;
+export const REACTION_KINDS = ['like', 'insightful', 'funny', 'disagree'] as const;
+
+/** Rate a game 0..100 (the acting user is the session; weight is engine-computed). */
+export const communityRatingInput = z.object({ score: score0to100 });
+
+/** Article trust vote — "felt honest" (+1) vs "felt like paid hype" (−1). */
+export const communityTrustVoteInput = z.object({
+  value: z.union([z.literal(1), z.literal(-1)]),
+});
+
+/** Topic bias vote on one axis — −1 / 0 / +1 (0 clears the stance on that axis). */
+export const communityBiasVoteInput = z.object({
+  axis: z.enum(BIAS_AXES),
+  value: z.union([z.literal(1), z.literal(0), z.literal(-1)]),
+});
+
+/** A plain-text comment (stored RAW; escaped at render — decision 8). */
+export const communityCommentInput = z.object({
+  body: z.string().trim().min(1, 'empty comment').max(4000),
+  parentId: uuid.optional(),
+});
+
+/** Toggle a reaction of a given kind on an entity (one-per-user-per-kind). */
+export const communityReactionInput = z.object({ kind: z.enum(REACTION_KINDS) });
+
+/** Report a comment (optional short reason). One report per user per comment. */
+export const communityReportInput = z.object({
+  reason: z.string().trim().max(300).optional(),
+});
+
+/** The polymorphic comment/reaction entity target (validated route params). */
+export const communityEntityParam = z.object({
+  entityType: z.enum(COMMENT_ENTITY_TYPES),
+  entityId: uuid,
+});
+
 // ── game sub-resources (auto + manual override surfaces) ─────────────────────
 export const gameReviewCreate = z.object({
   gameId: uuid,

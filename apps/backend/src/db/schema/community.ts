@@ -10,6 +10,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { articles } from './articles';
+import { games } from './games';
 import { topics } from './topics';
 import { users } from './users';
 import { primaryId } from './_shared';
@@ -91,4 +92,48 @@ export const topicBiasVotes = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('topic_bias_vote_unique').on(t.topicId, t.userId, t.axis)],
+);
+
+/**
+ * Comment reports (SPEC I6, Slice 4, decision 8) — a user flags a comment. One
+ * report per user per comment (the unique index); when the DISTINCT report
+ * count crosses the `app_settings.community.autoHideReports` threshold the
+ * comment is auto-hidden (`comments.isRemoved = true`) pending moderator review
+ * (restore is a moderator action; the full dashboard is I8).
+ */
+export const commentReports = pgTable(
+  'comment_reports',
+  {
+    id: primaryId(),
+    commentId: uuid('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    reporterUserId: uuid('reporter_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    reason: varchar('reason', { length: 300 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('comment_report_unique').on(t.commentId, t.reporterUserId)],
+);
+
+/**
+ * Upcoming-game hype votes (SPEC I6, Slice 4) — the "▲ Hype" toggle on upcoming
+ * titles. A one-per-user presence flag (no value); the count is the hype level.
+ * Like every community signal it is credibility-weighted at read (decision 13),
+ * so a throwaway's hype counts ~0 and a proven account's ~1.0.
+ */
+export const gameHypeVotes = pgTable(
+  'game_hype_votes',
+  {
+    id: primaryId(),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('game_hype_vote_unique').on(t.gameId, t.userId)],
 );

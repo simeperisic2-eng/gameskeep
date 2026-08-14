@@ -37,6 +37,7 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
   articles: RANK.moderator,
   relations: RANK.moderator,
   clustering: RANK.moderator,
+  comments: RANK.moderator, // soft-remove / restore reported comments (Slice 4)
   'game-flag-reports': RANK.moderator,
   _meta: RANK.moderator,
   // NOTE: `bias` is deliberately NOT here — bias weights tune the engine behind

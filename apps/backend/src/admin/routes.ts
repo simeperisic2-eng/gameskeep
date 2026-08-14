@@ -15,6 +15,7 @@ import { registerRatingAdminRoutes } from './rating-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
 import { actorOf, sendError, type Actor } from './http';
 import { adminAuthHook } from './guard';
+import { moderateComment } from '../community/service';
 import { RESOURCE_BY_NAME, listResourceMeta, uniqueSlug, type ResourceDef } from './registry';
 
 function requireResource(reply: FastifyReply, name: string): ResourceDef | null {
@@ -276,6 +277,26 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         } catch (err) {
           sendError(reply, err);
         }
+      });
+
+      // ── comment moderation (SPEC I6, Slice 4, decision 8) ───────────────────
+      // Soft-remove / restore a reported comment. Section 'comments' is gated at
+      // MODERATOR rank (see admin/rbac.ts); the full moderation dashboard is I8.
+      admin.post<{ Params: { id: string } }>('/comments/:id/remove', async (req, reply) => {
+        const ok = await moderateComment(req.params.id, true, actorOf(req));
+        if (!ok) {
+          reply.code(404).send({ error: 'not_found' });
+          return;
+        }
+        reply.send({ ok: true, isRemoved: true });
+      });
+      admin.post<{ Params: { id: string } }>('/comments/:id/restore', async (req, reply) => {
+        const ok = await moderateComment(req.params.id, false, actorOf(req));
+        if (!ok) {
+          reply.code(404).send({ error: 'not_found' });
+          return;
+        }
+        reply.send({ ok: true, isRemoved: false });
       });
 
       // ── catalog + unmatched-queue routes (before generic so they win) ───────

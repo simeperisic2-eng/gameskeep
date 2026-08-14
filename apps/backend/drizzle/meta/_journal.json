@@ -57,6 +57,13 @@
       "when": 1786631821923,
       "tag": "0007_i6_email",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786743694870,
+      "tag": "0008_i6_community",
+      "breakpoints": true
     }
   ]
 }
