@@ -6,9 +6,12 @@ import {
   authRegisterInput,
   authResetPasswordInput,
   authVerifyEmailInput,
+  consentInput,
+  deleteAccountInput,
 } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
 import { roles, users } from '../db/schema';
+import { deleteAccount, exportAccount, recordConsent } from '../gdpr/service';
 import { env, isProduction } from '../config/env';
 import { sendError } from '../admin/http';
 import {
@@ -348,6 +351,70 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         const revoked = await revokeAllSessions(session.user.id);
         clearSessionCookie(reply);
         reply.send({ ok: true, revoked });
+      });
+
+      // ── GET /auth/export — GDPR data export (the user's OWN data) ───────────
+      auth.get('/export', async (req, reply) => {
+        try {
+          const session = await sessionOf(req);
+          if (!session) {
+            reply.code(401).send({ error: 'unauthenticated' });
+            return;
+          }
+          const data = await exportAccount(session.user.id);
+          if (!data) {
+            reply.code(404).send({ error: 'not_found' });
+            return;
+          }
+          reply.header('cache-control', 'private, no-store');
+          reply.send({ exportedAt: new Date().toISOString(), data });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── POST /auth/consent — record a versioned consent (coarsened IP) ──────
+      auth.post('/consent', async (req, reply) => {
+        try {
+          const session = await sessionOf(req);
+          if (!session) {
+            reply.code(401).send({ error: 'unauthenticated' });
+            return;
+          }
+          const { consentType, version, granted } = consentInput.parse(req.body);
+          await recordConsent(session.user.id, consentType, version, granted, req.ip);
+          reply.send({ ok: true });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── POST /auth/delete-account — anonymize-and-tombstone (GDPR erasure) ──
+      // Re-confirms the password (a hijacked session alone can't erase). Frees
+      // the email/username; ratings/votes stay (honest aggregates); PII is gone.
+      auth.post('/delete-account', async (req, reply) => {
+        try {
+          const session = await sessionOf(req);
+          if (!session) {
+            reply.code(401).send({ error: 'unauthenticated' });
+            return;
+          }
+          const { password } = deleteAccountInput.parse(req.body);
+          const [row] = await db
+            .select({ passwordHash: users.passwordHash })
+            .from(users)
+            .where(eq(users.id, session.user.id))
+            .limit(1);
+          if (!row?.passwordHash || !(await verifyPassword(row.passwordHash, password))) {
+            reply.code(403).send(INVALID_CREDENTIALS);
+            return;
+          }
+          const result = await deleteAccount(session.user.id);
+          clearSessionCookie(reply);
+          reply.send({ ok: true, emailFreed: Boolean(result) });
+        } catch (err) {
+          sendError(reply, err);
+        }
       });
 
       // ── POST /auth/verify-email — confirm the address (and sign in) ─────────

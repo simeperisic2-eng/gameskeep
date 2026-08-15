@@ -6,6 +6,8 @@ import {
   communityRatingInput,
   communityReactionInput,
   communityTrustVoteInput,
+  consentInput,
+  deleteAccountInput,
   followEntityParam,
 } from '@gameskeep/shared/validation';
 import { voterCredibility, weightedAggregate } from '../src/community/weighting';
@@ -118,5 +120,19 @@ describe('community: public write validation', () => {
       false,
     );
     expect(followEntityParam.safeParse({ entityType: 'game', slug: '../etc' }).success).toBe(false);
+  });
+
+  it('GDPR: consent needs a known type + version + boolean; delete requires a password (I6 Slice 7)', () => {
+    expect(
+      consentInput.safeParse({ consentType: 'privacy', version: '2026-01', granted: true }).success,
+    ).toBe(true);
+    expect(
+      consentInput.safeParse({ consentType: 'nonsense', version: '1', granted: true }).success,
+    ).toBe(false);
+    expect(
+      consentInput.safeParse({ consentType: 'terms', version: '1', granted: 'yes' }).success,
+    ).toBe(false);
+    expect(deleteAccountInput.safeParse({ password: 'hunter2!' }).success).toBe(true);
+    expect(deleteAccountInput.safeParse({}).success).toBe(false);
   });
 });

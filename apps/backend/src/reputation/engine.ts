@@ -130,6 +130,10 @@ export async function recomputeAllReputation(): Promise<RecomputeReputationResul
   const now = Date.now();
   let processed = 0;
   for (const u of allUsers) {
+    // A deleted (anonymize-and-tombstone) account is FROZEN — its reputation
+    // stays put so the votes it cast keep their honest weight (GDPR, Slice 7).
+    // It still counts as a reactor for OTHERS via the credibility snapshot.
+    if (u.status === 'deleted') continue;
     const suspended = SUSPENDED.has(u.status);
     const helpful = (helpfulByAuthor.get(u.id) ?? 0) * rep.helpfulWeight;
     const reports = (acceptedByUser.get(u.id) ?? 0) * rep.reportWeight;

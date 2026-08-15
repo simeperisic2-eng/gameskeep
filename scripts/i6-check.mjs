@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–6: auth + email +
- * RBAC + community writes + reputation + follow/feed). Every check PROVES AN
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–7: auth + email +
+ * RBAC + community + reputation + follow/feed + GDPR). Every check PROVES AN
  * ATTACK FAILS on the live stack — not that a page renders:
  *
  *  Slice 1 — auth core
@@ -89,11 +89,19 @@
  *  45.  one follow row per (user, entity) — following twice is idempotent,
  *       unfollow removes it
  *
+ *  Slice 7 — GDPR (export + anonymize-and-tombstone delete + consent)
+ *  46.  data export returns the user's OWN data (profile+email, ratings,
+ *       comments, follows, consents)
+ *  47.  delete anonymize-and-tombstones: wrong password 403; PII scrubbed +
+ *       email/username freed + status deleted; comment → "[deleted]"; the
+ *       RATING is KEPT (aggregate stays honest); PII children gone; session 401
+ *  48.  the freed email genuinely re-registers as a NEW active account
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  46.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  49.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  47.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  48.  the x-admin-token service credential still authorizes (retention is a
+ *  50.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  51.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -1462,10 +1470,132 @@ async function main() {
     `afterDup=${dupRows}, unfollow=${unfollowRes.status}, afterUnfollow=${afterUnfollow}`,
   );
 
+  // ══ SLICE 7 — GDPR (export + anonymize-and-tombstone delete + consent) ═══════
+  cleanEmailThrottle();
+  const gdpr = await makeVerified('gdpr'); // verified → can rate/comment; has a password
+  const gdprGame = await createGame(`GDPR ${RUN}`); // fresh → deterministic aggregate
+  const gdprSlug = sqlOne(
+    `SELECT slug FROM subjects WHERE id=(SELECT subject_id FROM games WHERE id='${gdprGame}')`,
+  );
+  // cast a footprint: rating + comment + follow + consent
+  await cRate(gdpr.jar, gdpr.csrf, gdprGame, 77);
+  const gdprComment = (
+    await api(BACK, `/community/comment/game/${gdprGame}`, {
+      method: 'POST',
+      jar: gdpr.jar,
+      csrf: gdpr.csrf,
+      body: { body: `gdpr comment ${RUN}` },
+    })
+  ).json?.data?.id;
+  await api(BACK, `/community/follow/game/${gdprSlug}`, {
+    method: 'POST',
+    jar: gdpr.jar,
+    csrf: gdpr.csrf,
+  });
+  await api(BACK, '/auth/consent', {
+    method: 'POST',
+    jar: gdpr.jar,
+    csrf: gdpr.csrf,
+    body: { consentType: 'privacy', version: '2026-01', granted: true },
+  });
+
+  // ── 46. export returns the user's OWN data ──────────────────────────────────
+  const exp = (await api(BACK, '/auth/export', { jar: gdpr.jar })).json?.data;
+  check(
+    '46. GDPR export: the authenticated user gets their OWN data — profile (with email), ratings, comments, follows and consents',
+    exp &&
+      exp.profile.email === gdpr.u.email &&
+      exp.ratings.length >= 1 &&
+      exp.comments.length >= 1 &&
+      exp.follows.length >= 1 &&
+      exp.consents.length >= 1,
+    `email=${exp?.profile?.email === gdpr.u.email} ratings=${exp?.ratings?.length} comments=${exp?.comments?.length} follows=${exp?.follows?.length} consents=${exp?.consents?.length}`,
+  );
+
+  // ── 47. delete = anonymize-and-tombstone (PII gone; content honest) ─────────
+  const delWrong = await api(BACK, '/auth/delete-account', {
+    method: 'POST',
+    jar: gdpr.jar,
+    csrf: gdpr.csrf,
+    body: { password: 'not-the-password' },
+  });
+  const delRes = await api(BACK, '/auth/delete-account', {
+    method: 'POST',
+    jar: gdpr.jar,
+    csrf: gdpr.csrf,
+    body: { password: gdpr.u.password },
+  });
+  const emailAfter = sqlOne(`SELECT email FROM users WHERE id='${gdpr.id}'`);
+  const pwNull = sqlOne(`SELECT (password_hash IS NULL)::text FROM users WHERE id='${gdpr.id}'`);
+  const statusAfter = sqlOne(`SELECT status FROM users WHERE id='${gdpr.id}'`);
+  const commentAfter = sqlOne(`SELECT body FROM comments WHERE id='${gdprComment}'`);
+  const ratingKept = Number(
+    sqlOne(`SELECT count(*)::int FROM game_user_ratings WHERE user_id='${gdpr.id}'`),
+  );
+  const childrenGone = Number(
+    sqlOne(
+      `SELECT (SELECT count(*) FROM sessions WHERE user_id='${gdpr.id}') + (SELECT count(*) FROM follows WHERE user_id='${gdpr.id}') + (SELECT count(*) FROM user_consents WHERE user_id='${gdpr.id}') + (SELECT count(*) FROM user_tokens WHERE user_id='${gdpr.id}')`,
+    ),
+  );
+  const oldSession = await api(BACK, '/auth/me', { jar: gdpr.jar });
+  // aggregate stays HONEST: recompute the game and confirm the kept rating still
+  // counts (1) and nothing crashes / fabricates.
+  await api(BACK, '/admin/api/ratings/recompute', {
+    method: 'POST',
+    headers: SVC,
+    body: { gameId: gdprGame },
+  });
+  let aggCount = -1;
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(1000);
+    const g = (await api(BACK, `/admin/api/ratings/game/${gdprGame}`, { headers: SVC })).json?.data;
+    aggCount = g?.community?.count ?? -1;
+    if (aggCount === 1) break;
+  }
+  check(
+    '47. Anonymize-and-tombstone delete: wrong password 403; then PII scrubbed (email → deleted-*@deleted.invalid, password null, status deleted), the comment is "[deleted]", the RATING is KEPT (aggregate honest = still 1), sessions/tokens/follows/consents gone, the old session is 401',
+    delWrong.status === 403 &&
+      delRes.status === 200 &&
+      /^deleted-[a-f0-9]+@deleted\.invalid$/.test(emailAfter) &&
+      pwNull === 'true' &&
+      statusAfter === 'deleted' &&
+      commentAfter === '[deleted]' &&
+      ratingKept === 1 &&
+      aggCount === 1 &&
+      childrenGone === 0 &&
+      oldSession.status === 401,
+    `del ${delWrong.status}/${delRes.status} email="${emailAfter}" pwNull=${pwNull} status=${statusAfter} comment="${commentAfter}" rating=${ratingKept} agg=${aggCount} children=${childrenGone} oldSession=${oldSession.status}`,
+  );
+
+  // ── 48. the freed email genuinely re-registers ──────────────────────────────
+  cleanEmailThrottle();
+  const verifyBefore = outboxCount(gdpr.u.email, 'verify_email');
+  const { jar: rrJar, csrf: rrCsrf } = await withCsrf(BACK);
+  const reReg = await api(BACK, '/auth/register', {
+    method: 'POST',
+    jar: rrJar,
+    csrf: rrCsrf,
+    body: { username: `gk_gdpr2_${RUN}`, email: gdpr.u.email, password: 'Str0ng-pass-R7!' },
+  });
+  // A FRESH registration issues a NEW verify token to the freed email (a taken
+  // email would instead send an account-exists notice) → the email was freed.
+  const verifyAfter = outboxCount(gdpr.u.email, 'verify_email');
+  const newUserId = sqlOne(
+    `SELECT id FROM users WHERE email='${gdpr.u.email}' AND status='active'`,
+  );
+  check(
+    '48. Right to be forgotten: the freed email re-registers as a NEW active account (generic 202 + a fresh verify token issued), distinct from the tombstone',
+    reReg.status === 202 &&
+      verifyAfter === verifyBefore + 1 &&
+      /^[0-9a-f-]{36}$/.test(newUserId) &&
+      newUserId !== gdpr.id,
+    `reReg ${reReg.status}, verifyTokens ${verifyBefore}→${verifyAfter}, newAccount=${newUserId !== gdpr.id}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 46. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 49. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -1484,14 +1614,14 @@ async function main() {
     }
   }
   check(
-    '46. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '49. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 47. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 50. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -1502,7 +1632,7 @@ async function main() {
   const userAId = sqlOne(`SELECT id FROM users WHERE username='${userA.username}'`);
   const userRow = (await api(BACK, `/admin/api/users/${userAId}`, { headers: SVC })).json?.data;
   check(
-    '47. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '50. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -1510,13 +1640,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}, userA=${userRow?.passwordHash}`,
   );
 
-  // ── 48. the service credential is retained ──────────────────────────────────
+  // ── 51. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '48. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '51. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -1529,7 +1659,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth+email+RBAC+community+reputation+feed (Slices 1–6): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 auth+email+RBAC+community+reputation+feed+GDPR (Slices 1–7): prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

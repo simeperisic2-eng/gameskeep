@@ -6,6 +6,7 @@ import {
   AWARD_CATEGORY_KINDS,
   AWARD_OUTCOME_TYPES,
   AWARD_PHASES,
+  CONSENT_TYPES,
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
   LAUNCH_STATE_FLAGS,
@@ -307,6 +308,19 @@ export const REACTION_ENTITY_TYPES = ['topic', 'article', 'game', 'comment'] as 
 export const reactionEntityParam = z.object({
   entityType: z.enum(REACTION_ENTITY_TYPES),
   entityId: uuid,
+});
+
+// ── GDPR (SPEC I6, Slice 7) ──────────────────────────────────────────────────
+/** Record a versioned consent (captured with a coarsened IP server-side). */
+export const consentInput = z.object({
+  consentType: z.enum(CONSENT_TYPES),
+  version: z.string().min(1).max(40),
+  granted: z.boolean(),
+});
+
+/** Account deletion re-confirms the current password (never a session alone). */
+export const deleteAccountInput = z.object({
+  password: z.string().min(1).max(200),
 });
 
 /** Follow a GAME or a TOPIC for "Your Feed" (SPEC I6, Slice 6). The public

@@ -402,8 +402,14 @@ export type AwardCategoryKind = (typeof AWARD_CATEGORY_KINDS)[number];
 export const AWARD_OUTCOME_TYPES = ['critics', 'community'] as const;
 export type AwardOutcomeType = (typeof AWARD_OUTCOME_TYPES)[number];
 
-export const USER_STATUSES = ['active', 'suspended', 'banned'] as const;
+// `deleted` = an anonymize-and-tombstone account (I6 Slice 7, GDPR decision 7):
+// PII scrubbed, credibility fields frozen so aggregates stay honest, cannot log in.
+export const USER_STATUSES = ['active', 'suspended', 'banned', 'deleted'] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
+
+/** Versioned consent types captured with a coarsened IP (I6 Slice 7, GDPR). */
+export const CONSENT_TYPES = ['terms', 'privacy', 'analytics', 'marketing'] as const;
+export type ConsentType = (typeof CONSENT_TYPES)[number];
 
 export const AUDIT_ACTIONS = ['create', 'update', 'delete'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

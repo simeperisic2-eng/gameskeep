@@ -71,6 +71,13 @@
       "when": 1786786288938,
       "tag": "0009_i6_follows",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786821616427,
+      "tag": "0010_i6_gdpr",
+      "breakpoints": true
     }
   ]
 }
