@@ -46,7 +46,9 @@ export async function entityExists(entityType: string, entityId: string): Promis
         ? articles
         : entityType === 'topic'
           ? topics
-          : null;
+          : entityType === 'comment'
+            ? comments
+            : null;
   if (!table) return false;
   const [row] = await db
     .select({ id: table.id })

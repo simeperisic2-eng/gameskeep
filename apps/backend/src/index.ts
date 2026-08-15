@@ -4,6 +4,7 @@ import { scheduleHeartbeat } from './queue/heartbeat';
 import { enqueueCatalogImport } from './catalog/jobs';
 import { enqueueArticleIngest } from './articles/jobs';
 import { enqueueRatingRecompute } from './ratings/jobs';
+import { enqueueReputationRecompute } from './reputation/jobs';
 import { runMigrations } from './db/migrate';
 import { seedDemo } from './db/seed';
 
@@ -63,6 +64,15 @@ async function main(): Promise<void> {
       app.log.info('rating recompute job enqueued');
     } catch (err) {
       app.log.error({ err }, 'failed to enqueue rating recompute job');
+    }
+
+    // Compute reputation + levels + auto-badges off the request path (I6 Slice
+    // 5). Idempotent; users read the pre-computed level/progress/badges.
+    try {
+      await enqueueReputationRecompute({ reason: 'boot' });
+      app.log.info('reputation recompute job enqueued');
+    } catch (err) {
+      app.log.error({ err }, 'failed to enqueue reputation recompute job');
     }
   }
 

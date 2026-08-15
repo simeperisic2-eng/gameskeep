@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–4: auth core +
- * email flows + RBAC + community writes). Every check PROVES AN ATTACK FAILS on
- * the live stack — not that a page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–5: auth core +
+ * email + RBAC + community writes + reputation). Every check PROVES AN ATTACK
+ * FAILS on the live stack — not that a page renders:
  *
  *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
@@ -69,11 +69,23 @@
  *  37.  counter-case: a proven-voter LOW score MOVES the score and is NOT
  *       flagged (legitimate dissatisfaction is honored, never blanket-muted)
  *
+ *  Slice 5 — reputation + levels + badges
+ *  38.  a self-farm ring of throwaway up-votes CANNOT raise reputation past the
+ *       first level (received signals are weighted by the reactor's credibility)
+ *  39.  the SAME up-votes from credible (aged/reputable) accounts DO count — the
+ *       target levels up (it's credibility, not vote count, that moves it)
+ *  40.  penalties: a suspended account is zeroed; removing a user's comment
+ *       drops their reputation (helpful gone + removed-content penalty)
+ *  41.  auto-badges are monotonic + idempotent (verified / early-voter; two
+ *       recomputes leave exactly one row each)
+ *  42.  the profile is leak-proof: level name + progress + badges, NEVER the
+ *       raw reputation number, levelPoints, voteWeight, or thresholds
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  38.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  43.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  39.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  40.  the x-admin-token service credential still authorizes (retention is a
+ *  44.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  45.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -1217,10 +1229,136 @@ async function main() {
     `flag=${lc?.burstFlag} weighted=${lc?.score} naive=${lc?.naive}`,
   );
 
+  // ══ SLICE 5 — REPUTATION + LEVELS + BADGES ══════════════════════════════════
+  // Reputation rises from RECEIVED helpful reactions weighted by the reactor's
+  // credibility (a self-ring of throwaways can't farm it), plus tenure, minus
+  // removed content / suspensions. The level engine runs as a background job;
+  // users see only level name + progress + badges, never the number/thresholds.
+  cleanEmailThrottle();
+  const repTarget = await makeVerified('r_tgt');
+  const ring = [];
+  for (let i = 0; i < 10; i += 1) ring.push(await makeVerified(`r_ring${i}`));
+  // the target posts one comment; the ring 'like's it (received helpful-votes)
+  const repComment = (
+    await api(BACK, `/community/comment/game/${ratingGame}`, {
+      method: 'POST',
+      jar: repTarget.jar,
+      csrf: repTarget.csrf,
+      body: { body: `reputation seed ${RUN}` },
+    })
+  ).json?.data?.id;
+  for (const r of ring)
+    await api(BACK, `/community/reaction/comment/${repComment}`, {
+      method: 'POST',
+      jar: r.jar,
+      csrf: r.csrf,
+      body: { kind: 'like' },
+    });
+
+  // Trigger the background reputation recompute and wait for its state to advance.
+  async function recomputeReputation() {
+    const before =
+      (await api(BACK, '/admin/api/reputation/status', { headers: SVC })).json?.data?.finishedAt ??
+      '';
+    await api(BACK, '/admin/api/reputation/recompute', { method: 'POST', headers: SVC });
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(1000);
+      const s = (await api(BACK, '/admin/api/reputation/status', { headers: SVC })).json?.data;
+      if (s && (s.finishedAt ?? '') !== before) return s;
+    }
+    return null;
+  }
+  const repRow = () => ({
+    rep: Number(sqlOne(`SELECT reputation FROM users WHERE id='${repTarget.id}'`)),
+    level: sqlOne(
+      `SELECT key FROM user_levels WHERE id=(SELECT level_id FROM users WHERE id='${repTarget.id}')`,
+    ),
+  });
+
+  // ── 38. self-farm ring FAILS to raise reputation ────────────────────────────
+  const jobState = await recomputeReputation();
+  const afterRing = repRow();
+  check(
+    '38. Self-farm ring: 10 throwaway (verified-new, ~0.45 credibility) up-votes leave the target BELOW the first level — a ring cannot farm reputation',
+    jobState && afterRing.rep < 15 && afterRing.level === 'newcomer',
+    `rep=${afterRing.rep} level=${afterRing.level} (job processed ${jobState?.usersProcessed})`,
+  );
+
+  // ── 39. the SAME up-votes from CREDIBLE accounts DO count → level up ─────────
+  sqlOne(
+    `UPDATE users SET reputation=100, created_at=now() - interval '60 days' WHERE id IN (${ring.map((r) => `'${r.id}'`).join(',')})`,
+  );
+  await recomputeReputation();
+  const afterCredible = repRow();
+  check(
+    '39. Credible signal counts: elevate the SAME reactors to aged/reputable → the target LEVELS UP (reputation is weighted by the reactor’s credibility, not vote count)',
+    afterCredible.rep >= 15 &&
+      afterCredible.level !== 'newcomer' &&
+      afterCredible.rep > afterRing.rep,
+    `rep ${afterRing.rep}→${afterCredible.rep}, level ${afterRing.level}→${afterCredible.level}`,
+  );
+
+  // ── 40. penalties: suspension zeroes; removed content drops reputation ───────
+  sqlOne(`UPDATE users SET status='suspended' WHERE id='${repTarget.id}'`);
+  await recomputeReputation();
+  const afterSuspended = repRow();
+  sqlOne(`UPDATE users SET status='active' WHERE id='${repTarget.id}'`);
+  await api(BACK, `/admin/api/comments/${repComment}/remove`, {
+    method: 'POST',
+    jar: mod.jar,
+    csrf: mod.csrf,
+  });
+  await recomputeReputation();
+  const afterRemoved = repRow();
+  check(
+    '40. Penalties: a SUSPENDED account is zeroed; REMOVING the target’s comment drops reputation (its received-helpful no longer counts + the removed-content penalty)',
+    afterSuspended.rep === 0 && afterRemoved.rep < afterCredible.rep,
+    `credible=${afterCredible.rep} → suspended=${afterSuspended.rep} → removed=${afterRemoved.rep}`,
+  );
+
+  // ── 41. auto-badges (monotonic, idempotent) ─────────────────────────────────
+  // Lower the early-voter threshold so a single Slice-4 voter (alice) qualifies.
+  sqlOne(
+    `INSERT INTO app_settings(key,value) VALUES('reputation','{"earlyVoterVotes":1}'::jsonb) ON CONFLICT (key) DO UPDATE SET value='{"earlyVoterVotes":1}'::jsonb`,
+  );
+  await recomputeReputation();
+  await recomputeReputation(); // twice → prove idempotency (no duplicate rows)
+  const badgeCount = (userId, key) =>
+    Number(
+      sqlOne(
+        `SELECT count(*)::int FROM user_badges ub JOIN badges b ON b.id=ub.badge_id WHERE ub.user_id='${userId}' AND b.key='${key}'`,
+      ),
+    );
+  const verifiedBadge = badgeCount(repTarget.id, 'verified');
+  const aliceEarly = badgeCount(alice.id, 'early-voter');
+  sqlOne(`DELETE FROM app_settings WHERE key='reputation'`); // restore defaults
+  check(
+    '41. Auto-badges: a verified user earns "verified"; a user past the vote threshold earns "early-voter"; two recomputes leave exactly ONE row each (idempotent)',
+    verifiedBadge === 1 && aliceEarly === 1,
+    `verified=${verifiedBadge}, alice early-voter=${aliceEarly}`,
+  );
+
+  // ── 42. leak-proof profile (decision 11) ────────────────────────────────────
+  const meProfile = (await api(BACK, '/auth/me', { jar: repTarget.jar })).json?.user;
+  const meStr = JSON.stringify(meProfile ?? {});
+  check(
+    '42. Leak-proof profile: /auth/me exposes level {name, progress} + badges but NEVER the raw reputation number, levelPoints, voteWeight, or thresholds',
+    meProfile &&
+      meProfile.level &&
+      typeof meProfile.level.progress === 'number' &&
+      Boolean(meProfile.level.key) &&
+      Array.isArray(meProfile.badges) &&
+      meProfile.reputation === undefined &&
+      meProfile.levelPoints === undefined &&
+      meProfile.voteWeight === undefined &&
+      !/threshold/i.test(meStr),
+    `level=${meProfile?.level?.key} progress=${meProfile?.level?.progress} badges=${meProfile?.badges?.length} rep=${meProfile?.reputation}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 38. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 43. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -1239,14 +1377,14 @@ async function main() {
     }
   }
   check(
-    '38. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '43. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 39. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 44. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -1257,7 +1395,7 @@ async function main() {
   const userAId = sqlOne(`SELECT id FROM users WHERE username='${userA.username}'`);
   const userRow = (await api(BACK, `/admin/api/users/${userAId}`, { headers: SVC })).json?.data;
   check(
-    '39. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '44. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -1265,13 +1403,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}, userA=${userRow?.passwordHash}`,
   );
 
-  // ── 40. the service credential is retained ──────────────────────────────────
+  // ── 45. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '40. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '45. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -1284,7 +1422,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth core + email + RBAC + community (Slices 1–4): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 auth + email + RBAC + community + reputation (Slices 1–5): prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

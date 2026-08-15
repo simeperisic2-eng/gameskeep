@@ -2,6 +2,7 @@ import { startHeartbeatWorker } from './queue/heartbeat';
 import { startCatalogWorker } from './catalog/jobs';
 import { startArticlesWorker } from './articles/jobs';
 import { startRatingsWorker } from './ratings/jobs';
+import { startReputationWorker } from './reputation/jobs';
 import { armSteamSync, startSteamWorker } from './steam/jobs';
 
 /**
@@ -39,6 +40,16 @@ ratings.on('failed', (job, err) =>
 );
 ratings.on('error', (err) => log(`ratings worker error: ${err.message}`));
 
+// I6 Slice 5: reputation + level + auto-badge recompute processor.
+const reputation = startReputationWorker();
+reputation.on('completed', (job, result) =>
+  log(`reputation recompute ${job.id} completed`, result),
+);
+reputation.on('failed', (job, err) =>
+  log(`reputation recompute ${job?.id ?? '?'} failed: ${err.message}`),
+);
+reputation.on('error', (err) => log(`reputation worker error: ${err.message}`));
+
 // B2: Steam sweep processor — registered always, SCHEDULED only in production
 // (armSteamSync no-ops in demo; history comes from the seed there).
 const steam = startSteamWorker();
@@ -49,7 +60,9 @@ void armSteamSync().then((armed) =>
   log(armed ? 'steam sweep armed (production)' : 'steam sweep dormant (demo — seeded history)'),
 );
 
-log('worker started — heartbeat + catalog + articles + ratings + steam processors waiting');
+log(
+  'worker started — heartbeat + catalog + articles + ratings + reputation + steam processors waiting',
+);
 
 const shutdown = async (signal: string): Promise<void> => {
   log(`shutting down (${signal})`);
@@ -58,6 +71,7 @@ const shutdown = async (signal: string): Promise<void> => {
     catalog.close(),
     articles.close(),
     ratings.close(),
+    reputation.close(),
     steam.close(),
   ]);
   process.exit(0);

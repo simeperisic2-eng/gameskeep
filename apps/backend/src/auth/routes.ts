@@ -19,6 +19,7 @@ import {
 import { canSend } from '../email/throttle';
 import { PASSWORD_ALGO, dummyVerify, hashPassword, verifyPassword } from './password';
 import { consumeToken, issueToken } from './tokens';
+import { getProfileView } from '../reputation/engine';
 import {
   ABSOLUTE_CAP_MS,
   CSRF_COOKIE,
@@ -119,7 +120,13 @@ async function sessionOf(req: FastifyRequest): Promise<ValidSession | null> {
   return validateSession(unsigned.value);
 }
 
-/** The public user shape — NEVER carries hash/voteWeight/levelPoints/email of others. */
+/**
+ * The public user shape — NEVER carries hash / voteWeight / levelPoints / email
+ * of others, AND (I6 Slice 5, decision 11) NEVER the raw reputation NUMBER: a
+ * user sees only their level NAME, a progress fraction, and badges — never the
+ * score, the thresholds, or that reputation drives their vote weight. The
+ * enriched level+progress+badges are attached by the caller via `getProfileView`.
+ */
 function publicUser(u: SessionUser): Record<string, unknown> {
   return {
     id: u.id,
@@ -127,9 +134,8 @@ function publicUser(u: SessionUser): Record<string, unknown> {
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
     isEmailVerified: u.isEmailVerified,
-    reputation: u.reputation,
     role: { key: u.role.key, label: u.role.label, isStaff: u.role.isStaff },
-    level: u.level,
+    level: u.level, // name only (basic); /auth/me enriches with progress + badges
     createdAt: u.createdAt,
   };
 }
@@ -308,7 +314,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         }
       });
 
-      // ── GET /auth/me — the session's own user, or 401 ───────────────────────
+      // ── GET /auth/me — the session's own user (+ level/progress/badges) ─────
       auth.get('/me', async (req, reply) => {
         ensureCsrfCookie(req, reply);
         const session = await sessionOf(req);
@@ -316,7 +322,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           reply.code(401).send({ error: 'unauthenticated' });
           return;
         }
-        reply.send({ user: publicUser(session.user) });
+        // Enrich with the pre-computed profile view (level NAME + progress
+        // fraction + badges) — never the raw reputation number (decision 11).
+        const profile = await getProfileView(session.user.id);
+        reply.send({
+          user: { ...publicUser(session.user), level: profile.level, badges: profile.badges },
+        });
       });
 
       // ── POST /auth/logout — revoke THIS session ─────────────────────────────

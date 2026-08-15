@@ -12,6 +12,7 @@ import { describeEmailSender } from '../email';
 import { readCatalogImportState } from '../catalog/jobs';
 import { readArticleIngestState } from '../articles/jobs';
 import { readSteamSyncState } from '../steam/jobs';
+import { readReputationRecomputeState } from '../reputation/jobs';
 import { errorMessage, withTimeout } from '../lib/errors';
 
 async function checkRedis(timeoutMs = 3000): Promise<{ ok: boolean; error?: string }> {
@@ -37,7 +38,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
   // Readiness — can the API reach Postgres, Redis and the AI service?
   // Also surfaces the pgvector extension and the demo heartbeat job.
   app.get('/health/ready', async (_req, reply) => {
-    const [database, cache, ai, heartbeat, catalogImport, articleIngest, steamSync] =
+    const [database, cache, ai, heartbeat, catalogImport, articleIngest, steamSync, reputation] =
       await Promise.all([
         checkDb(),
         checkRedis(),
@@ -46,6 +47,7 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
         readCatalogImportState(),
         readArticleIngestState(),
         readSteamSyncState(),
+        readReputationRecomputeState(),
       ]);
 
     const ready = database.ok && cache.ok && ai.ok;
@@ -96,6 +98,15 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
       // email_outbox dev mailbox, zero network, no secret); Live is dormant
       // until a provider is wired.
       email: describeEmailSender(),
+      // I6 Slice 5: the reputation/level/badge engine (background recompute).
+      reputation: reputation
+        ? {
+            lastRecomputeAt: reputation.finishedAt,
+            usersProcessed: reputation.usersProcessed,
+            badgesAwarded: reputation.badgesAwarded,
+            reason: reputation.reason,
+          }
+        : { note: 'no reputation recompute recorded yet' },
       dependencies: {
         postgres: {
           ok: database.ok,

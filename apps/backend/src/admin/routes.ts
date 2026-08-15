@@ -12,6 +12,7 @@ import { registerArticleAdminRoutes } from './article-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
+import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
 import { actorOf, sendError, type Actor } from './http';
 import { adminAuthHook } from './guard';
@@ -310,6 +311,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── rating engine routes (before generic so they win) ───────────────────
       await registerRatingAdminRoutes(admin);
+
+      // ── reputation engine routes (before generic so they win) ───────────────
+      await registerReputationAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

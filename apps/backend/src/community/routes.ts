@@ -7,6 +7,7 @@ import {
   communityReactionInput,
   communityReportInput,
   communityTrustVoteInput,
+  reactionEntityParam,
 } from '@gameskeep/shared/validation';
 import { CSRF_HEADER, csrfOk } from '../auth/session';
 import { requireAuth, requireVerified } from '../auth/guards';
@@ -202,7 +203,7 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
           try {
             const actor = await writer(req, reply);
             if (!actor) return;
-            const { entityType, entityId } = communityEntityParam.parse(req.params);
+            const { entityType, entityId } = reactionEntityParam.parse(req.params);
             const { kind } = communityReactionInput.parse(req.body);
             if (!(await svc.entityExists(entityType, entityId))) {
               reply.code(404).send({ error: 'not_found', message: 'Unknown reaction target.' });

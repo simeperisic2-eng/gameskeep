@@ -295,9 +295,17 @@ export const communityReportInput = z.object({
   reason: z.string().trim().max(300).optional(),
 });
 
-/** The polymorphic comment/reaction entity target (validated route params). */
+/** The polymorphic comment target (validated route params). */
 export const communityEntityParam = z.object({
   entityType: z.enum(COMMENT_ENTITY_TYPES),
+  entityId: uuid,
+});
+
+/** Reactions may ALSO target a comment — a reaction on a comment is the
+ *  "received helpful-vote" that feeds reputation (SPEC I6, Slice 5). */
+export const REACTION_ENTITY_TYPES = ['topic', 'article', 'game', 'comment'] as const;
+export const reactionEntityParam = z.object({
+  entityType: z.enum(REACTION_ENTITY_TYPES),
   entityId: uuid,
 });
 
