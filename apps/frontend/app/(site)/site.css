@@ -4118,3 +4118,261 @@ a.gk-tile-cover {
 .gk-more-stats:hover {
   text-decoration: underline;
 }
+
+/* ============================================================================
+ * Your Feed (I6 Slice 6) — per-user follow feed. Amber accent, warm-charcoal
+ * cards, reserved green/red for bias only. Reflows to one column on mobile.
+ * ========================================================================== */
+.gk-yourfeed {
+  padding-top: var(--s5);
+  padding-bottom: var(--s8);
+}
+.gk-feed-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin: var(--s4) 0 var(--s5);
+}
+.gk-feed-title {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.gk-feed-sub {
+  margin: var(--s2) 0 0;
+  color: var(--gk-text-dim);
+}
+.gk-feed-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(var(--gk-amber), 0.9);
+  margin: 0 0 var(--s3);
+}
+.gk-feed-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--s5);
+  align-items: start;
+}
+.gk-feed-following {
+  padding: var(--s4);
+  position: sticky;
+  top: var(--s5);
+}
+.gk-feed-follow-group + .gk-feed-follow-group {
+  margin-top: var(--s4);
+}
+.gk-feed-follow-group h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gk-text-dim);
+  margin: 0 0 var(--s2);
+}
+.gk-feed-follow-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.gk-feed-follow-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.gk-feed-follow-list a {
+  color: var(--gk-text);
+  text-decoration: none;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gk-feed-follow-list a:hover {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-feed-stream {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+}
+.gk-feed-item {
+  background: var(--gk-card-bg);
+  border: 1px solid var(--gk-card-border);
+  border-radius: 14px;
+  padding: var(--s4);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.gk-feed-item:hover {
+  border-color: var(--gk-card-border-hi);
+  background: var(--gk-card-bg-hi);
+}
+.gk-feed-item-via {
+  margin-bottom: var(--s2);
+}
+.gk-feed-item-via .gk-chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  background: rgba(var(--gk-amber), 0.06);
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-feed-item-title {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0;
+}
+.gk-feed-item-title a {
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-feed-item-title a:hover {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-feed-item-excerpt {
+  margin: var(--s2) 0 0;
+  color: var(--gk-text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.gk-feed-item-meta {
+  display: flex;
+  gap: var(--s3);
+  margin-top: var(--s3);
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-feed-item-meta a {
+  color: var(--gk-text-dim);
+  text-decoration: none;
+}
+.gk-feed-item-meta a:hover {
+  color: rgba(var(--gk-amber), 0.9);
+}
+.gk-feed-empty {
+  padding: var(--s7) var(--s5);
+  text-align: center;
+}
+.gk-feed-empty h1,
+.gk-feed-empty h2 {
+  margin: 0 0 var(--s3);
+}
+.gk-feed-empty p {
+  color: var(--gk-text-dim);
+  max-width: 46ch;
+  margin: 0 auto var(--s5);
+}
+.gk-feed-empty-actions {
+  display: flex;
+  gap: var(--s3);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.gk-feed-quiet {
+  color: var(--gk-text-dim);
+  padding: var(--s5) 0;
+}
+
+/* follow toggle — small pill, amber when following */
+.gk-follow-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: transparent;
+  color: rgba(var(--gk-amber), 0.95);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gk-follow-btn:hover {
+  background: rgba(var(--gk-amber), 0.1);
+}
+.gk-follow-btn.is-following {
+  background: rgba(var(--gk-amber), 0.14);
+  color: rgba(var(--gk-amber), 1);
+}
+.gk-follow-btn.is-loading {
+  opacity: 0.5;
+  cursor: default;
+}
+.gk-follow-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* level chip (from the leak-proof profile — name only, never the number) */
+.gk-level-chip {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: rgba(var(--gk-amber), 0.08);
+  color: rgba(var(--gk-amber), 0.95);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* ghost (secondary) button — pairs with .gk-btn-amber */
+.gk-btn-ghost {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--s5);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: transparent;
+  color: var(--gk-text);
+  font: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gk-btn-ghost:hover {
+  background: rgba(var(--gk-amber), 0.08);
+}
+
+@media (max-width: 860px) {
+  .gk-feed-grid {
+    grid-template-columns: 1fr;
+  }
+  .gk-feed-following {
+    position: static;
+  }
+}
+
+/* title + inline follow button (game / topic headers, I6 Slice 6) */
+.gk-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.gk-title-row > .gk-follow-btn {
+  margin-top: 6px;
+}

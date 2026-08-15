@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–5: auth core +
- * email + RBAC + community writes + reputation). Every check PROVES AN ATTACK
- * FAILS on the live stack — not that a page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–6: auth + email +
+ * RBAC + community writes + reputation + follow/feed). Every check PROVES AN
+ * ATTACK FAILS on the live stack — not that a page renders:
  *
  *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
@@ -81,11 +81,19 @@
  *  42.  the profile is leak-proof: level name + progress + badges, NEVER the
  *       raw reputation number, levelPoints, voteWeight, or thresholds
  *
+ *  Slice 6 — follow + "Your Feed"
+ *  43.  following is OPEN to unverified users (decision 6); a follow needs CSRF;
+ *       the follow row lands in the DB
+ *  44.  "Your Feed" is PER-USER: it lists the followed game + topic with a
+ *       private no-store cache-control, and a logged-out request is 401
+ *  45.  one follow row per (user, entity) — following twice is idempotent,
+ *       unfollow removes it
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  43.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  46.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  44.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  45.  the x-admin-token service credential still authorizes (retention is a
+ *  47.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  48.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -1355,10 +1363,109 @@ async function main() {
     `level=${meProfile?.level?.key} progress=${meProfile?.level?.progress} badges=${meProfile?.badges?.length} rep=${meProfile?.reputation}`,
   );
 
+  // ══ SLICE 6 — FOLLOW + "YOUR FEED" ══════════════════════════════════════════
+  // Following is OPEN to unverified users (decision 6); the feed is PER-USER and
+  // must never sit on the anonymous cache. Notification delivery stays I8.
+  const followGame = sqlOne(`SELECT slug FROM subjects WHERE type='game' ORDER BY name LIMIT 1`);
+  const followTopic = sqlOne(`SELECT slug FROM topics ORDER BY created_at DESC LIMIT 1`);
+  // an UNVERIFIED, logged-in user (register does NOT verify; log in explicitly)
+  const fu = {
+    username: `gk_foll_${RUN}`,
+    email: `foll_${RUN}@example.test`,
+    password: 'Str0ng-pass-F6!',
+  };
+  {
+    const { jar: rj, csrf: rc } = await withCsrf(BACK);
+    await api(BACK, '/auth/register', { method: 'POST', jar: rj, csrf: rc, body: fu });
+  }
+  const { jar: folJar, csrf: folCsrf } = await withCsrf(BACK);
+  await api(BACK, '/auth/login', {
+    method: 'POST',
+    jar: folJar,
+    csrf: folCsrf,
+    body: { identifier: fu.email, password: fu.password },
+  }).then((r) => jarFrom(r.res, folJar));
+  const fUid = sqlOne(`SELECT id FROM users WHERE email='${fu.email}'`);
+  const followVerified = sqlOne(
+    `SELECT is_email_verified::text FROM users WHERE email='${fu.email}'`,
+  );
+
+  // ── 43. follow is OPEN to unverified; CSRF required; DB truth ────────────────
+  const followRes = await api(BACK, `/community/follow/game/${followGame}`, {
+    method: 'POST',
+    jar: folJar,
+    csrf: folCsrf,
+  });
+  const followNoCsrf = await api(BACK, `/community/follow/topic/${followTopic}`, {
+    method: 'POST',
+    jar: folJar, // cookie present, NO x-csrf-token header
+  });
+  const followRows = Number(
+    sqlOne(`SELECT count(*)::int FROM follows WHERE user_id='${fUid}' AND entity_type='game'`),
+  );
+  check(
+    '43. Follow is OPEN to unverified users (decision 6): a verified-less account follows a game (200, DB row); a follow WITHOUT CSRF is 403',
+    followVerified === 'false' &&
+      followRes.status === 200 &&
+      followRes.json?.data?.following === true &&
+      followRows === 1 &&
+      followNoCsrf.status === 403,
+    `unverified=${followVerified} follow=${followRes.status} rows=${followRows} noCsrf=${followNoCsrf.status}`,
+  );
+
+  // ── 44. the feed is PER-USER and NEVER anonymously cached ───────────────────
+  await api(BACK, `/community/follow/topic/${followTopic}`, {
+    method: 'POST',
+    jar: folJar,
+    csrf: folCsrf,
+  });
+  const feedRes = await api(BACK, '/community/feed', { jar: folJar });
+  const feed = feedRes.json?.data;
+  const cacheHeader = feedRes.res.headers.get('cache-control') ?? '';
+  const feedAnon = await api(BACK, '/community/feed'); // no cookie
+  check(
+    '44. Your Feed is per-user: it lists the followed game + topic and carries a private no-store cache-control; a logged-OUT request is 401 (never served anonymously)',
+    feedRes.status === 200 &&
+      feed &&
+      feed.isEmpty === false &&
+      feed.followedGames.length === 1 &&
+      feed.followedTopics.length === 1 &&
+      /no-store/.test(cacheHeader) &&
+      /private/.test(cacheHeader) &&
+      feedAnon.status === 401,
+    `games=${feed?.followedGames.length} topics=${feed?.followedTopics.length} items=${feed?.items.length} cache="${cacheHeader}" anon=${feedAnon.status}`,
+  );
+
+  // ── 45. one-per-user follow (upsert) + unfollow removes it ──────────────────
+  await api(BACK, `/community/follow/game/${followGame}`, {
+    method: 'POST',
+    jar: folJar,
+    csrf: folCsrf,
+  }); // again → no dup
+  const dupRows = Number(
+    sqlOne(`SELECT count(*)::int FROM follows WHERE user_id='${fUid}' AND entity_type='game'`),
+  );
+  const unfollowRes = await api(BACK, `/community/follow/game/${followGame}`, {
+    method: 'DELETE',
+    jar: folJar,
+    csrf: folCsrf,
+  });
+  const afterUnfollow = Number(
+    sqlOne(`SELECT count(*)::int FROM follows WHERE user_id='${fUid}' AND entity_type='game'`),
+  );
+  check(
+    '45. One follow row per (user, entity): following twice is idempotent (1 row); unfollow removes it (0 rows)',
+    dupRows === 1 &&
+      unfollowRes.status === 200 &&
+      unfollowRes.json?.data?.following === false &&
+      afterUnfollow === 0,
+    `afterDup=${dupRows}, unfollow=${unfollowRes.status}, afterUnfollow=${afterUnfollow}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 43. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 46. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -1377,14 +1484,14 @@ async function main() {
     }
   }
   check(
-    '43. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '46. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 44. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 47. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -1395,7 +1502,7 @@ async function main() {
   const userAId = sqlOne(`SELECT id FROM users WHERE username='${userA.username}'`);
   const userRow = (await api(BACK, `/admin/api/users/${userAId}`, { headers: SVC })).json?.data;
   check(
-    '44. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '47. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -1403,13 +1510,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}, userA=${userRow?.passwordHash}`,
   );
 
-  // ── 45. the service credential is retained ──────────────────────────────────
+  // ── 48. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '45. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '48. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -1422,7 +1529,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth + email + RBAC + community + reputation (Slices 1–5): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 auth+email+RBAC+community+reputation+feed (Slices 1–6): prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

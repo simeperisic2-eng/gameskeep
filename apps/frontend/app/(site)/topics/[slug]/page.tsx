@@ -6,6 +6,7 @@ import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
 import { breadcrumbLd, newsArticleLd, videoGameRatingLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { BiasBar } from '../../_components/BiasBar';
+import { FollowButton } from '../../_components/FollowButton';
 import { TopicArticles } from '../../_components/TopicArticles';
 import { StoryTimeline } from '../../_components/StoryTimeline';
 import { CoverArt } from '../../_components/CoverArt';
@@ -111,7 +112,10 @@ export default async function TopicPage({
                 </a>
               ))}
             </div>
-            <h1 className="gk-story-title">{topic.title}</h1>
+            <div className="gk-title-row">
+              <h1 className="gk-story-title">{topic.title}</h1>
+              <FollowButton entityType="topic" slug={topic.slug} />
+            </div>
             {topic.tldr ? <p className="gk-story-tldr">{topic.tldr}</p> : null}
             <div className="gk-story-meta">
               <span>

@@ -6,6 +6,7 @@ import {
   communityRatingInput,
   communityReactionInput,
   communityTrustVoteInput,
+  followEntityParam,
 } from '@gameskeep/shared/validation';
 import { voterCredibility, weightedAggregate } from '../src/community/weighting';
 
@@ -103,5 +104,19 @@ describe('community: public write validation', () => {
     expect(parsed.success).toBe(true);
     // Validation must NOT mangle/strip it — escaping is the render layer's job.
     expect(parsed.success && parsed.data.body).toBe(payload);
+  });
+
+  it('follow target accepts a game/topic + lowercase slug, rejects other types / bad slugs (I6 Slice 6)', () => {
+    expect(
+      followEntityParam.safeParse({ entityType: 'game', slug: 'baldurs-gate-3' }).success,
+    ).toBe(true);
+    expect(
+      followEntityParam.safeParse({ entityType: 'topic', slug: 'the-witcher-4' }).success,
+    ).toBe(true);
+    expect(followEntityParam.safeParse({ entityType: 'article', slug: 'x' }).success).toBe(false);
+    expect(followEntityParam.safeParse({ entityType: 'game', slug: 'Bad Slug!' }).success).toBe(
+      false,
+    );
+    expect(followEntityParam.safeParse({ entityType: 'game', slug: '../etc' }).success).toBe(false);
   });
 });

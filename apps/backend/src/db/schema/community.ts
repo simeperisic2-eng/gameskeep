@@ -137,3 +137,27 @@ export const gameHypeVotes = pgTable(
   },
   (t) => [uniqueIndex('game_hype_vote_unique').on(t.gameId, t.userId)],
 );
+
+/**
+ * Follows (SPEC I6, Slice 6, decision 9) — a user follows a GAME or a TOPIC to
+ * build a personal "Your Feed". Polymorphic (entity_type + id, like comments),
+ * one row per (user, entity). Following is allowed for UNVERIFIED users
+ * (decision 6: browse + follow are open; only writes need a verified email).
+ * Notification delivery is deferred to I8 — this is the follow graph + feed only.
+ */
+export const follows = pgTable(
+  'follows',
+  {
+    id: primaryId(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    entityType: varchar('entity_type', { length: 20 }).notNull(), // game | topic
+    entityId: uuid('entity_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('follow_unique').on(t.userId, t.entityType, t.entityId),
+    index('follows_user_idx').on(t.userId),
+  ],
+);

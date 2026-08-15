@@ -7,6 +7,7 @@ import {
   communityReactionInput,
   communityReportInput,
   communityTrustVoteInput,
+  followEntityParam,
   reactionEntityParam,
 } from '@gameskeep/shared/validation';
 import { CSRF_HEADER, csrfOk } from '../auth/session';
@@ -14,6 +15,7 @@ import { requireAuth, requireVerified } from '../auth/guards';
 import { sendError } from '../admin/http';
 import { allowWrite } from './rate-limit';
 import * as svc from './service';
+import { followEntity, getFeed, isFollowing, resolveFollowTarget, unfollowEntity } from './feed';
 
 /**
  * Community write API (SPEC I6, Slice 4). A cookie-authed scope reached via the
@@ -46,6 +48,21 @@ async function writer(req: FastifyRequest, reply: FastifyReply): Promise<svc.Act
     reputation: session.user.reputation,
     createdAt: session.user.createdAt,
   };
+}
+
+/**
+ * requireAuth + per-user rate limit → the acting user id, or null (replied).
+ * Used by FOLLOW, which is open to unverified users (decision 6) — unlike the
+ * verified-gated `writer` helper above.
+ */
+async function follower(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
+  const session = await requireAuth(req, reply);
+  if (!session) return null;
+  if (!(await allowWrite(session.user.id))) {
+    reply.code(429).send(TOO_MANY);
+    return null;
+  }
+  return session.user.id;
 }
 
 export async function registerCommunityRoutes(app: FastifyInstance): Promise<void> {
@@ -235,6 +252,75 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
           }
         },
       );
+
+      // ── follows + "Your Feed" (decision 9; follow is open to UNVERIFIED) ─────
+      // Addressed by public SLUG; resolved to the entity id server-side.
+      c.get<{ Params: { entityType: string; slug: string } }>(
+        '/follow/:entityType/:slug',
+        async (req, reply) => {
+          try {
+            const session = await requireAuth(req, reply);
+            if (!session) return;
+            const { entityType, slug } = followEntityParam.parse(req.params);
+            const id = await resolveFollowTarget(entityType, slug);
+            if (!id) {
+              reply.send({ data: { following: false } }); // unknown target isn't followed
+              return;
+            }
+            reply.send({ data: { following: await isFollowing(session.user.id, entityType, id) } });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+      c.post<{ Params: { entityType: string; slug: string } }>(
+        '/follow/:entityType/:slug',
+        async (req, reply) => {
+          try {
+            const userId = await follower(req, reply);
+            if (!userId) return;
+            const { entityType, slug } = followEntityParam.parse(req.params);
+            const id = await resolveFollowTarget(entityType, slug);
+            if (!id) {
+              reply.code(404).send({ error: 'not_found', message: 'Unknown follow target.' });
+              return;
+            }
+            reply.send({ data: await followEntity(userId, entityType, id) });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+      c.delete<{ Params: { entityType: string; slug: string } }>(
+        '/follow/:entityType/:slug',
+        async (req, reply) => {
+          try {
+            const userId = await follower(req, reply);
+            if (!userId) return;
+            const { entityType, slug } = followEntityParam.parse(req.params);
+            const id = await resolveFollowTarget(entityType, slug);
+            if (!id) {
+              reply.send({ data: { following: false } });
+              return;
+            }
+            reply.send({ data: await unfollowEntity(userId, entityType, id) });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+
+      // The composed follow-based feed — PER-USER (served no-store, never cached).
+      c.get('/feed', async (req, reply) => {
+        try {
+          const session = await requireAuth(req, reply);
+          if (!session) return;
+          reply.header('cache-control', 'private, no-store');
+          reply.send({ data: await getFeed(session.user.id) });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
     },
     { prefix: '/community' },
   );

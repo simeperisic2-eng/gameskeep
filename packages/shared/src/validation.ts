@@ -309,6 +309,18 @@ export const reactionEntityParam = z.object({
   entityId: uuid,
 });
 
+/** Follow a GAME or a TOPIC for "Your Feed" (SPEC I6, Slice 6). The public
+ *  surface addresses entities by SLUG; the server resolves it to an id. */
+export const FOLLOW_ENTITY_TYPES = ['game', 'topic'] as const;
+export const followEntityParam = z.object({
+  entityType: z.enum(FOLLOW_ENTITY_TYPES),
+  slug: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'must be a lowercase slug'),
+});
+
 // ── game sub-resources (auto + manual override surfaces) ─────────────────────
 export const gameReviewCreate = z.object({
   gameId: uuid,

@@ -6,6 +6,7 @@ import { truncateWords } from '@/lib/format';
 import { breadcrumbLd, videoGameLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { CoverArt } from '../../_components/CoverArt';
+import { FollowButton } from '../../_components/FollowButton';
 import { RatingBlock } from '../../_components/RatingBlock';
 import { ContentFlags, hasContentFlagData } from '../../_components/ContentFlags';
 import { OurReview } from '../../_components/OurReview';
@@ -162,7 +163,10 @@ export default async function GamePage({
               <span className={`gk-status gk-status-game-${game.status}`}>{statusLabel}</span>
               {game.series ? <span className="gk-chip">{game.series}</span> : null}
             </div>
-            <h1 className="gk-game-title">{game.name}</h1>
+            <div className="gk-title-row">
+              <h1 className="gk-game-title">{game.name}</h1>
+              <FollowButton entityType="game" slug={game.slug} />
+            </div>
             {game.summary ? <p className="gk-game-summary">{game.summary}</p> : null}
 
             {facts.length > 0 ? (

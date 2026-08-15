@@ -64,6 +64,13 @@
       "when": 1786743694870,
       "tag": "0008_i6_community",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786786288938,
+      "tag": "0009_i6_follows",
+      "breakpoints": true
     }
   ]
 }
