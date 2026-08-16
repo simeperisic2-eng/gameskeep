@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getSources } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { breadcrumbLd } from '@/lib/schema';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { SourceCardItem } from '../_components/SourceCardItem';
@@ -35,10 +36,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-catalog">
         <Breadcrumbs

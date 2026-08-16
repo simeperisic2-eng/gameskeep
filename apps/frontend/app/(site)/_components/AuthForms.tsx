@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiPost, resetCsrf } from '@/lib/client';
+import { safeNext } from '@/lib/nav';
 
 /** Auth forms (SPEC I6, Slice 8) — thin clients over the same-origin auth BFF. */
 
@@ -47,7 +48,8 @@ export function LoginForm(): React.JSX.Element {
       resetCsrf();
       // Read ?next at submit-time (client) so this form has NO useSearchParams and
       // renders server-side immediately — no "Loading…" flash on first paint.
-      const next = new URLSearchParams(window.location.search).get('next') || '/feed';
+      // safeNext() rejects off-site targets (open-redirect guard, review #3).
+      const next = safeNext(new URLSearchParams(window.location.search).get('next'));
       router.push(next);
       router.refresh();
     } else if (r.status === 429) {

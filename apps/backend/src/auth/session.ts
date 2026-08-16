@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { and, eq, gt, ne } from 'drizzle-orm';
 import { db } from '../db/client';
 import { roles, sessions, userLevels, users } from '../db/schema';
+import { constantTimeEqual } from '../lib/crypto';
 
 /**
  * Server-side sessions (SPEC I6, locked decision 1 — sessions, not JWT).
@@ -45,7 +46,10 @@ export function csrfOk(req: FastifyRequest): boolean {
   const cookie = req.cookies[CSRF_COOKIE];
   const header = req.headers[CSRF_HEADER];
   const provided = Array.isArray(header) ? header[0] : header;
-  return Boolean(cookie && provided && cookie === provided);
+  if (!cookie || !provided) return false;
+  // Constant-time (I6 review, INFO): consistent with the admin-token compare —
+  // the length side-channel is removed by the hash-first helper.
+  return constantTimeEqual(cookie, provided);
 }
 
 /**

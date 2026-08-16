@@ -48,10 +48,36 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
 
 export const RBAC_SETTINGS_KEY = 'rbac';
 
-/** First path segment under /admin/api/ — the section key. */
+/**
+ * A canonical admin section token. Legitimate sections are plain lowercase
+ * words (letters/digits/_/-) and are NEVER percent-encoded by a real client, so
+ * anything outside this charset AFTER decoding is an evasion attempt and is
+ * rejected by the guard (see admin/guard.ts).
+ */
+export const CANONICAL_SECTION_RE = /^[a-z0-9_-]+$/;
+
+/**
+ * First path segment under /admin/api/ — the section key, DECODED and
+ * lowercased so the classifier sees exactly what the router hands the handler.
+ *
+ * SECURITY (I6 review #1): gating on the raw, still-percent-encoded URL let
+ * `/admin/api/%75sers` read as an UNKNOWN section (→ admin-40 default) while the
+ * router decoded the `:resource` param to `users` (owner-50) — a
+ * classifier/dispatcher disagreement that defeated the owner-only gate and let
+ * an admin escalate to owner. Decoding here removes the disagreement; the
+ * guard additionally rejects any section that isn't canonical after decode
+ * (kills double-encoding like `%2575sers`).
+ */
 export function sectionOf(url: string): string {
   const path = (url.split('?')[0] ?? '').replace(/^\/admin\/api\/?/, '').replace(/^\/+/, '');
-  return path.split('/')[0] ?? '';
+  const raw = path.split('/')[0] ?? '';
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw; // malformed %-encoding — leave as-is; the canonical gate rejects it
+  }
+  return decoded.toLowerCase();
 }
 
 function clampRank(v: unknown): number | null {
@@ -59,13 +85,14 @@ function clampRank(v: unknown): number | null {
 }
 
 /**
- * The minimum rank required for a given admin URL. Reads any `app_settings.rbac`
- * override ({ minRanks: { <section>: rank } }, clamped 0–50) layered over the
- * locked defaults. Only ever called on the STAFF-session path (the service
- * token short-circuits before this), so it adds no cost to automation.
+ * The minimum rank required for a given (already-canonical) admin section.
+ * Reads any `app_settings.rbac` override ({ minRanks: { <section>: rank } },
+ * clamped 0–50) layered over the locked defaults. Only ever called on the
+ * STAFF-session path (the service token short-circuits before this), so it adds
+ * no cost to automation. The caller (admin/guard.ts) has already decoded the
+ * section via `sectionOf` and rejected non-canonical sections.
  */
-export async function requiredRankFor(url: string): Promise<number> {
-  const section = sectionOf(url);
+export async function requiredRankFor(section: string): Promise<number> {
   let override: number | null = null;
   try {
     const [row] = await db

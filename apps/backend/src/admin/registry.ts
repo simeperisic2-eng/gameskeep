@@ -121,6 +121,15 @@ export interface ResourceDef {
    * '[REDACTED]' when set, null when null — never the stored secret.
    */
   redactFields?: string[];
+  /**
+   * I6 hardening (CRITICAL — broken access control, review #1): the minimum
+   * staff rank allowed to CRUD this resource, enforced in the route handler on
+   * the RESOLVED resource object — NOT via URL-string section classification
+   * (which a percent-encoded section could evade). Owner-only (50) for the
+   * identity/authority tables. The service token carries owner rank, so
+   * automation is unaffected.
+   */
+  minRank?: number;
 }
 
 /** Generate a slug that isn't already taken in the table (base, base-2, …). */
@@ -253,6 +262,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.roles,
     create: roleCreate,
     update: roleCreate.partial(),
+    minRank: 50, // owner-only: editing the rank ladder is a privilege-escalation surface
     labelColumn: 'label',
     fields: [
       F.text('key', true),
@@ -455,6 +465,7 @@ export const RESOURCES: ResourceDef[] = [
     create: userCreate,
     update: userCreate.partial(),
     redactFields: ['passwordHash'],
+    minRank: 50, // owner-only: editing a user can re-assign a role (privilege escalation)
     labelColumn: 'username',
     fields: [
       F.text('username', true),

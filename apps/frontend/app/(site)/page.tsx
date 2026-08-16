@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getHomepage, type RankedGame } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { scoreToTen } from '@/lib/format';
 import { Hero } from './_components/Hero';
 import { TrendBar } from './_components/TrendBar';
@@ -75,10 +76,7 @@ export default async function HomePage(): Promise<React.JSX.Element> {
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       {/* Ground-News-style quick-access trending strip (under the header, scrolls away). */}
       <TrendBar topics={hero} />

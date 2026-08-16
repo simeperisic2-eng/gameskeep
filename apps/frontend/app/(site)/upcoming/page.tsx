@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getUpcoming } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { breadcrumbLd, gameCollectionLd } from '@/lib/schema';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { UpcomingCard } from '../_components/UpcomingCard';
@@ -41,10 +42,7 @@ export default async function UpcomingPage(): Promise<React.JSX.Element> {
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-catalog">
         <Breadcrumbs

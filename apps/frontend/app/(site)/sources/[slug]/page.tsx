@@ -2,6 +2,7 @@ import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getSource, type SourceDetail } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
 import { breadcrumbLd, sourceOrganizationLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
@@ -82,10 +83,7 @@ export default async function SourcePage({
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-game">
         <Breadcrumbs

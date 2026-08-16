@@ -1626,6 +1626,57 @@ async function main() {
     `storedRaw=${storedXss === payload} escapedInHtml=${escapedPresent} rawTagInHtml=${rawTagPresent}`,
   );
 
+  // ══ SLICE 9 — SECURITY-REVIEW REGRESSIONS ══════════════════════════════════
+  // Three confirmed vulnerabilities were fixed at the I6 phase close. 53 + 54 are
+  // HTTP-observable and guarded here; the open-redirect fix (#3) is client-only
+  // (no server round-trip for the redirect target), so its regression lives in
+  // the frontend unit test on safeNext() (apps/frontend/test/nav.test.ts).
+
+  // ── 53. RBAC privesc CLOSED: an encoded owner-only section no longer bypasses ─
+  // Before the fix, the gate classified the section from the RAW %-encoded URL
+  // (→ admin-40 default) while the router decoded :resource to the real owner-50
+  // resource — letting a rank-40 admin read /users + /roles and PATCH their own
+  // role to owner. adminU is the rank-40 staff session from check 22.
+  const ownerRoleId2 = roleId('owner');
+  const encUsers = await api(BACK, '/admin/api/%75sers', { jar: adminU.jar }); // %75 = 'u'
+  const encRoles = await api(BACK, '/admin/api/%72oles', { jar: adminU.jar }); // %72 = 'r'
+  const dblEnc = await api(BACK, '/admin/api/%2575sers', { jar: adminU.jar }); // double-encoded
+  const plainUsers = await api(BACK, '/admin/api/users', { jar: adminU.jar }); // control (403)
+  const escalate = await api(BACK, `/admin/api/%75sers/${adminU.id}`, {
+    method: 'PATCH',
+    jar: adminU.jar,
+    csrf: adminU.csrf,
+    body: { roleId: ownerRoleId2 },
+  });
+  const adminRankAfter = sqlOne(
+    `SELECT r.rank FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id='${adminU.id}'`,
+  );
+  check(
+    '53. RBAC privesc CLOSED: a rank-40 admin is 403 on percent-encoded owner-only sections (users/roles), the escalation PATCH is 403, and the admin’s rank is UNCHANGED (40)',
+    plainUsers.status === 403 &&
+      encUsers.status === 403 &&
+      encRoles.status === 403 &&
+      dblEnc.status === 403 &&
+      escalate.status === 403 &&
+      adminRankAfter === '40',
+    `plain=${plainUsers.status} %75sers=${encUsers.status} %72oles=${encRoles.status} dbl=${dblEnc.status} escalate=${escalate.status} rankAfter=${adminRankAfter}`,
+  );
+
+  // ── 54. JSON-LD XSS CLOSED: a reflected ?genre= is escaped inside ld+json ────
+  // Before the fix, the filter echoed into the ItemList `name` and JSON.stringify
+  // left `<` intact, so `</script><script>…` broke out of the ld+json block.
+  const xssGenre = `</script><script>alert('gk54xss')</script>`;
+  const browseHtml = await (
+    await fetch(`${FRONT}/games/browse?genre=${encodeURIComponent(xssGenre)}`)
+  ).text();
+  const rawBreakout = browseHtml.includes(`</script><script>alert('gk54xss')`);
+  const escapedInLd = browseHtml.includes('\\u003c/script');
+  check(
+    '54. JSON-LD XSS CLOSED: a reflected ?genre= payload is \\uXXXX-escaped inside the ld+json block — the raw </script><script> breakout never appears (shared JsonLd emitter)',
+    !rawBreakout && escapedInLd,
+    `rawBreakout=${rawBreakout} escapedInLd=${escapedInLd}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
@@ -1693,7 +1744,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 (Slices 1–8): auth·email·RBAC·community·reputation·feed·GDPR·UI — prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 (Slices 1–9): auth·email·RBAC·community·reputation·feed·GDPR·UI·sec-review — prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

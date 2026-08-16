@@ -29,6 +29,7 @@ import {
   CSRF_HEADER,
   SESSION_COOKIE,
   createSession,
+  csrfOk,
   newCsrfToken,
   revokeAllSessions,
   revokeSession,
@@ -104,14 +105,6 @@ function ensureCsrfCookie(req: FastifyRequest, reply: FastifyReply): string {
     signed: false,
   });
   return token;
-}
-
-/** Double-submit CSRF check: header must match the cookie, both present. */
-function csrfOk(req: FastifyRequest): boolean {
-  const cookie = req.cookies[CSRF_COOKIE];
-  const header = req.headers[CSRF_HEADER];
-  const provided = Array.isArray(header) ? header[0] : header;
-  return Boolean(cookie && provided && cookie === provided);
 }
 
 /** Resolve the signed session cookie to a live session, or null. */

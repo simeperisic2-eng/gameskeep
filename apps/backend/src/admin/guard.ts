@@ -3,7 +3,7 @@ import { env } from '../config/env';
 import { constantTimeEqual } from '../lib/crypto';
 import { csrfOk, CSRF_HEADER } from '../auth/session';
 import { sessionFromRequest } from '../auth/guards';
-import { requiredRankFor, RANK } from './rbac';
+import { CANONICAL_SECTION_RE, requiredRankFor, sectionOf, RANK } from './rbac';
 
 /**
  * Admin authentication (SPEC I6, Slice 3, decision 5). TWO paths reach the
@@ -87,8 +87,15 @@ export async function adminAuthHook(req: FastifyRequest, reply: FastifyReply): P
     });
     return;
   }
-  // Per-section rank gate.
-  const required = await requiredRankFor(req.url);
+  // Per-section rank gate. The section is DECODED + lowercased (so an encoded
+  // section can't dodge the classifier); anything non-canonical after decoding
+  // (e.g. double-encoding) is not a legitimately addressable section → 403.
+  const section = sectionOf(req.url);
+  if (!CANONICAL_SECTION_RE.test(section)) {
+    reply.code(403).send({ error: 'forbidden', message: 'Unrecognized admin section.' });
+    return;
+  }
+  const required = await requiredRankFor(section);
   if (session.user.role.rank < required) {
     reply.code(403).send({
       error: 'forbidden',

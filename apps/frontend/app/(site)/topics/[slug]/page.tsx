@@ -2,6 +2,7 @@ import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getComments, getTopic, type TopicDetail } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
 import { breadcrumbLd, newsArticleLd, videoGameRatingLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
@@ -92,10 +93,7 @@ export default async function TopicPage({
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-story">
         <Breadcrumbs

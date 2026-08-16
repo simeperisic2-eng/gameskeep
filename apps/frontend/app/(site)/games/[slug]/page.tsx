@@ -2,6 +2,7 @@ import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getComments, getGame, type GameDetail } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { truncateWords } from '@/lib/format';
 import { breadcrumbLd, videoGameLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
@@ -140,10 +141,7 @@ export default async function GamePage({
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-game">
         <Breadcrumbs

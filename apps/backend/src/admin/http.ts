@@ -99,7 +99,9 @@ export function sendError(reply: FastifyReply, err: unknown): void {
         return;
     }
   }
-  reply
-    .code(500)
-    .send({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
+  // I6 review (LOW — info disclosure): this responder is shared by the PUBLIC
+  // auth + community routes, so never echo the raw error to the client. Keep the
+  // detail server-side (logs) and return a generic body.
+  reply.log?.error({ err }, 'unhandled route error');
+  reply.code(500).send({ error: 'internal', message: 'Something went wrong. Please retry.' });
 }

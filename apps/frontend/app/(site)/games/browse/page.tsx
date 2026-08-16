@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getCatalog } from '@/lib/public-api';
+import { JsonLd } from '@/lib/jsonld';
 import { breadcrumbLd, gameCollectionLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { CatalogControls } from '../../_components/CatalogControls';
@@ -101,10 +102,7 @@ export default async function BrowsePage({
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      <JsonLd data={jsonLd} />
 
       <div className="gk-container gk-catalog">
         <Breadcrumbs

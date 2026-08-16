@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   articleSubjectLink,
@@ -15,7 +15,7 @@ import { registerRatingAdminRoutes } from './rating-routes';
 import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
 import { actorOf, sendError, type Actor } from './http';
-import { adminAuthHook } from './guard';
+import { adminAuthHook, getAdminAuth } from './guard';
 import { moderateComment } from '../community/service';
 import { RESOURCE_BY_NAME, listResourceMeta, uniqueSlug, type ResourceDef } from './registry';
 
@@ -26,6 +26,24 @@ function requireResource(reply: FastifyReply, name: string): ResourceDef | null 
     return null;
   }
   return resource;
+}
+
+/**
+ * I6 hardening (CRITICAL — broken access control, review #1): enforce a
+ * resource's minimum rank on the RESOLVED resource object, independent of any
+ * URL-string section classification (which a percent-encoded section could
+ * evade). The service token carries owner rank (50), so automation is
+ * unaffected. Returns false (and replies 403) when the caller is below the floor.
+ */
+function enforceRank(req: FastifyRequest, reply: FastifyReply, resource: ResourceDef): boolean {
+  const min = resource.minRank ?? 0;
+  if (min <= 0) return true;
+  const auth = getAdminAuth(req);
+  if (!auth || auth.rank < min) {
+    reply.code(403).send({ error: 'forbidden', message: `This resource requires rank ${min}.` });
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -320,6 +338,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const { resource: name } = req.params as { resource: string };
         const resource = requireResource(reply, name);
         if (!resource) return;
+        if (!enforceRank(req, reply, resource)) return;
         try {
           const rows = resource.ops?.list
             ? await resource.ops.list()
@@ -334,6 +353,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const { resource: name, id } = req.params as { resource: string; id: string };
         const resource = requireResource(reply, name);
         if (!resource) return;
+        if (!enforceRank(req, reply, resource)) return;
         try {
           const row = resource.ops?.get
             ? await resource.ops.get(id)
@@ -352,6 +372,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const { resource: name } = req.params as { resource: string };
         const resource = requireResource(reply, name);
         if (!resource) return;
+        if (!enforceRank(req, reply, resource)) return;
         try {
           const row = await createOne(resource, req.body, actorOf(req));
           reply.code(201).send({ data: row });
@@ -364,6 +385,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const { resource: name, id } = req.params as { resource: string; id: string };
         const resource = requireResource(reply, name);
         if (!resource) return;
+        if (!enforceRank(req, reply, resource)) return;
         try {
           const row = await updateOne(
             resource,
@@ -385,6 +407,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const { resource: name, id } = req.params as { resource: string; id: string };
         const resource = requireResource(reply, name);
         if (!resource) return;
+        if (!enforceRank(req, reply, resource)) return;
         try {
           const row = await deleteOne(resource, id, actorOf(req));
           if (!row) {
