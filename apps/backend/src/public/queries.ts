@@ -913,6 +913,7 @@ export interface RelatedGame {
 }
 
 export interface GameDetail {
+  id: string;
   slug: string;
   name: string;
   summary: string | null;
@@ -1393,6 +1394,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   const player = playerRows[0];
 
   return {
+    id: g.gameId, // I6 Slice 8: the community write components address the game by id
     slug: g.slug,
     name: g.name,
     summary: g.summary ?? null,
@@ -1731,6 +1733,7 @@ export async function getDiscoveryData(): Promise<DiscoveryData> {
 
 /** A not-yet-released game — status + (partial/unknown) date for the countdown. */
 export interface UpcomingGame {
+  id: string;
   slug: string;
   name: string;
   status: string;
@@ -1756,6 +1759,7 @@ function todayIso(): string {
 export async function getUpcomingData(): Promise<UpcomingGame[]> {
   const rows = await db
     .select({
+      id: games.id,
       slug: subjects.slug,
       name: subjects.name,
       status: games.status,
@@ -1780,6 +1784,7 @@ export async function getUpcomingData(): Promise<UpcomingGame[]> {
       // their 1.0 is still ahead (or undated) — never a years-old EA launch.
       .filter((r) => r.status !== 'early_access' || r.releaseDate == null || r.releaseDate >= today)
       .map((r) => ({
+        id: r.id,
         slug: r.slug,
         name: r.name,
         status: r.status,

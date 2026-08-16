@@ -14,7 +14,7 @@ const ITEMS: { href: string; label: string }[] = [
   { href: '/upcoming', label: 'Upcoming' },
   { href: '/awards', label: 'Awards' },
   { href: '/sources', label: 'Sources' },
-  { href: '/feed', label: 'Your Feed' },
+  { href: '/feed', label: 'Feed' },
 ];
 
 export function NavLinks(): React.JSX.Element {

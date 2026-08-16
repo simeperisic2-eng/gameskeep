@@ -36,6 +36,31 @@ export interface FeedData {
   isEmpty: boolean;
 }
 
+export interface MyExport {
+  data: {
+    ratings: { game: string; gameName: string; score: number; ratedAt: string }[];
+    comments: { entityType: string; body: string; createdAt: string; isRemoved: boolean }[];
+    follows: { entityType: string; entityId: string; createdAt: string }[];
+  };
+}
+
+/** Fetch the signed-in user's GDPR export server-side (for the account panel). */
+export async function getMyExport(): Promise<MyExport['data'] | null> {
+  try {
+    const cookieHeader = (await cookies()).toString();
+    if (!cookieHeader) return null;
+    const res = await fetch(`${backendUrl}/auth/export`, {
+      headers: { cookie: cookieHeader },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as MyExport;
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFeed(): Promise<FeedData | null> {
   try {
     const cookieHeader = (await cookies()).toString();

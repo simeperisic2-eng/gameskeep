@@ -221,7 +221,48 @@ async function awardAutoBadges(rep: ReputationSettings): Promise<number> {
   return awarded;
 }
 
+/**
+ * Award the monotonic `verified` badge to a just-verified user immediately, so
+ * it shows on their profile without waiting for the next full reputation
+ * recompute (which also awards it, idempotently). Add-only, never revokes.
+ */
+export async function awardVerifiedBadge(userId: string): Promise<void> {
+  const [b] = await db
+    .select({ id: badges.id })
+    .from(badges)
+    .where(eq(badges.key, 'verified'))
+    .limit(1);
+  if (!b) return;
+  await db.insert(userBadges).values({ userId, badgeId: b.id }).onConflictDoNothing();
+}
+
 // ── reads ────────────────────────────────────────────────────────────────────
+export interface LevelView {
+  key: string;
+  label: string;
+  progress: number;
+}
+
+/**
+ * The level for a reputation, computed LIVE (not read from the stored levelId) so
+ * a brand-new account shows "Newcomer" + 0% immediately — before the first
+ * reputation recompute has assigned it a levelId.
+ */
+export async function levelViewFor(reputation: number): Promise<LevelView> {
+  const rep = await reputationSettings();
+  const key = levelKeyFor(reputation, rep.levelThresholds);
+  const [row] = await db
+    .select({ label: userLevels.label })
+    .from(userLevels)
+    .where(eq(userLevels.key, key))
+    .limit(1);
+  return {
+    key,
+    label: row?.label ?? key,
+    progress: Math.round(levelProgress(reputation, rep.levelThresholds) * 100) / 100,
+  };
+}
+
 export interface ProfileView {
   level: { key: string; label: string; progress: number } | null;
   badges: { key: string; label: string; iconUrl: string | null }[];
@@ -233,15 +274,9 @@ export interface ProfileView {
  * /auth/me and, in Slice 8, public profiles.
  */
 export async function getProfileView(userId: string): Promise<ProfileView> {
-  const rep = await reputationSettings();
   const [u] = await db
-    .select({
-      reputation: users.reputation,
-      levelKey: userLevels.key,
-      levelLabel: userLevels.label,
-    })
+    .select({ reputation: users.reputation })
     .from(users)
-    .leftJoin(userLevels, eq(userLevels.id, users.levelId))
     .where(eq(users.id, userId))
     .limit(1);
 
@@ -251,13 +286,8 @@ export async function getProfileView(userId: string): Promise<ProfileView> {
     .innerJoin(badges, eq(badges.id, userBadges.badgeId))
     .where(eq(userBadges.userId, userId));
 
-  const level = u?.levelKey
-    ? {
-        key: u.levelKey,
-        label: u.levelLabel ?? u.levelKey,
-        progress: Math.round(levelProgress(u.reputation ?? 0, rep.levelThresholds) * 100) / 100,
-      }
-    : null;
+  // Level computed LIVE from reputation → always present (Newcomer at 0).
+  const level = u ? await levelViewFor(u.reputation) : null;
   return { level, badges: badgeRows };
 }
 

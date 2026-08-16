@@ -1,12 +1,14 @@
 import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getTopic, type TopicDetail } from '@/lib/public-api';
+import { getComments, getTopic, type TopicDetail } from '@/lib/public-api';
 import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
 import { breadcrumbLd, newsArticleLd, videoGameRatingLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { BiasBar } from '../../_components/BiasBar';
 import { FollowButton } from '../../_components/FollowButton';
+import { BiasVotes } from '../../_components/BiasVotes';
+import { Comments } from '../../_components/Comments';
 import { TopicArticles } from '../../_components/TopicArticles';
 import { StoryTimeline } from '../../_components/StoryTimeline';
 import { CoverArt } from '../../_components/CoverArt';
@@ -172,16 +174,20 @@ export default async function TopicPage({
 
             {topic.status === 'developing' ? <StoryTimeline entries={topic.timeline} /> : null}
 
-            {/* COMMUNITY — slot only; votes/comments are I6 (no real flows). */}
-            <section className="gk-panel gk-community-slot" aria-label="Community">
+            {/* COMMUNITY (I6) — reader trust/bias votes + discussion. */}
+            <section className="gk-panel" aria-label="Community">
               <div className="gk-panel-head">
-                <h2 className="gk-panel-title">Reader discussion</h2>
-                <span className="gk-soon-tag">Coming in accounts</span>
+                <h2 className="gk-panel-title">Reader read</h2>
               </div>
-              <p className="gk-section-sub" style={{ margin: 0 }}>
-                Verified-reader voting and per-story discussion arrive with accounts. We&apos;re
-                building it so a vote means something — credibility-weighted, manipulation-aware.
-              </p>
+              <BiasVotes topicId={topic.id} />
+            </section>
+            <section className="gk-panel" aria-label="Discussion">
+              <Comments
+                entityType="topic"
+                entityId={topic.id}
+                title="Reader discussion"
+                initial={await getComments('topic', topic.id)}
+              />
             </section>
           </div>
 

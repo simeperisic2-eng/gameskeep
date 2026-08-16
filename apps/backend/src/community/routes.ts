@@ -11,7 +11,7 @@ import {
   reactionEntityParam,
 } from '@gameskeep/shared/validation';
 import { CSRF_HEADER, csrfOk } from '../auth/session';
-import { requireAuth, requireVerified } from '../auth/guards';
+import { requireAuth, requireVerified, sessionFromRequest } from '../auth/guards';
 import { sendError } from '../admin/http';
 import { allowWrite } from './rate-limit';
 import * as svc from './service';
@@ -55,6 +55,18 @@ async function writer(req: FastifyRequest, reply: FastifyReply): Promise<svc.Act
  * Used by FOLLOW, which is open to unverified users (decision 6) — unlike the
  * verified-gated `writer` helper above.
  */
+/**
+ * Community READS (aggregates + comments) are PUBLIC (SPEC I6, Slice 8) — the
+ * SSR pages show them to everyone. The session is resolved OPTIONALLY so a
+ * signed-in reader also gets their own "my vote / my score" overlaid; an
+ * anonymous reader gets the aggregate with no personal state. Returns '' (a
+ * non-matching id) when signed out.
+ */
+async function optionalUserId(req: FastifyRequest): Promise<string> {
+  const session = await sessionFromRequest(req);
+  return session?.user.id ?? '';
+}
+
 async function follower(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
   const session = await requireAuth(req, reply);
   if (!session) return null;
@@ -103,9 +115,9 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       });
       c.get<{ Params: { gameId: string } }>('/games/:gameId/rating', async (req, reply) => {
         try {
-          const session = await requireAuth(req, reply);
-          if (!session) return;
-          reply.send({ data: await svc.gameRatingAggregate(req.params.gameId, session.user.id) });
+          reply.send({
+            data: await svc.gameRatingAggregate(req.params.gameId, await optionalUserId(req)),
+          });
         } catch (err) {
           sendError(reply, err);
         }
@@ -128,10 +140,8 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       );
       c.get<{ Params: { articleId: string } }>('/articles/:articleId/trust', async (req, reply) => {
         try {
-          const session = await requireAuth(req, reply);
-          if (!session) return;
           reply.send({
-            data: await svc.articleTrustAggregate(req.params.articleId, session.user.id),
+            data: await svc.articleTrustAggregate(req.params.articleId, await optionalUserId(req)),
           });
         } catch (err) {
           sendError(reply, err);
@@ -152,9 +162,9 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       });
       c.get<{ Params: { topicId: string } }>('/topics/:topicId/bias', async (req, reply) => {
         try {
-          const session = await requireAuth(req, reply);
-          if (!session) return;
-          reply.send({ data: await svc.topicBiasAggregate(req.params.topicId, session.user.id) });
+          reply.send({
+            data: await svc.topicBiasAggregate(req.params.topicId, await optionalUserId(req)),
+          });
         } catch (err) {
           sendError(reply, err);
         }
@@ -172,9 +182,9 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       });
       c.get<{ Params: { gameId: string } }>('/games/:gameId/hype', async (req, reply) => {
         try {
-          const session = await requireAuth(req, reply);
-          if (!session) return;
-          reply.send({ data: await svc.gameHypeAggregate(req.params.gameId, session.user.id) });
+          reply.send({
+            data: await svc.gameHypeAggregate(req.params.gameId, await optionalUserId(req)),
+          });
         } catch (err) {
           sendError(reply, err);
         }
@@ -203,10 +213,8 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
         '/comment/:entityType/:entityId',
         async (req, reply) => {
           try {
-            const session = await requireAuth(req, reply);
-            if (!session) return;
             const { entityType, entityId } = communityEntityParam.parse(req.params);
-            reply.send({ data: await svc.listComments(entityType, entityId) });
+            reply.send({ data: await svc.listComments(entityType, entityId) }); // public read
           } catch (err) {
             sendError(reply, err);
           }

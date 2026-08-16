@@ -22,7 +22,7 @@ import {
 import { canSend } from '../email/throttle';
 import { PASSWORD_ALGO, dummyVerify, hashPassword, verifyPassword } from './password';
 import { consumeToken, issueToken } from './tokens';
-import { getProfileView } from '../reputation/engine';
+import { awardVerifiedBadge, getProfileView } from '../reputation/engine';
 import {
   ABSOLUTE_CAP_MS,
   CSRF_COOKIE,
@@ -435,6 +435,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
             .update(users)
             .set({ isEmailVerified: true })
             .where(eq(users.id, consumed.userId));
+          // Grant the "verified" badge now so it shows immediately (the periodic
+          // reputation recompute would also award it, idempotently).
+          await awardVerifiedBadge(consumed.userId);
 
           // The verify link signs them in (the locked flip-side of register not
           // auto-logging-in) — but only if the account is active.

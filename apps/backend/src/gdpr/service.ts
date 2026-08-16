@@ -147,6 +147,7 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
   const ratings = await db
     .select({
       game: subjects.slug,
+      gameName: subjects.name,
       score: gameUserRatings.score,
       weight: gameUserRatings.weight,
       ratedAt: gameUserRatings.ratedAt,

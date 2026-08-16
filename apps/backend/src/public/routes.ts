@@ -12,6 +12,7 @@ import {
   getTopicDetail,
   getUpcomingData,
 } from './queries';
+import { getPublicProfile } from './profile';
 import { sendError } from '../admin/http';
 
 /**
@@ -131,6 +132,20 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
             return;
           }
           reply.send({ data: detail });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // Public user profile (I6 Slice 8) — leak-proof; 404 for unknown/tombstone.
+      pub.get<{ Params: { username: string } }>('/user/:username', async (req, reply) => {
+        try {
+          const profile = await getPublicProfile(req.params.username);
+          if (!profile) {
+            reply.code(404).send({ error: 'not_found' });
+            return;
+          }
+          reply.send({ data: profile });
         } catch (err) {
           sendError(reply, err);
         }

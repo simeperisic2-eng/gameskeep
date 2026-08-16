@@ -316,6 +316,7 @@ export interface RelatedGame {
   community: number | null;
 }
 export interface GameDetail {
+  id: string;
   slug: string;
   name: string;
   summary: string | null;
@@ -470,6 +471,7 @@ export async function getDiscovery(): Promise<DiscoveryData> {
 }
 
 export interface UpcomingGame {
+  id: string;
   slug: string;
   name: string;
   status: string;
@@ -579,6 +581,59 @@ async function getSitemap(): Promise<{
     };
   } catch {
     return { topics: [], games: [], sources: [] };
+  }
+}
+
+// ── community comments (I6 Slice 8 — public read, SSR'd for escaping) ─────────
+export interface PublicComment {
+  id: string;
+  parentId: string | null;
+  body: string;
+  username: string;
+  createdAt: string;
+}
+
+/** SSR-fetch a target's comments (public). React escapes each body on render. */
+export async function getComments(
+  entityType: 'game' | 'topic' | 'article',
+  entityId: string,
+): Promise<PublicComment[]> {
+  try {
+    const res = await fetch(`${backendUrl}/community/comment/${entityType}/${entityId}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { data?: PublicComment[] };
+    return body.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+// ── public user profile (I6 Slice 8) ────────────────────────────────────────
+export interface PublicProfile {
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  role: string;
+  level: { key: string; label: string } | null;
+  badges: { key: string; label: string; iconUrl: string | null }[];
+  joinedAt: string;
+  ratingCount: number;
+  commentCount: number;
+}
+
+/** Fetch a public profile for SSR. Returns null on 404/error (route 404s). */
+export async function getPublicProfile(username: string): Promise<PublicProfile | null> {
+  try {
+    const res = await fetch(`${backendUrl}/public/user/${encodeURIComponent(username)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: PublicProfile };
+    return body.data ?? null;
+  } catch {
+    return null;
   }
 }
 

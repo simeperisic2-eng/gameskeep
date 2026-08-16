@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * GamesKeep — I6 verification (grows slice by slice; SLICES 1–7: auth + email +
- * RBAC + community + reputation + follow/feed + GDPR). Every check PROVES AN
- * ATTACK FAILS on the live stack — not that a page renders:
+ * GamesKeep — I6 verification (grows slice by slice; SLICES 1–8: auth + email +
+ * RBAC + community + reputation + follow/feed + GDPR + public UI). Every check
+ * PROVES AN ATTACK FAILS on the live stack — not that a page renders:
  *
  *  Slice 1 — auth core
  *   2.  register: generic 202, NO auto-login (no session cookie)
@@ -97,11 +97,15 @@
  *       RATING is KEPT (aggregate stays honest); PII children gone; session 401
  *  48.  the freed email genuinely re-registers as a NEW active account
  *
+ *  Slice 8 — public UI
+ *  49.  UGC escaping: a stored <script> comment is served as INERT escaped text
+ *       by the SSR page (React auto-escape; the raw executable tag never appears)
+ *
  *  Hardening / retention (run last — the flood locks this host's IP)
- *  49.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
+ *  50.  spoofable-IP hardening: a flood with ROTATING X-Forwarded-For still
  *       trips the per-IP lockout (header ignored while TRUST_PROXY=false)
- *  50.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
- *  51.  the x-admin-token service credential still authorizes (retention is a
+ *  51.  admin redaction: no $argon2 anywhere in admin CRUD or audit payloads
+ *  52.  the x-admin-token service credential still authorizes (retention is a
  *       hard constraint — automation and verify:i1…b2 depend on it)
  *
  * Run after `npm run demo:up`: `npm run verify:i6`. Uses docker exec for
@@ -1592,10 +1596,40 @@ async function main() {
     `reReg ${reReg.status}, verifyTokens ${verifyBefore}→${verifyAfter}, newAccount=${newUserId !== gdpr.id}`,
   );
 
+  // ══ SLICE 8 — PUBLIC UI (UGC renders escaped in the SSR output) ═════════════
+  // The headline safety property: a stored <script> comment is served as INERT
+  // TEXT by the SSR frontend (React auto-escape; no dangerouslySetInnerHTML).
+  cleanEmailThrottle();
+  const xssUser = await makeVerified('xss');
+  const xssGame = await createGame(`XSS ${RUN}`);
+  const xssSlug = sqlOne(
+    `SELECT slug FROM subjects WHERE id=(SELECT subject_id FROM games WHERE id='${xssGame}')`,
+  );
+  const payload = `<script>alert('gk-xss-${RUN}')</script>`;
+  await api(BACK, `/community/comment/game/${xssGame}`, {
+    method: 'POST',
+    jar: xssUser.jar,
+    csrf: xssUser.csrf,
+    body: { body: payload },
+  });
+  // stored RAW (DB truth) …
+  const storedXss = sqlOne(
+    `SELECT body FROM comments WHERE entity_type='game' AND entity_id='${xssGame}' AND user_id='${xssUser.id}' ORDER BY created_at DESC LIMIT 1`,
+  );
+  // … but the SSR page renders it ESCAPED.
+  const ssrHtml = await (await fetch(`${FRONT}/games/${xssSlug}`)).text();
+  const rawTagPresent = ssrHtml.includes(`<script>alert('gk-xss-${RUN}')`);
+  const escapedPresent = ssrHtml.includes(`gk-xss-${RUN}`) && /&lt;script&gt;/i.test(ssrHtml);
+  check(
+    '49. UGC escaping: a stored <script> comment is served as INERT escaped text by the SSR page — the raw executable tag never appears (React auto-escape, no dangerouslySetInnerHTML)',
+    storedXss === payload && escapedPresent && !rawTagPresent,
+    `storedRaw=${storedXss === payload} escapedInHtml=${escapedPresent} rawTagInHtml=${rawTagPresent}`,
+  );
+
   // ══ HARDENING / RETENTION (run last — the flood locks this host's IP) ════════
   cleanAuthKeys(); // clear any incidental auth counters before the flood
 
-  // ── 49. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
+  // ── 50. spoofed X-Forwarded-For cannot dodge the per-IP lockout ─────────────
   // With TRUST_PROXY=false the socket peer is the identity; if the header were
   // trusted, every rotated XFF would get a fresh budget and no lock would EVER
   // appear. Run LAST — it locks this host's IP for lockSec.
@@ -1614,14 +1648,14 @@ async function main() {
     }
   }
   check(
-    '49. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
+    '50. Spoofable-IP hardening: rotating X-Forwarded-For flood STILL trips the per-IP lock (header ignored)',
     ipLockedAt >= 0,
     ipLockedAt >= 0
       ? `locked at flood attempt ${ipLockedAt + 1}`
       : 'never locked — header trusted?',
   );
 
-  // ── 50. admin redaction: no hash anywhere ───────────────────────────────────
+  // ── 51. admin redaction: no hash anywhere ───────────────────────────────────
   const adminUsers = await api(BACK, '/admin/api/users', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
@@ -1632,7 +1666,7 @@ async function main() {
   const userAId = sqlOne(`SELECT id FROM users WHERE username='${userA.username}'`);
   const userRow = (await api(BACK, `/admin/api/users/${userAId}`, { headers: SVC })).json?.data;
   check(
-    '50. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
+    '51. Admin redaction: CRUD + audit payloads carry NO $argon2 material; hashes read [REDACTED]',
     adminUsers.status === 200 &&
       !adminUsers.text.includes('$argon2') &&
       userRow?.passwordHash === '[REDACTED]' &&
@@ -1640,13 +1674,13 @@ async function main() {
     `users=${adminUsers.status}, audit=${auditRows.status}, userA=${userRow?.passwordHash}`,
   );
 
-  // ── 51. the service credential is retained ──────────────────────────────────
+  // ── 52. the service credential is retained ──────────────────────────────────
   const metaYes = await api(BACK, '/admin/api/_meta', {
     headers: { 'x-admin-token': ADMIN_TOKEN },
   });
   const metaNo = await api(BACK, '/admin/api/_meta');
   check(
-    '51. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
+    '52. x-admin-token retained for automation: with token 200, without 401 (i1…b2 depend on this)',
     metaYes.status === 200 && metaNo.status === 401,
     `${metaYes.status}/${metaNo.status}`,
   );
@@ -1659,7 +1693,7 @@ function print() {
   const width = Math.max(...results.map((r) => r.name.length));
   const pad = (s) => s + ' '.repeat(Math.max(0, width - s.length));
   process.stdout.write(
-    '\nGamesKeep — I6 auth+email+RBAC+community+reputation+feed+GDPR (Slices 1–7): prove-the-attack-fails\n\n',
+    '\nGamesKeep — I6 (Slices 1–8): auth·email·RBAC·community·reputation·feed·GDPR·UI — prove-the-attack-fails\n\n',
   );
   let allOk = true;
   for (const r of results) {

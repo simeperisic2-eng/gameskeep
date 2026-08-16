@@ -4376,3 +4376,618 @@ a.gk-tile-cover {
 .gk-title-row > .gk-follow-btn {
   margin-top: 6px;
 }
+
+/* ============================================================================
+ * I6 Slice 8 — Public UI: auth, header menu, community sections, profile,
+ * account panel. Uniform charcoal + amber accent; a restrained functional red
+ * ONLY for the destructive delete action (bias red stays reserved for
+ * disconnect). Reflows to one column on mobile.
+ * ========================================================================== */
+.gk-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--gk-card-border);
+  border-radius: 10px;
+  color: var(--gk-text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+.gk-input:focus {
+  outline: none;
+  border-color: var(--gk-card-border-hi);
+}
+.gk-textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+.gk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gk-field > span {
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-btn-block {
+  width: 100%;
+  justify-content: center;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.gk-form-error {
+  color: #e88c8c;
+  font-size: 13px;
+  margin: 0;
+}
+.gk-form-alt,
+.gk-form-quiet {
+  color: var(--gk-text-dim);
+  font-size: 13px;
+  margin: var(--s2) 0 0;
+}
+.gk-form-alt a {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-btn-danger {
+  height: 40px;
+  padding: 0 var(--s4);
+  border-radius: var(--r-pill);
+  border: 1px solid rgba(200, 90, 90, 0.5);
+  background: rgba(200, 90, 90, 0.12);
+  color: #e88c8c;
+  font: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+.gk-btn-danger:hover {
+  background: rgba(200, 90, 90, 0.2);
+}
+.gk-authpage {
+  padding-block: var(--s8);
+}
+.gk-authcard {
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+  padding: var(--s6);
+}
+@media (max-width: 480px) {
+  .gk-authcard {
+    padding: var(--s5);
+  }
+}
+.gk-auth-title {
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0;
+}
+.gk-auth-sub {
+  color: var(--gk-text-dim);
+  margin: var(--s2) 0 var(--s5);
+  font-size: 14px;
+}
+.gk-authform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.gk-auth-done h2 {
+  margin: 0 0 var(--s3);
+}
+.gk-auth-done p {
+  color: var(--gk-text-dim);
+  margin: 0 0 var(--s5);
+}
+.gk-usermenu {
+  position: relative;
+}
+.gk-usermenu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: rgba(var(--gk-amber), 0.06);
+  color: var(--gk-text);
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.gk-level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(var(--gk-amber), 0.9);
+}
+.gk-usermenu-level {
+  color: var(--gk-text-dim);
+  font-weight: 600;
+}
+.gk-usermenu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 180px;
+  background: var(--gk-card-bg);
+  border: 1px solid var(--gk-card-border-hi);
+  border-radius: 12px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  z-index: 40;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+.gk-usermenu-pop a,
+.gk-usermenu-pop button {
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: var(--gk-text);
+  text-decoration: none;
+  font: inherit;
+  font-size: 14px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.gk-usermenu-pop a:hover,
+.gk-usermenu-pop button:hover {
+  background: rgba(var(--gk-amber), 0.1);
+  color: rgba(var(--gk-amber), 0.95);
+}
+/* Compact avatar initial — desktop shows the full name + level chip instead. */
+.gk-usermenu-ava {
+  display: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  place-items: center;
+  background: rgba(var(--gk-amber), 0.16);
+  color: rgba(var(--gk-amber), 0.95);
+  font-weight: 800;
+  font-size: 14px;
+}
+/* On mobile the username + level label overflow the header — collapse the
+ * signed-in menu button to just the avatar initial (SPEC I6, Slice 8). */
+@media (max-width: 760px) {
+  .gk-usermenu-btn {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .gk-usermenu-name,
+  .gk-usermenu-level,
+  .gk-usermenu-btn .gk-level-dot {
+    display: none;
+  }
+  .gk-usermenu-ava {
+    display: grid;
+  }
+}
+.gk-ratepanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s2) 0 var(--s4);
+  border-bottom: 1px solid var(--gk-card-border);
+  margin-bottom: var(--s4);
+}
+.gk-ratepanel-agg {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+}
+.gk-ratepanel-score {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+.gk-ratepanel-score strong {
+  font-size: 32px;
+  font-weight: 800;
+  color: rgba(var(--gk-amber), 0.98);
+}
+.gk-ratepanel-score span {
+  color: var(--gk-text-dim);
+}
+.gk-ratepanel-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-flag-unusual {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-rate-input {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+}
+.gk-rate-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex: 1;
+}
+.gk-rate-slider input[type='range'] {
+  flex: 1;
+  accent-color: rgb(var(--gk-amber));
+}
+.gk-rate-value {
+  font-weight: 800;
+  min-width: 34px;
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-comments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.gk-comments-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+.gk-comments-count {
+  color: var(--gk-text-dim);
+}
+.gk-comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.gk-comment-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.gk-comments-gate {
+  color: var(--gk-text-dim);
+  font-size: 13.5px;
+  margin: 0;
+}
+.gk-comments-gate a {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-comment-list {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.gk-comment {
+  border-top: 1px solid var(--gk-card-border);
+  padding-top: var(--s3);
+}
+.gk-comment-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: 4px;
+}
+.gk-comment-author {
+  font-weight: 700;
+  color: var(--gk-text);
+  text-decoration: none;
+  font-size: 13.5px;
+}
+.gk-comment-author:hover {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-comment-time {
+  font-size: 12px;
+  color: var(--gk-text-dim);
+}
+.gk-comment-body {
+  margin: 0;
+  color: var(--gk-text);
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gk-comments-empty {
+  color: var(--gk-text-dim);
+  font-size: 13.5px;
+}
+.gk-biasvotes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.gk-biasvote-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.gk-biasvote-label {
+  font-weight: 700;
+}
+.gk-biasvote-count {
+  color: var(--gk-text-dim);
+}
+.gk-biasvote-bar {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.gk-biasvote-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(var(--gk-amber), 0.5), rgba(var(--gk-amber), 0.95));
+}
+.gk-biasvote-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--gk-text-dim);
+  margin-top: 4px;
+}
+.gk-biasvote-controls {
+  display: flex;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.gk-biasvote-controls button {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  background: transparent;
+  color: var(--gk-text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gk-biasvote-controls button.is-on {
+  border-color: var(--gk-card-border-hi);
+  background: rgba(var(--gk-amber), 0.14);
+  color: rgba(var(--gk-amber), 0.98);
+}
+.gk-hype-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: transparent;
+  color: rgba(var(--gk-amber), 0.95);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.gk-hype-btn.is-hyped {
+  background: rgba(var(--gk-amber), 0.16);
+}
+.gk-profile,
+.gk-account {
+  padding-top: var(--s5);
+  padding-bottom: var(--s8);
+}
+.gk-profile-head,
+.gk-account-head {
+  display: flex;
+  gap: var(--s5);
+  align-items: center;
+  padding: var(--s5);
+  margin: var(--s4) 0 var(--s5);
+}
+.gk-profile-avatar {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  font-weight: 800;
+  color: #14120c;
+  background: linear-gradient(150deg, #ffcf3f, var(--gk-accent));
+}
+.gk-profile-name {
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0;
+}
+.gk-profile-handle {
+  color: var(--gk-text-dim);
+  margin: 2px 0 var(--s3);
+}
+.gk-profile-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.gk-profile-joined {
+  color: var(--gk-text-dim);
+  font-size: 13px;
+}
+.gk-profile-grid,
+.gk-account-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s5);
+}
+.gk-stat-row {
+  display: flex;
+  gap: var(--s6);
+  margin: 0;
+}
+.gk-stat-row dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gk-text-dim);
+}
+.gk-stat-row dd {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 800;
+}
+.gk-badge-list {
+  list-style: none;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.gk-badge {
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border-hi);
+  background: rgba(var(--gk-amber), 0.08);
+  color: rgba(var(--gk-amber), 0.95);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.gk-level-progress {
+  max-width: 320px;
+  margin-bottom: var(--s3);
+}
+.gk-level-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: 6px;
+}
+.gk-level-progress-pct {
+  font-size: 12px;
+  color: var(--gk-text-dim);
+}
+.gk-progress-track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.gk-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(var(--gk-amber), 0.5), rgba(var(--gk-amber), 0.95));
+}
+.gk-unverified-tag {
+  color: #e0a44a;
+}
+.gk-account-links {
+  font-size: 13px;
+  margin: var(--s3) 0 0;
+}
+.gk-account-links a {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.gk-account-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  font-size: 14px;
+}
+.gk-account-list a {
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-account-list a:hover {
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-account-score {
+  font-weight: 800;
+  color: rgba(var(--gk-amber), 0.95);
+}
+.gk-account-comments li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.gk-account-comment-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gk-text-dim);
+}
+.gk-account-comment-body {
+  color: var(--gk-text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gk-account-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.gk-account-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s5);
+  padding: var(--s4);
+  border: 1px solid var(--gk-card-border);
+  border-radius: 12px;
+}
+.gk-account-action h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.gk-account-action p {
+  margin: 0;
+  color: var(--gk-text-dim);
+  font-size: 13px;
+  max-width: 52ch;
+}
+.gk-account-danger {
+  border-color: rgba(200, 90, 90, 0.3);
+}
+.gk-delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 240px;
+}
+.gk-delete-confirm-row {
+  display: flex;
+  gap: var(--s2);
+  justify-content: flex-end;
+}
+@media (max-width: 760px) {
+  .gk-profile-grid,
+  .gk-account-grid {
+    grid-template-columns: 1fr;
+  }
+  .gk-profile-head,
+  .gk-account-head {
+    flex-direction: column;
+    text-align: center;
+    align-items: center;
+  }
+  .gk-account-action {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

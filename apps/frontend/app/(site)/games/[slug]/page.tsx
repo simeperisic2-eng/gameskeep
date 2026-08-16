@@ -1,12 +1,14 @@
 import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getGame, type GameDetail } from '@/lib/public-api';
+import { getComments, getGame, type GameDetail } from '@/lib/public-api';
 import { truncateWords } from '@/lib/format';
 import { breadcrumbLd, videoGameLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { CoverArt } from '../../_components/CoverArt';
 import { FollowButton } from '../../_components/FollowButton';
+import { RatingInput } from '../../_components/RatingInput';
+import { Comments } from '../../_components/Comments';
 import { RatingBlock } from '../../_components/RatingBlock';
 import { ContentFlags, hasContentFlagData } from '../../_components/ContentFlags';
 import { OurReview } from '../../_components/OurReview';
@@ -287,16 +289,18 @@ export default async function GamePage({
             </section>
           ) : null}
 
-          {/* COMMUNITY — slot only; ratings/comments are I6. */}
-          <section className="gk-panel gk-community-slot" aria-label="Community">
+          {/* COMMUNITY (I6) — verified ratings + discussion, credibility-weighted. */}
+          <section className="gk-panel" aria-label="Community">
             <div className="gk-panel-head">
               <h2 className="gk-panel-title">Community</h2>
-              <span className="gk-soon-tag">Coming in accounts</span>
             </div>
-            <p className="gk-section-sub" style={{ margin: 0 }}>
-              Verified player ratings, reviews and reactions arrive with accounts — credibility-
-              weighted and manipulation-aware, so a vote means something.
-            </p>
+            <RatingInput gameId={game.id} />
+            <Comments
+              entityType="game"
+              entityId={game.id}
+              title="Player discussion"
+              initial={await getComments('game', game.id)}
+            />
           </section>
         </div>
       </div>

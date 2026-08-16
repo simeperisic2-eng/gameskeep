@@ -1,4 +1,5 @@
 import { NavLinks } from './NavLinks';
+import { HeaderAuth } from './HeaderAuth';
 
 function SearchIcon(): React.JSX.Element {
   return (
@@ -42,10 +43,7 @@ export function SiteHeader(): React.JSX.Element {
             <SearchIcon />
             <input type="search" placeholder="Search…" name="q" autoComplete="off" />
           </label>
-          {/* auth is I6 — placeholder entry point */}
-          <a className="gk-signin" href="/account">
-            Sign in
-          </a>
+          <HeaderAuth />
           <button className="gk-burger" type="button" aria-label="Open menu">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path

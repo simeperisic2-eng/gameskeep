@@ -1,5 +1,6 @@
 import type { UpcomingGame } from '@/lib/public-api';
 import { CoverArt } from './CoverArt';
+import { HypeButton } from './HypeButton';
 
 /**
  * Upcoming game card (SPEC I5b; BLUEPRINT 2.4) — status + release date + a live
@@ -104,12 +105,9 @@ export function UpcomingCard({ game }: { game: UpcomingGame }): React.JSX.Elemen
           </div>
         </div>
 
-        {/* HYPE — community vote slot; activates with accounts (I6). */}
-        <div className="gk-hype" aria-label="Community hype (coming with accounts)">
-          <span className="gk-hype-btn" aria-disabled="true">
-            ▲ Hype
-          </span>
-          <span className="gk-hype-meta">Community hype arrives with accounts</span>
+        {/* HYPE — live community vote (I6). */}
+        <div className="gk-hype" aria-label="Community hype">
+          <HypeButton gameId={game.id} />
         </div>
       </div>
     </article>
