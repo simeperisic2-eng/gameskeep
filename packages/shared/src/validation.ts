@@ -515,6 +515,26 @@ export const awardVoteInput = z.object({
   nominationId: uuid,
 });
 
+/**
+ * Awards "notify me" subscribe (I7 Slice 2). Marketing is a SEPARATE consent, so
+ * `consent` MUST be explicitly true — the route rejects a falsey opt-in. Works
+ * for anonymous and signed-in subscribers alike.
+ */
+export const awardSubscribeInput = z.object({
+  email: z.string().trim().email().max(320),
+  consent: z.boolean(),
+});
+
+/** Login-free unsubscribe via the per-row capability token. */
+export const awardUnsubscribeInput = z.object({
+  token: z.string().min(1).max(64),
+});
+
+/** Staff phase transition for an award edition (guarded in the service). */
+export const awardPhaseInput = z.object({
+  phase: z.enum(AWARD_PHASES),
+});
+
 // ── game data-source / unmatched queue (I2) ──────────────────────────────────
 /**
  * A raw, freeform context blob attached to an unmatched reference (e.g. the

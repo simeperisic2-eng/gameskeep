@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { awardVoteInput } from '@gameskeep/shared/validation';
+import {
+  awardSubscribeInput,
+  awardUnsubscribeInput,
+  awardVoteInput,
+} from '@gameskeep/shared/validation';
 import { CSRF_HEADER, csrfOk } from '../auth/session';
 import { requireVerified, sessionFromRequest } from '../auth/guards';
 import { sendError } from '../admin/http';
@@ -12,6 +16,7 @@ import {
   retractVote,
   type AwardActor,
 } from './service';
+import { subscribe, unsubscribe } from './subscribe';
 
 /**
  * Public + community Awards API (SPEC I7, Slice 1). Reads (the live tally) are
@@ -128,6 +133,42 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
           }
         },
       );
+
+      // Awards "notify me" — EXPLICIT-opt-in marketing subscribe (anonymous or
+      // signed-in; a signed-in subscribe also records the canonical user consent).
+      c.post('/subscribe', async (req, reply) => {
+        try {
+          const { email, consent } = awardSubscribeInput.parse(req.body);
+          if (!consent) {
+            reply.code(400).send({
+              error: 'consent_required',
+              message: 'Please opt in to receive award notifications.',
+            });
+            return;
+          }
+          const session = await sessionFromRequest(req);
+          await subscribe({
+            email,
+            userId: session?.user.id ?? null,
+            source: 'awards',
+            ip: req.ip,
+          });
+          reply.send({ ok: true }); // generic — never an "is this email known?" oracle
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
+
+      // Login-free unsubscribe via the capability token (generic reply either way).
+      c.post('/unsubscribe', async (req, reply) => {
+        try {
+          const { token } = awardUnsubscribeInput.parse(req.body);
+          await unsubscribe(token);
+          reply.send({ ok: true });
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
     },
     { prefix: '/awards' },
   );

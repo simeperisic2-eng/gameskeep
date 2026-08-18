@@ -78,6 +78,13 @@
       "when": 1786821616427,
       "tag": "0010_i6_gdpr",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787094574005,
+      "tag": "0011_i7_newsletter_subscriptions",
+      "breakpoints": true
     }
   ]
 }

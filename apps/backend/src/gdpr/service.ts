@@ -9,6 +9,7 @@ import {
   gameHypeVotes,
   gameUserRatings,
   games,
+  newsletterSubscriptions,
   reactions,
   roles,
   sessions,
@@ -84,6 +85,8 @@ export async function deleteAccount(userId: string): Promise<DeleteResult | null
     await tx.delete(follows).where(eq(follows.userId, userId));
     await tx.delete(userConsents).where(eq(userConsents.userId, userId));
     await tx.delete(userBadges).where(eq(userBadges.userId, userId));
+    // The subscription carries the email (PII) — remove any row tied to this user.
+    await tx.delete(newsletterSubscriptions).where(eq(newsletterSubscriptions.userId, userId));
 
     return { freedEmail: u.email, freedUsername: u.username };
   });
@@ -113,6 +116,7 @@ export interface AccountExport {
   comments: unknown[];
   follows: unknown[];
   consents: unknown[];
+  subscriptions: unknown[];
 }
 
 /** Assemble the user's full data export (their OWN data — includes their email). */
@@ -225,6 +229,18 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
     .where(eq(userConsents.userId, userId))
     .orderBy(desc(userConsents.createdAt));
 
+  const subscriptions = await db
+    .select({
+      email: newsletterSubscriptions.email,
+      source: newsletterSubscriptions.source,
+      active: newsletterSubscriptions.active,
+      consentVersion: newsletterSubscriptions.consentVersion,
+      createdAt: newsletterSubscriptions.createdAt,
+      unsubscribedAt: newsletterSubscriptions.unsubscribedAt,
+    })
+    .from(newsletterSubscriptions)
+    .where(eq(newsletterSubscriptions.userId, userId));
+
   return {
     profile: {
       id: profile.id,
@@ -247,5 +263,6 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
     comments: commentRows,
     follows: followRows,
     consents,
+    subscriptions,
   };
 }

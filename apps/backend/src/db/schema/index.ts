@@ -33,6 +33,7 @@ export * from './games';
 export * from './awards';
 export * from './community';
 export * from './gdpr';
+export * from './newsletter';
 export * from './unmatched';
 export * from './settings';
 export * from './audit';

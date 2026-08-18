@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import type { AwardPhase } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
 import {
   awardEditionCategories,
@@ -13,6 +14,7 @@ import {
 import { writeAudit, type AuditActor } from '../admin/audit';
 import { getRatingSettings } from '../ratings/rating-settings';
 import { voterCredibility, type VoterFields } from '../community/weighting';
+import { activeSubscriberCount } from './subscribe';
 
 /**
  * Awards voting + outcomes engine (SPEC I7, Slice 1). Voting is a COMMUNITY
@@ -38,7 +40,11 @@ const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 /** The session fields a vote needs (gate + weighting) — same shape as community. */
 export type AwardActor = { id: string } & VoterFields;
 
-export type AwardErrorCode = 'unknown_category' | 'voting_not_open' | 'bad_nomination';
+export type AwardErrorCode =
+  | 'unknown_category'
+  | 'voting_not_open'
+  | 'bad_nomination'
+  | 'phase_guard';
 
 /** A typed domain error the route maps to an HTTP status (409/404/400). */
 export class AwardError extends Error {
@@ -322,4 +328,152 @@ export async function computeOutcomes(
     actor,
   });
   return summary;
+}
+
+/**
+ * Staff phase transition (SPEC I7, Slice 2). Guarded: opening VOTING is the
+ * public "turn it on", so it requires the edition to be PUBLISHED and to have a
+ * voting WINDOW set — voting can never open half-configured. Entering REVEAL
+ * decides the winners (Community from the weighted vote, Critics auto-suggested);
+ * staff can still override any outcome afterwards. Every transition is audited.
+ * Backward corrections are intentionally allowed (AUTO + MANUAL OVERRIDE).
+ */
+export async function setEditionPhase(
+  editionId: string,
+  phase: AwardPhase,
+  actor: AuditActor,
+): Promise<{ phase: string } | null> {
+  const [ed] = await db
+    .select({
+      phase: awardEditions.phase,
+      isPublished: awardEditions.isPublished,
+      votingOpensAt: awardEditions.votingOpensAt,
+      votingClosesAt: awardEditions.votingClosesAt,
+    })
+    .from(awardEditions)
+    .where(eq(awardEditions.id, editionId))
+    .limit(1);
+  if (!ed) return null;
+
+  if (phase === 'voting') {
+    if (!ed.isPublished) {
+      throw new AwardError('phase_guard', 'Publish the edition before opening voting.');
+    }
+    if (!ed.votingOpensAt || !ed.votingClosesAt) {
+      throw new AwardError('phase_guard', 'Set a voting window before opening voting.');
+    }
+  }
+
+  await db
+    .update(awardEditions)
+    .set({ phase, updatedAt: new Date() })
+    .where(eq(awardEditions.id, editionId));
+
+  if (phase === 'reveal') await computeOutcomes(editionId, actor);
+
+  await writeAudit({
+    action: 'update',
+    entityType: 'award-edition',
+    entityId: editionId,
+    changes: { phase: { from: ed.phase, to: phase } },
+    summary: `award edition phase → ${phase}`,
+    actor,
+  });
+  return { phase };
+}
+
+export interface EditionAnalytics {
+  editionId: string;
+  phase: string;
+  isPublished: boolean;
+  totals: { voters: number; votes: number; subscribers: number };
+  categories: Array<{
+    editionCategoryId: string;
+    totalVotes: number;
+    totalWeight: number;
+    nominees: Array<TallyNominee & { ratio: number }>;
+    outcomes: { community: string | null; critics: string | null };
+  }>;
+  overTime: Array<{ day: string; votes: number }>;
+  geo: { available: boolean; note: string; buckets: never[] };
+}
+
+/**
+ * Aggregated, leak-proof analytics for an edition (SPEC I7, Slice 2): distinct
+ * voters, votes, subscriber count, per-category ratios + outcomes, and a
+ * votes-over-time series. Geo is aggregated/anonymous only and needs a
+ * geolocation provider (production) — structurally present, empty in demo.
+ */
+export async function editionAnalytics(editionId: string): Promise<EditionAnalytics | null> {
+  const [ed] = await db
+    .select({ phase: awardEditions.phase, isPublished: awardEditions.isPublished })
+    .from(awardEditions)
+    .where(eq(awardEditions.id, editionId))
+    .limit(1);
+  if (!ed) return null;
+
+  const ecs = await db
+    .select({ id: awardEditionCategories.id })
+    .from(awardEditionCategories)
+    .where(eq(awardEditionCategories.editionId, editionId));
+
+  const categories: EditionAnalytics['categories'] = [];
+  for (const ec of ecs) {
+    const tally = await categoryTally(ec.id);
+    const outRows = await db
+      .select({ outcomeType: awardOutcomes.outcomeType, nominationId: awardOutcomes.nominationId })
+      .from(awardOutcomes)
+      .where(eq(awardOutcomes.editionCategoryId, ec.id));
+    categories.push({
+      editionCategoryId: ec.id,
+      totalVotes: tally.totalVotes,
+      totalWeight: tally.totalWeight,
+      nominees: tally.nominees.map((n) => ({
+        ...n,
+        ratio: tally.totalWeight > 0 ? round3(n.weightSum / tally.totalWeight) : 0,
+      })),
+      outcomes: {
+        community: outRows.find((o) => o.outcomeType === 'community')?.nominationId ?? null,
+        critics: outRows.find((o) => o.outcomeType === 'critics')?.nominationId ?? null,
+      },
+    });
+  }
+
+  const [agg] = await db
+    .select({
+      voters: sql<string>`count(distinct ${awardVotes.userId})`,
+      votes: sql<string>`count(*)`,
+    })
+    .from(awardVotes)
+    .innerJoin(awardEditionCategories, eq(awardEditionCategories.id, awardVotes.editionCategoryId))
+    .where(eq(awardEditionCategories.editionId, editionId));
+
+  const overTimeRows = await db
+    .select({
+      day: sql<string>`to_char(date_trunc('day', ${awardVotes.createdAt}), 'YYYY-MM-DD')`,
+      votes: sql<string>`count(*)`,
+    })
+    .from(awardVotes)
+    .innerJoin(awardEditionCategories, eq(awardEditionCategories.id, awardVotes.editionCategoryId))
+    .where(eq(awardEditionCategories.editionId, editionId))
+    .groupBy(sql`1`)
+    .orderBy(sql`1`);
+
+  return {
+    editionId,
+    phase: ed.phase,
+    isPublished: ed.isPublished,
+    totals: {
+      voters: Number(agg?.voters ?? 0),
+      votes: Number(agg?.votes ?? 0),
+      subscribers: await activeSubscriberCount('awards'),
+    },
+    categories,
+    overTime: overTimeRows.map((r) => ({ day: r.day, votes: Number(r.votes) })),
+    geo: {
+      available: false,
+      note: 'Aggregated, anonymous geo requires geolocation (production only); not captured in demo.',
+      buckets: [],
+    },
+  };
 }

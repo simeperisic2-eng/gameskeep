@@ -21,6 +21,21 @@
  *       (insert-if-absent) while Community Choice re-computes fresh
  *  15.  leak-proof: the public tally exposes no voter identity
  *
+ *  Slice 2 — subscribe capture (marketing consent) + staff control + analytics
+ *  16.  subscribe WITHOUT explicit consent → 400 (no row created)
+ *  17.  anonymous subscribe records a row: versioned marketing consent + a
+ *       COARSENED ip + an unsubscribe token (same treatment as a registered user)
+ *  18.  a REGISTERED subscribe ALSO writes a user_consents kind='marketing'
+ *       granted=true row (reuses the existing consent path, not a new one)
+ *  19.  subscribe is idempotent — one row per email (a re-subscribe reactivates)
+ *  20.  unsubscribe via the capability token deactivates the row
+ *  21.  a REGISTERED unsubscribe records the marketing consent WITHDRAWAL
+ *  22.  guarded phase: opening `voting` unpublished/without a window → 409, then
+ *       publish + window → the transition succeeds
+ *  23.  entering `reveal` AUTO-computes the outcomes
+ *  24.  analytics is correct + leak-proof (voters/votes/subscribers, no identity)
+ *  25.  account deletion scrubs the subscription (the email is PII)
+ *
  * Run after `npm run demo:up`: `npm run verify:i7`.
  */
 import { execSync } from 'node:child_process';
@@ -409,8 +424,174 @@ async function main() {
     tallyRead.status === 200 ? 'no identity fields' : `status ${tallyRead.status}`,
   );
 
-  // ── cleanup: put the throwaway edition back to unpublished/announce ──────────
+  // ════════════════════════ Slice 2 — subscribe + staff control ═══════════════
+  const MARKETING_VERSION = 'marketing-2026-01-demo';
+  const subApi = (jarCsrf, path, body) =>
+    api(BACK, `/awards/${path}`, { method: 'POST', jar: jarCsrf.jar, csrf: jarCsrf.csrf, body });
+  const anonEmail = `i7_anon_${RUN}@example.test`;
+
+  // ── 16. subscribe requires EXPLICIT consent ─────────────────────────────────
+  const anonSub = await withCsrf(BACK);
+  const noConsent = await subApi(anonSub, 'subscribe', { email: anonEmail, consent: false });
+  const noRowYet = Number(
+    sqlOne(`SELECT count(*) FROM newsletter_subscriptions WHERE email='${anonEmail}'`),
+  );
+  check(
+    '16. Subscribe without explicit consent → 400, no row',
+    noConsent.status === 400 && noConsent.json?.error === 'consent_required' && noRowYet === 0,
+    `status ${noConsent.status} rows=${noRowYet}`,
+  );
+
+  // ── 17. anonymous subscribe: same GDPR treatment (version + coarsened ip + token)
+  const anonOk = await subApi(anonSub, 'subscribe', { email: anonEmail, consent: true });
+  const anonRow = sqlOne(
+    `SELECT coalesce(user_id::text,'NULL')||'|'||consent_version||'|'||coalesce(ip,'NULL')||'|'||length(unsubscribe_token)::text||'|'||active::text FROM newsletter_subscriptions WHERE email='${anonEmail}'`,
+  );
+  const [aUser, aVer, aIp, aTokLen, aActive] = anonRow.split('|');
+  check(
+    '17. Anonymous subscribe: versioned marketing consent + coarsened ip + token',
+    anonOk.status === 200 &&
+      aUser === 'NULL' &&
+      aVer === MARKETING_VERSION &&
+      aIp !== 'NULL' &&
+      Number(aTokLen) === 64 &&
+      aActive === 'true',
+    `user=${aUser} ver=${aVer} ip=${aIp} tokLen=${aTokLen} active=${aActive}`,
+  );
+
+  // ── 18. registered subscribe ALSO writes the canonical user_consents row ─────
+  const vs = await makeVerified('vs');
+  const vsSub = await subApi(vs, 'subscribe', { email: vs.u.email, consent: true });
+  const vsSubUser = sqlOne(
+    `SELECT coalesce(user_id::text,'NULL') FROM newsletter_subscriptions WHERE email='${vs.u.email}'`,
+  );
+  const vsConsentGranted = Number(
+    sqlOne(
+      `SELECT count(*) FROM user_consents WHERE user_id='${vs.id}' AND consent_type='marketing' AND granted=true`,
+    ),
+  );
+  check(
+    '18. Registered subscribe: subscription linked + user_consents marketing grant',
+    vsSub.status === 200 && vsSubUser === vs.id && vsConsentGranted >= 1,
+    `subUser=${vsSubUser === vs.id} consents=${vsConsentGranted}`,
+  );
+
+  // ── 19. idempotent — one row per email ──────────────────────────────────────
+  await subApi(anonSub, 'subscribe', { email: anonEmail, consent: true });
+  const anonCount = Number(
+    sqlOne(`SELECT count(*) FROM newsletter_subscriptions WHERE email='${anonEmail}'`),
+  );
+  check('19. Subscribe is idempotent (one row per email)', anonCount === 1, `rows=${anonCount}`);
+
+  // ── 20. unsubscribe via token deactivates ───────────────────────────────────
+  const anonToken = sqlOne(
+    `SELECT unsubscribe_token FROM newsletter_subscriptions WHERE email='${anonEmail}'`,
+  );
+  const unsub = await subApi(anonSub, 'unsubscribe', { token: anonToken });
+  const anonState = sqlOne(
+    `SELECT active::text||'|'||(unsubscribed_at IS NOT NULL)::text FROM newsletter_subscriptions WHERE email='${anonEmail}'`,
+  );
+  check(
+    '20. Unsubscribe via token deactivates the row',
+    unsub.status === 200 && anonState === 'false|true',
+    `state=${anonState}`,
+  );
+
+  // ── 21. registered unsubscribe records the marketing WITHDRAWAL ─────────────
+  const vsToken = sqlOne(
+    `SELECT unsubscribe_token FROM newsletter_subscriptions WHERE user_id='${vs.id}'`,
+  );
+  await subApi(vs, 'unsubscribe', { token: vsToken });
+  const vsWithdraw = Number(
+    sqlOne(
+      `SELECT count(*) FROM user_consents WHERE user_id='${vs.id}' AND consent_type='marketing' AND granted=false`,
+    ),
+  );
+  check(
+    '21. Registered unsubscribe records a marketing consent withdrawal',
+    vsWithdraw >= 1,
+    `withdrawals=${vsWithdraw}`,
+  );
+
+  // ── 22. guarded phase transition ────────────────────────────────────────────
+  const edId2 = await createEdition();
+  const guardBad = await api(BACK, `/admin/api/awards/editions/${edId2}/phase`, {
+    method: 'POST',
+    headers: SVC,
+    body: { phase: 'voting' },
+  });
+  await patchEdition(edId2, {
+    isPublished: true,
+    votingOpensAt: past,
+    votingClosesAt: future,
+  });
+  const guardOk = await api(BACK, `/admin/api/awards/editions/${edId2}/phase`, {
+    method: 'POST',
+    headers: SVC,
+    body: { phase: 'voting' },
+  });
+  check(
+    '22. Opening voting is guarded (needs publish + window), then succeeds',
+    guardBad.status === 409 && guardBad.json?.error === 'phase_guard' && guardOk.status === 200,
+    `bad=${guardBad.status}/${guardBad.json?.error} ok=${guardOk.status}`,
+  );
+
+  // ── 23. entering `reveal` auto-computes outcomes ────────────────────────────
+  sqlOne(`DELETE FROM award_outcomes WHERE edition_category_id='${ecId}'`);
+  const reveal = await api(BACK, `/admin/api/awards/editions/${edId}/phase`, {
+    method: 'POST',
+    headers: SVC,
+    body: { phase: 'reveal' },
+  });
+  const revealPhase = sqlOne(`SELECT phase FROM award_editions WHERE id='${edId}'`);
+  const revealComm = sqlOne(
+    `SELECT nomination_id FROM award_outcomes WHERE edition_category_id='${ecId}' AND outcome_type='community'`,
+  );
+  check(
+    '23. Entering reveal auto-computes the outcomes',
+    reveal.status === 200 && revealPhase === 'reveal' && revealComm === nomA,
+    `phase=${revealPhase} community=${revealComm === nomA ? 'nomA' : revealComm}`,
+  );
+
+  // ── 24. analytics: correct + leak-proof ─────────────────────────────────────
+  // Re-activate one subscriber so the (active) subscriber count is provably ≥ 1.
+  await subApi(anonSub, 'subscribe', { email: anonEmail, consent: true });
+  const analytics = await api(BACK, `/admin/api/awards/editions/${edId}/analytics`, {
+    headers: SVC,
+  });
+  const an = analytics.json?.data;
+  const anRaw = JSON.stringify(analytics.json ?? {});
+  check(
+    '24. Analytics: voters/votes/subscribers correct + geo empty + leak-proof',
+    analytics.status === 200 &&
+      an?.totals?.voters === 3 &&
+      an?.totals?.votes === 3 &&
+      an?.totals?.subscribers >= 1 &&
+      an?.geo?.available === false &&
+      !/userId|user_id|"user"|email/i.test(anRaw),
+    `voters=${an?.totals?.voters} votes=${an?.totals?.votes} subs=${an?.totals?.subscribers}`,
+  );
+
+  // ── 25. account deletion scrubs the subscription (PII) ──────────────────────
+  await subApi(vs, 'subscribe', { email: vs.u.email, consent: true }); // re-activate
+  const del = await api(BACK, '/auth/delete-account', {
+    method: 'POST',
+    jar: vs.jar,
+    csrf: vs.csrf,
+    body: { password: vs.u.password },
+  });
+  const vsSubsAfter = Number(
+    sqlOne(`SELECT count(*) FROM newsletter_subscriptions WHERE user_id='${vs.id}'`),
+  );
+  check(
+    '25. Account deletion scrubs the subscription (email is PII)',
+    del.status === 200 && vsSubsAfter === 0,
+    `status ${del.status} subsAfter=${vsSubsAfter}`,
+  );
+
+  // ── cleanup: put the throwaway editions back to unpublished/announce ─────────
   await patchEdition(edId, { phase: 'announce', isPublished: false });
+  await patchEdition(edId2, { phase: 'announce', isPublished: false });
 
   print();
 }
