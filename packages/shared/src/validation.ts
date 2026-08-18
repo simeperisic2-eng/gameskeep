@@ -505,6 +505,16 @@ export const awardVoteCreate = z.object({
   weight: weight0to1.default(1),
 });
 
+/**
+ * Public award-vote body (I7 Slice 1). Unlike `awardVoteCreate` (admin CRUD), a
+ * community voter supplies ONLY the nomination — the edition-category is the URL
+ * param, the user is the session, and the weight is computed server-side from the
+ * voter's credibility (never client-supplied).
+ */
+export const awardVoteInput = z.object({
+  nominationId: uuid,
+});
+
 // ── game data-source / unmatched queue (I2) ──────────────────────────────────
 /**
  * A raw, freeform context blob attached to an unmatched reference (e.g. the

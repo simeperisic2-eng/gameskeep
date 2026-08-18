@@ -6,6 +6,7 @@ import { registerHealthRoutes } from './routes/health';
 import { registerAdminRoutes } from './admin/routes';
 import { registerAuthRoutes } from './auth/routes';
 import { registerCommunityRoutes } from './community/routes';
+import { registerAwardRoutes } from './awards/routes';
 import { registerPublicRoutes } from './public/routes';
 
 /**
@@ -32,6 +33,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   await registerPublicRoutes(app);
   await registerAuthRoutes(app);
   await registerCommunityRoutes(app);
+  await registerAwardRoutes(app);
   await registerAdminRoutes(app);
 
   // Friendly API root — confirms the foundation is serving.
