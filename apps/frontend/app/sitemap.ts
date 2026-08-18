@@ -27,6 +27,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${siteUrl}/games/browse`, lastModified: now, changeFrequency: 'daily', priority: 0.7 },
     { url: `${siteUrl}/upcoming`, lastModified: now, changeFrequency: 'daily', priority: 0.7 },
     { url: `${siteUrl}/sources`, lastModified: now, changeFrequency: 'weekly', priority: 0.6 },
+    // Static / evergreen pages (SPEC 3.13). About, Methodology and Contact are
+    // real, indexable routes. Privacy & Terms are deliberately NOT listed: they
+    // are noindex drafts pending legal review — listing a noindex page here would
+    // send crawlers a contradictory signal. Add them once counsel clears them.
+    { url: `${siteUrl}/about`, lastModified: now, changeFrequency: 'monthly', priority: 0.5 },
+    {
+      url: `${siteUrl}/methodology`,
+      lastModified: now,
+      changeFrequency: 'monthly',
+      priority: 0.6,
+    },
+    { url: `${siteUrl}/contact`, lastModified: now, changeFrequency: 'monthly', priority: 0.4 },
   ];
   for (const t of topics) {
     entries.push({

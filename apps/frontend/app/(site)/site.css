@@ -4991,3 +4991,228 @@ a.gk-tile-cover {
     align-items: flex-start;
   }
 }
+
+/* =====================  STATIC / DOC PAGES  ==================================
+ * About, Methodology, Contact, Privacy, Terms (SPEC 3.13). A calm long-form
+ * reading surface on the SAME charcoal + amber system — prose, not clutter. One
+ * narrow reading column so line length stays comfortable (~68ch); the header can
+ * breathe a little wider. Amber is accent only (rules, markers, links). */
+.gk-doc {
+  padding-block: var(--s6) var(--gk-section-y);
+  max-width: 820px;
+}
+.gk-doc-head {
+  margin-bottom: var(--s7);
+  padding-bottom: var(--s6);
+  border-bottom: 1px solid var(--gk-card-border);
+}
+.gk-doc-title {
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-display);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: -0.5px;
+  margin: var(--s2) 0 0;
+}
+.gk-doc-lede {
+  margin: var(--s4) 0 0;
+  color: var(--gk-text-dim);
+  font-size: clamp(15.5px, 1.4vw, 17px);
+  line-height: var(--lh-body);
+  max-width: 64ch;
+}
+.gk-doc-meta {
+  margin-top: var(--s4);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+  opacity: 0.75;
+}
+
+/* The reading column. Headings, paragraphs, lists and links styled once here so
+ * every static page inherits identical rhythm without per-page CSS. */
+.gk-prose {
+  max-width: 68ch;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--gk-text);
+}
+.gk-prose > * + * {
+  margin-top: var(--s4);
+}
+.gk-prose h2 {
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  line-height: var(--lh-snug);
+  margin-top: var(--s8);
+  padding-top: var(--s5);
+  border-top: 1px solid var(--gk-card-border);
+}
+.gk-prose h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.gk-prose h3 {
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  margin-top: var(--s6);
+  color: var(--gk-text);
+}
+.gk-prose p {
+  color: var(--gk-text-dim);
+}
+.gk-prose strong {
+  color: var(--gk-text);
+  font-weight: 600;
+}
+.gk-prose a {
+  color: rgba(var(--gk-amber), 0.95);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(var(--gk-amber), 0.4);
+  transition: text-decoration-color 0.15s ease;
+}
+.gk-prose a:hover {
+  text-decoration-color: rgba(var(--gk-amber), 0.9);
+}
+.gk-prose ul {
+  list-style: none;
+  padding: 0;
+  margin-top: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.gk-prose ul li {
+  position: relative;
+  padding-left: var(--s5);
+  color: var(--gk-text-dim);
+}
+.gk-prose ul li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(var(--gk-amber), 0.85);
+}
+.gk-prose ul li strong {
+  color: var(--gk-text);
+}
+
+/* Explainer cards — the structured bits (bias axes, the three rating layers)
+ * rendered as a restrained grid so they read as a system, not a wall of text. */
+.gk-doc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s5);
+}
+.gk-doc-card {
+  background: var(--gk-card-bg);
+  border: 1px solid var(--gk-card-border);
+  border-radius: var(--r-md);
+  padding: var(--s5);
+  box-shadow: var(--gk-shadow);
+}
+.gk-doc-card h3 {
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  margin: 0 0 var(--s2);
+  color: var(--gk-text);
+}
+.gk-doc-card p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--gk-text-dim);
+  line-height: var(--lh-body);
+}
+.gk-doc-card .gk-doc-card-kicker {
+  display: block;
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(var(--gk-amber), 0.9);
+  margin-bottom: var(--s2);
+}
+
+/* Callout — a bordered note. Neutral by default; `.is-warn` (amber) for the
+ * legal-draft notice, so it's clearly visible without shouting. */
+.gk-doc-note {
+  border: 1px solid var(--gk-card-border);
+  border-left: 3px solid rgba(var(--gk-amber), 0.55);
+  background: rgba(var(--gk-amber), 0.04);
+  border-radius: var(--r-sm);
+  padding: var(--s4) var(--s5);
+  margin-top: var(--s5);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+  color: var(--gk-text-dim);
+}
+.gk-doc-note strong {
+  color: var(--gk-text);
+}
+.gk-doc-note.is-warn {
+  border-left-color: rgba(var(--gk-amber), 0.95);
+  background: rgba(var(--gk-amber), 0.07);
+}
+.gk-doc-note-label {
+  display: block;
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: rgba(var(--gk-amber), 0.95);
+  margin-bottom: var(--s2);
+}
+
+/* A prominent mailto / call-to-action button for the Contact page. */
+.gk-doc-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  padding: var(--s3) var(--s5);
+  border-radius: var(--r-pill);
+  background: rgba(var(--gk-amber), 0.95);
+  color: #201a0c;
+  font-family: var(--gk-font-head);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.2px;
+  text-decoration: none;
+  box-shadow: var(--gk-shadow);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.gk-doc-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--gk-shadow-hi);
+}
+/* The CTA lives inside .gk-prose, whose `a` rule (higher specificity than the
+ * single .gk-doc-cta class) would otherwise repaint the dark button ink amber —
+ * pin the ink + kill the underline here so the button stays legible. */
+.gk-prose .gk-doc-cta,
+.gk-prose .gk-doc-cta:hover {
+  color: #201a0c;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .gk-doc-cards {
+    grid-template-columns: 1fr;
+  }
+}
