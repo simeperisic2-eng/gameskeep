@@ -16,6 +16,13 @@ import { recordConsent } from '../gdpr/service';
  *   - an ANONYMOUS subscriber gets the identical treatment carried on the
  *     subscription row (versioned opt-in + coarsened ip + unsubscribe token).
  * Real sending is I8; here we only capture and honour unsubscribe.
+ *
+ * [[OWNER-TODO: upgrade to DOUBLE opt-in when real email sending lands (I8) —
+ * subscribe should create a PENDING row (active=false) + email a hashed confirm
+ * token; record the marketing consent only on CONFIRM; keep the unsubscribe token
+ * hashed at rest. Single opt-in is an accepted demo simplification (no sends), but
+ * do NOT enable real sends without double opt-in + edge rate-limit/captcha —
+ * otherwise it's a list-bombing / subscribe-a-victim vector.]]
  */
 
 // [[OWNER-TODO: set the real current marketing-consent version string (+ the

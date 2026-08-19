@@ -13,10 +13,9 @@ import { actorOf, sendError } from './http';
  */
 function sendAwardAdminError(reply: FastifyReply, err: unknown): void {
   if (err instanceof AwardError) {
-    // phase_guard is a precondition failure (e.g. voting before publish/window).
-    reply
-      .code(err.code === 'phase_guard' ? 409 : 400)
-      .send({ error: err.code, message: err.message });
+    // phase_guard / needs_confirm are precondition conflicts (409); others 400.
+    const conflict = err.code === 'phase_guard' || err.code === 'needs_confirm';
+    reply.code(conflict ? 409 : 400).send({ error: err.code, message: err.message });
     return;
   }
   sendError(reply, err);
@@ -40,8 +39,8 @@ export async function registerAwardAdminRoutes(admin: FastifyInstance): Promise<
   // Opening `voting` requires publish + a window; entering `reveal` auto-decides.
   admin.post<{ Params: { id: string } }>('/awards/editions/:id/phase', async (req, reply) => {
     try {
-      const { phase } = awardPhaseInput.parse(req.body);
-      const result = await setEditionPhase(req.params.id, phase, actorOf(req));
+      const { phase, confirm } = awardPhaseInput.parse(req.body);
+      const result = await setEditionPhase(req.params.id, phase, actorOf(req), confirm);
       if (!result) {
         reply.code(404).send({ error: 'not_found', message: 'Unknown award edition.' });
         return;

@@ -1,13 +1,14 @@
 import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getComments, getGame, type GameDetail } from '@/lib/public-api';
+import { getComments, getGame, getGameAwardWins, type GameDetail } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
 import { truncateWords } from '@/lib/format';
 import { breadcrumbLd, videoGameLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { CoverArt } from '../../_components/CoverArt';
 import { FollowButton } from '../../_components/FollowButton';
+import { AwardBadges } from '../../_components/AwardBadges';
 import { RatingInput } from '../../_components/RatingInput';
 import { Comments } from '../../_components/Comments';
 import { RatingBlock } from '../../_components/RatingBlock';
@@ -139,6 +140,9 @@ export default async function GamePage({
   const contentFlags =
     game.contentFlags && hasContentFlagData(game.contentFlags) ? game.contentFlags : null;
 
+  // Award wins (decided, published editions only) — the game-page winner badge.
+  const awardWins = await getGameAwardWins(game.slug);
+
   return (
     <>
       <JsonLd data={jsonLd} />
@@ -163,6 +167,7 @@ export default async function GamePage({
               <span className={`gk-status gk-status-game-${game.status}`}>{statusLabel}</span>
               {game.series ? <span className="gk-chip">{game.series}</span> : null}
             </div>
+            <AwardBadges wins={awardWins} />
             <div className="gk-title-row">
               <h1 className="gk-game-title">{game.name}</h1>
               <FollowButton entityType="game" slug={game.slug} />

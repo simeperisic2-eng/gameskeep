@@ -36,6 +36,16 @@
  *  24.  analytics is correct + leak-proof (voters/votes/subscribers, no identity)
  *  25.  account deletion scrubs the subscription (the email is PII)
  *
+ *  Slice 3 hardening (owner security review)
+ *  26.  a BACKWARD phase move (reopening a decided vote) needs explicit confirm
+ *  27.  a published-but-pre-voting edition is Coming-Soon; its tally 404s (the
+ *       classifier/dispatcher visibility leak is closed — no nominee/count leak)
+ *  28.  phase transitions are ADMINS-ONLY (a moderator is 403)
+ *  29.  strict year parse rejects lax input ("2026abc" → 400, not coerced)
+ *  30.  retract is window-gated (finding M1): no nominee leak via the DELETE
+ *       path pre-voting, and votes are FROZEN once the window closes (a decided
+ *       result can't be flipped by a post-close retraction)
+ *
  * Run after `npm run demo:up`: `npm run verify:i7`.
  */
 import { execSync } from 'node:child_process';
@@ -589,9 +599,110 @@ async function main() {
     `status ${del.status} subsAfter=${vsSubsAfter}`,
   );
 
-  // ── cleanup: put the throwaway editions back to unpublished/announce ─────────
-  await patchEdition(edId, { phase: 'announce', isPublished: false });
-  await patchEdition(edId2, { phase: 'announce', isPublished: false });
+  // ════════════════════════ Slice 3 hardening (owner security review) ═════════
+  const edYear = sqlOne(`SELECT year FROM award_editions WHERE id='${edId}'`);
+  const phaseApi = (id, body, who) =>
+    who
+      ? api(BACK, `/admin/api/awards/editions/${id}/phase`, {
+          method: 'POST',
+          jar: who.jar,
+          csrf: who.csrf,
+          body,
+        })
+      : api(BACK, `/admin/api/awards/editions/${id}/phase`, { method: 'POST', headers: SVC, body });
+
+  // ── 26. a BACKWARD phase move needs explicit confirm (reopening a decided vote)
+  // edId is in 'reveal' (check 23); reveal → voting is backward.
+  const backNo = await phaseApi(edId, { phase: 'voting' });
+  const backYes = await phaseApi(edId, { phase: 'voting', confirm: true });
+  check(
+    '26. Backward phase move needs confirm (safe reopen of a decided vote)',
+    backNo.status === 409 && backNo.json?.error === 'needs_confirm' && backYes.status === 200,
+    `noConfirm=${backNo.status}/${backNo.json?.error} confirm=${backYes.status}`,
+  );
+
+  // ── 27. published-but-pre-voting hides nominees; tally 404 (the leak fix) ────
+  await phaseApi(edId, { phase: 'nominations', confirm: true }); // published, pre-voting
+  const soon = await api(BACK, `/awards/editions/${edYear}`);
+  const tallyGated = await api(BACK, `/awards/categories/${ecId}/tally`);
+  check(
+    '27. Published-but-pre-voting is Coming-Soon; tally 404 (no nominee leak)',
+    soon.json?.data?.edition?.comingSoon === true &&
+      (soon.json?.data?.categories?.length ?? 0) === 0 &&
+      tallyGated.status === 404,
+    `comingSoon=${soon.json?.data?.edition?.comingSoon} cats=${soon.json?.data?.categories?.length} tally=${tallyGated.status}`,
+  );
+
+  // ── 28. phase transitions are ADMINS-ONLY (a moderator is 403) ──────────────
+  cleanEmailThrottle();
+  const mod = await makeVerified('mod');
+  const modRoleId = (await api(BACK, '/admin/api/roles', { headers: SVC })).json?.data?.find(
+    (r) => r.key === 'moderator',
+  )?.id;
+  await api(BACK, `/admin/api/users/${mod.id}`, {
+    method: 'PATCH',
+    headers: SVC,
+    body: { roleId: modRoleId },
+  });
+  const modPhase = await phaseApi(edId, { phase: 'reveal', confirm: true }, mod);
+  check(
+    '28. Phase transition is admins-only (a moderator → 403)',
+    modPhase.status === 403,
+    `moderator phase → ${modPhase.status}`,
+  );
+
+  // ── 29. strict year parse (rejects lax "2026abc" instead of coercing to 2026) ─
+  const badYear = await api(BACK, '/awards/editions/2026abc');
+  check(
+    '29. Strict year parse rejects non-numeric input',
+    badYear.status === 400,
+    `status ${badYear.status}`,
+  );
+
+  // ── 30. retract is gated to the OPEN voting window (finding M1) ──────────────
+  // (a) retract on a NON-public (pre-voting) edition → 409, and NO nominee leak
+  //     (the DELETE twin of the tally leak). edId is in 'nominations' from #27.
+  const retPre = await api(BACK, `/awards/categories/${ecId}/vote`, {
+    method: 'DELETE',
+    jar: v1.jar,
+    csrf: v1.csrf,
+  });
+  const preLeak = (retPre.json?.data?.tally?.nominees ?? []).length;
+  // (b) open voting, cast, CLOSE the window, then retract → 409 and the vote is
+  //     FROZEN (still present) — a decided result can't be flipped by retracting.
+  cleanEmailThrottle();
+  const ret = await makeVerified('ret');
+  await patchEdition(edId, { isPublished: true, votingOpensAt: past, votingClosesAt: future });
+  await phaseApi(edId, { phase: 'voting' }); // nominations → voting (forward, no confirm)
+  await api(BACK, `/awards/categories/${ecId}/vote`, {
+    method: 'POST',
+    jar: ret.jar,
+    csrf: ret.csrf,
+    body: { nominationId: nomA },
+  });
+  await patchEdition(edId, { votingClosesAt: past }); // close the window
+  const retClosed = await api(BACK, `/awards/categories/${ecId}/vote`, {
+    method: 'DELETE',
+    jar: ret.jar,
+    csrf: ret.csrf,
+  });
+  const frozen = Number(
+    sqlOne(
+      `SELECT count(*) FROM award_votes WHERE edition_category_id='${ecId}' AND user_id='${ret.id}'`,
+    ),
+  );
+  check(
+    '30. Retract is window-gated (no pre-voting leak; votes frozen after close)',
+    retPre.status === 409 && preLeak === 0 && retClosed.status === 409 && frozen === 1,
+    `pre=${retPre.status}/leak${preLeak} afterClose=${retClosed.status}/kept${frozen}`,
+  );
+
+  // ── cleanup: DELETE the throwaway editions (cascade removes their categories,
+  // nominations, votes, outcomes) so they never pollute the public "current"
+  // edition / archive. Leaving them merely reset would make a high-year test
+  // edition the site's current one.
+  await api(BACK, `/admin/api/award-editions/${edId}`, { method: 'DELETE', headers: SVC });
+  await api(BACK, `/admin/api/award-editions/${edId2}`, { method: 'DELETE', headers: SVC });
 
   print();
 }

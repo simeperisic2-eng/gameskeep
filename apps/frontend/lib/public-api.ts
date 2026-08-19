@@ -648,3 +648,101 @@ export async function getSitemapGames(): Promise<SitemapTopic[]> {
 export async function getSitemapSources(): Promise<SitemapTopic[]> {
   return (await getSitemap()).sources;
 }
+
+// ── awards (I7) ──────────────────────────────────────────────────────────────
+export interface AwardEdition {
+  year: number;
+  name: string;
+  phase: string;
+  isPublished: boolean;
+  description: string | null;
+  votingOpensAt: string | null;
+  votingClosesAt: string | null;
+  comingSoon: boolean;
+}
+export interface AwardNominee {
+  nominationId: string;
+  name: string;
+  slug: string;
+  blurb: string | null;
+  scores: { our: number | null; critics: number | null; community: number | null } | null;
+  disconnect: { value: number; band: string | null } | null;
+  votes: number;
+  weightSum: number;
+  ratio: number;
+  isCommunityWinner: boolean;
+  isCriticsWinner: boolean;
+}
+export interface AwardCategory {
+  editionCategoryId: string;
+  label: string;
+  kind: string;
+  sponsor: { label: string; sold: boolean } | null;
+  totalVotes: number;
+  nominees: AwardNominee[];
+}
+export interface AwardEditionView {
+  edition: AwardEdition;
+  categories: AwardCategory[];
+}
+export interface AwardArchiveEntry {
+  year: number;
+  name: string;
+  phase: string;
+}
+export interface GameAwardWin {
+  year: number;
+  editionName: string;
+  categoryLabel: string;
+  outcomeType: string;
+}
+
+/** The current edition (highest year) — Coming-Soon meta until staff publish. */
+export async function getAwardsCurrent(): Promise<AwardEditionView | null> {
+  try {
+    const res = await fetch(`${backendUrl}/awards/current`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: AwardEditionView | null };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** A specific edition by year (archive detail). */
+export async function getAwardsEdition(year: number): Promise<AwardEditionView | null> {
+  try {
+    const res = await fetch(`${backendUrl}/awards/editions/${year}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: AwardEditionView | null };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The permanent archive index (published, decided editions). */
+export async function getAwardsArchive(): Promise<AwardArchiveEntry[]> {
+  try {
+    const res = await fetch(`${backendUrl}/awards/archive`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { data?: AwardArchiveEntry[] };
+    return body.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Award wins for a game (by slug) — the game-page winner badge. */
+export async function getGameAwardWins(slug: string): Promise<GameAwardWin[]> {
+  try {
+    const res = await fetch(`${backendUrl}/awards/game/${encodeURIComponent(slug)}/wins`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { data?: GameAwardWin[] };
+    return body.data ?? [];
+  } catch {
+    return [];
+  }
+}

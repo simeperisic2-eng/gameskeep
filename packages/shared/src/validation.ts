@@ -530,9 +530,11 @@ export const awardUnsubscribeInput = z.object({
   token: z.string().min(1).max(64),
 });
 
-/** Staff phase transition for an award edition (guarded in the service). */
+/** Staff phase transition for an award edition (guarded in the service).
+ * `confirm` is required to move BACKWARD (e.g. reopening a decided vote). */
 export const awardPhaseInput = z.object({
   phase: z.enum(AWARD_PHASES),
+  confirm: z.boolean().optional().default(false),
 });
 
 // ── game data-source / unmatched queue (I2) ──────────────────────────────────

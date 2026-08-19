@@ -10,8 +10,13 @@ import { sendError } from '../admin/http';
 import { allowWrite } from '../community/rate-limit';
 import {
   AwardError,
+  awardWinsForGame,
   castVote,
+  categoryIsPublic,
   categoryTally,
+  currentEditionView,
+  editionViewByYear,
+  listArchive,
   myVote,
   retractVote,
   type AwardActor,
@@ -116,12 +121,19 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
         },
       );
 
-      // The live tally (public) + the signed-in reader's own vote overlay.
+      // The live tally (public) + the signed-in reader's own vote overlay. Gated
+      // on the SAME visibility predicate as the edition view (isAwardPublic) so a
+      // pre-voting / unpublished category can never leak its nominees or counts,
+      // even to someone who already knows its id — 404 otherwise.
       c.get<{ Params: { editionCategoryId: string } }>(
         '/categories/:editionCategoryId/tally',
         async (req, reply) => {
           try {
             const { editionCategoryId } = req.params;
+            if (!(await categoryIsPublic(editionCategoryId))) {
+              reply.code(404).send({ error: 'not_found', message: 'No public tally here.' });
+              return;
+            }
             reply.send({
               data: {
                 tally: await categoryTally(editionCategoryId),
@@ -133,6 +145,45 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
           }
         },
       );
+
+      // ── public phase-aware reads (SSR) ──────────────────────────────────────
+      // The current edition (highest year) — Coming-Soon meta until published.
+      c.get('/current', async (_req, reply) => {
+        try {
+          reply.send({ data: await currentEditionView() });
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
+      // The permanent archive index (published, decided editions).
+      c.get('/archive', async (_req, reply) => {
+        try {
+          reply.send({ data: await listArchive() });
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
+      // A specific edition by year (archive detail / deep link).
+      c.get<{ Params: { year: string } }>('/editions/:year', async (req, reply) => {
+        try {
+          // Strict: digits only (rejects "2026;DROP", "-5", "1e3" etc. outright).
+          if (!/^\d{1,4}$/.test(req.params.year)) {
+            reply.code(400).send({ error: 'bad_year', message: 'Year must be 1–4 digits.' });
+            return;
+          }
+          reply.send({ data: await editionViewByYear(Number.parseInt(req.params.year, 10)) });
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
+      // Award wins for a game (by slug) — the game-page winner badge.
+      c.get<{ Params: { slug: string } }>('/game/:slug/wins', async (req, reply) => {
+        try {
+          reply.send({ data: await awardWinsForGame(req.params.slug) });
+        } catch (err) {
+          sendAwardError(reply, err);
+        }
+      });
 
       // Awards "notify me" — EXPLICIT-opt-in marketing subscribe (anonymous or
       // signed-in; a signed-in subscribe also records the canonical user consent).
