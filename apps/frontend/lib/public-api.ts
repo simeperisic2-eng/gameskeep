@@ -733,6 +733,54 @@ export async function getAwardsArchive(): Promise<AwardArchiveEntry[]> {
   }
 }
 
+// ── ads / promotions (I8) ────────────────────────────────────────────────────
+export interface AdPlacementView {
+  headline: string;
+  body: string | null;
+  ctaUrl: string | null;
+  ctaLabel: string | null;
+  advertiser: string;
+}
+export interface AdSlotView {
+  slotKey: string;
+  fallback: string; // 'ad' | 'organic' | 'hide'
+  format: string;
+  placement: AdPlacementView | null;
+}
+export interface GamePromotion {
+  advertiser: string;
+  headline: string;
+  ctaUrl: string | null;
+}
+
+/** What an on-site AdSlot should render (live placement + fallback). */
+export async function getAdSlot(key: string): Promise<AdSlotView | null> {
+  try {
+    const res = await fetch(`${backendUrl}/public/adslot/${encodeURIComponent(key)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: AdSlotView | null };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** An active promotion for a game (by slug) — the game-page Promoted badge. */
+export async function getGamePromotion(slug: string): Promise<GamePromotion | null> {
+  try {
+    const res = await fetch(`${backendUrl}/public/promotion/${encodeURIComponent(slug)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: GamePromotion | null };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Award wins for a game (by slug) — the game-page winner badge. */
 export async function getGameAwardWins(slug: string): Promise<GameAwardWin[]> {
   try {

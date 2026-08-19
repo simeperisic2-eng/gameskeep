@@ -5743,3 +5743,137 @@ a.gk-tile-cover {
     gap: var(--s2);
   }
 }
+
+/* =====================  ADS / PROMOTIONS (I8)  ==============================
+ * A sold slot renders the advertiser's creative with a MANDATORY Promoted label
+ * (transparency rule — as prominent as a bias flag). Creative is UGC → escaped. */
+.gk-slot-promoted {
+  display: block;
+  place-items: initial;
+  min-height: 0;
+  text-align: left;
+  letter-spacing: normal;
+  font-weight: 400;
+  border: 1px solid var(--gk-card-border);
+  border-left: 3px solid rgba(var(--gk-amber), 0.9);
+  background: var(--gk-card-bg);
+  padding: var(--s4) var(--s5);
+  color: var(--gk-text);
+}
+.gk-slot-flag,
+.gk-promoted-flag {
+  display: inline-block;
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #201a0c;
+  background: rgba(var(--gk-amber), 0.95);
+  border-radius: var(--r-sm);
+  padding: 2px var(--s2);
+}
+.gk-slot-promo {
+  margin-top: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.gk-slot-promo-headline {
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  color: var(--gk-text);
+}
+.gk-slot-promo-body {
+  margin: 0;
+  color: var(--gk-text-dim);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-body);
+}
+.gk-slot-promo-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s1);
+}
+.gk-slot-promo-by {
+  font-size: var(--fs-xs);
+  color: var(--gk-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.gk-slot-promo-cta {
+  font-family: var(--gk-font-head);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: rgba(var(--gk-amber), 0.95);
+  text-decoration: none;
+  border: 1px solid rgba(var(--gk-amber), 0.5);
+  border-radius: var(--r-pill);
+  padding: var(--s1) var(--s4);
+}
+.gk-slot-promo-cta:hover {
+  background: rgba(var(--gk-amber), 0.12);
+}
+
+/* Promoted badge on a game page (labeled as prominently as a bias flag). */
+.gk-promoted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s3) 0 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-pill);
+  background: rgba(var(--gk-amber), 0.1);
+  border: 1px solid rgba(var(--gk-amber), 0.45);
+  text-decoration: none;
+  color: var(--gk-text);
+}
+.gk-promoted-text {
+  font-size: var(--fs-sm);
+  color: var(--gk-text-dim);
+}
+
+/* Promote-your-game enquiry form. */
+.gk-promote-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  max-width: 480px;
+  margin-top: var(--s4);
+}
+.gk-promote-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.gk-promote-field span {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--gk-text);
+}
+.gk-promote-field input,
+.gk-promote-field textarea {
+  width: 100%;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--gk-card-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--gk-text);
+  font-size: var(--fs-body);
+  font-family: var(--gk-font);
+  resize: vertical;
+}
+.gk-promote-field input:focus,
+.gk-promote-field textarea:focus {
+  outline: none;
+  border-color: rgba(var(--gk-amber), 0.55);
+}
+.gk-promote-form .gk-doc-cta {
+  align-self: flex-start;
+  border: none;
+  cursor: pointer;
+}

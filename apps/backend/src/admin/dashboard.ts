@@ -48,7 +48,13 @@ export interface DashboardData {
   };
   topTopics: { slug: string; title: string; articleCount: number }[];
   topSources: { slug: string; name: string; articleCount: number }[];
-  activity: { windowDays: number; ratings: number; comments: number; votes: number; newUsers: number };
+  activity: {
+    windowDays: number;
+    ratings: number;
+    comments: number;
+    votes: number;
+    newUsers: number;
+  };
   pipeline: {
     articlesTotal: number;
     articlesEmbedded: number;
@@ -64,17 +70,25 @@ export interface DashboardData {
 export async function getDashboard(): Promise<DashboardData> {
   const since = new Date(Date.now() - 7 * 86_400_000);
 
-  const [topicCount, articleCount, gameCount, sourceCount, userCount, commentCount, ratingCount, subscriberCount] =
-    await Promise.all([
-      countOf(topics),
-      countOf(articles),
-      countOf(games),
-      countOf(sources),
-      countOf(users),
-      countOf(comments),
-      countOf(gameUserRatings),
-      countOf(newsletterSubscriptions, eq(newsletterSubscriptions.active, true)),
-    ]);
+  const [
+    topicCount,
+    articleCount,
+    gameCount,
+    sourceCount,
+    userCount,
+    commentCount,
+    ratingCount,
+    subscriberCount,
+  ] = await Promise.all([
+    countOf(topics),
+    countOf(articles),
+    countOf(games),
+    countOf(sources),
+    countOf(users),
+    countOf(comments),
+    countOf(gameUserRatings),
+    countOf(newsletterSubscriptions, eq(newsletterSubscriptions.active, true)),
+  ]);
 
   const topTopics = (
     await db

@@ -13,6 +13,7 @@ import {
   getUpcomingData,
 } from './queries';
 import { getPublicProfile } from './profile';
+import { promotionForGame, slotPublicView } from '../ads/service';
 import { sendError } from '../admin/http';
 
 /**
@@ -146,6 +147,26 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
             return;
           }
           reply.send({ data: profile });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // What an on-site AdSlot renders (I8 Slice 2): the live placement's creative
+      // (leak-proof — no price/contact/notes) + the slot's unsold fallback. The
+      // creative is UGC and is rendered ESCAPED by the frontend.
+      pub.get<{ Params: { key: string } }>('/adslot/:key', async (req, reply) => {
+        try {
+          reply.send({ data: await slotPublicView(req.params.key) });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // An active promotion for a game (by slug) — the game-page Promoted badge.
+      pub.get<{ Params: { slug: string } }>('/promotion/:slug', async (req, reply) => {
+        try {
+          reply.send({ data: await promotionForGame(req.params.slug) });
         } catch (err) {
           sendError(reply, err);
         }

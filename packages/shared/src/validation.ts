@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  AD_PLACEMENT_STATUSES,
+  AD_SLOT_FALLBACKS,
   AI_ASSET_FLAGS,
   ARTICLE_ORIGINS,
   ARTICLE_TYPES,
@@ -536,6 +538,50 @@ export const awardPhaseInput = z.object({
   phase: z.enum(AWARD_PHASES),
   confirm: z.boolean().optional().default(false),
 });
+
+// ── ads / promotions (I8 Slice 2) ────────────────────────────────────────────
+export const adSlotCreate = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and hyphens only'),
+  label: shortText,
+  page: z.string().trim().min(1).max(60),
+  format: z.string().trim().max(40).default('card'),
+  fallback: z.enum(AD_SLOT_FALLBACKS).default('ad'),
+  isActive: z.boolean().default(true),
+  sort,
+});
+
+/** An http(s) URL for an advertiser CTA (no javascript:/data: — anti-XSS). */
+const httpUrl = z
+  .string()
+  .trim()
+  .max(2000)
+  .refine((u) => /^https?:\/\//i.test(u), 'Must be an http(s) URL');
+
+/** Advertiser-supplied creative is UGC: validated here, stored raw, escaped on render. */
+export const adPlacementCreate = z.object({
+  slotId: uuid,
+  advertiserName: shortText,
+  advertiserContact: z.string().trim().max(200).optional(),
+  headline: z.string().trim().min(1).max(120),
+  body: z.string().trim().max(400).optional(),
+  ctaUrl: httpUrl.optional(),
+  ctaLabel: z.string().trim().max(60).optional(),
+  promotedSubjectId: uuid.optional(),
+  status: z.enum(AD_PLACEMENT_STATUSES).default('draft'),
+  startsAt: z.coerce.date().optional(),
+  endsAt: z.coerce.date().optional(),
+  priceCents: z.number().int().min(0).max(100_000_000).optional(),
+  currency: z.string().trim().length(3).default('USD'),
+  notes: z.string().trim().max(2000).optional(),
+});
+
+/** Admin sets a placement's status manually (after off-site payment). */
+export const adStatusInput = z.object({ status: z.enum(AD_PLACEMENT_STATUSES) });
 
 // ── game data-source / unmatched queue (I2) ──────────────────────────────────
 /**

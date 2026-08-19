@@ -203,7 +203,7 @@ export default async function SourcePage({
               </section>
             ) : null}
 
-            <AdSlot />
+            <AdSlot slotKey="source-page" />
           </aside>
 
           {/* COVERAGE PROFILE — the bias signals in this outlet's coverage. */}

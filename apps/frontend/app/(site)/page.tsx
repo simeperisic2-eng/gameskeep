@@ -114,7 +114,7 @@ export default async function HomePage(): Promise<React.JSX.Element> {
           <MainFeed topics={feed} />
           <aside className="gk-side">
             <LatestNews articles={latest} />
-            <AdSlot />
+            <AdSlot slotKey="home" />
           </aside>
         </div>
       </section>

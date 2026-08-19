@@ -3,6 +3,7 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from './client';
 import { PASSWORD_ALGO, hashPassword } from '../auth/password';
 import {
+  adSlots,
   articles,
   articleSubjects,
   articleTopics,
@@ -154,7 +155,11 @@ export async function seedDemo(): Promise<void> {
   const moderatorRole = await ensure(roles, roleDefs[3]!, eq(roles.key, 'moderator'));
   const adminRole = await ensure(roles, roleDefs[4]!, eq(roles.key, 'admin'));
   const demoStaff = [
-    { username: 'demo-moderator', displayName: 'Demo Moderator', roleId: moderatorRole.id as string },
+    {
+      username: 'demo-moderator',
+      displayName: 'Demo Moderator',
+      roleId: moderatorRole.id as string,
+    },
     { username: 'demo-admin', displayName: 'Demo Admin', roleId: adminRole.id as string },
     { username: 'demo-owner', displayName: 'Demo Owner', roleId: ownerRole.id as string },
   ];
@@ -175,6 +180,21 @@ export async function seedDemo(): Promise<void> {
       passwordAlgo: PASSWORD_ALGO,
     });
   }
+
+  // ── ad slots (I8 — the on-site inventory; empty in demo, so each shows "AD") ─
+  const slotDefs = [
+    { key: 'home', label: 'Homepage footer', page: 'home', format: 'banner' },
+    { key: 'game-page', label: 'Game page', page: 'game', format: 'card' },
+    { key: 'games', label: 'Games discovery', page: 'games', format: 'banner' },
+    { key: 'catalog', label: 'Catalog / browse', page: 'catalog', format: 'banner' },
+    { key: 'sources', label: 'Sources index', page: 'sources', format: 'banner' },
+    { key: 'source-page', label: 'Source page', page: 'source', format: 'card' },
+    { key: 'upcoming', label: 'Upcoming', page: 'upcoming', format: 'card' },
+    { key: 'awards', label: 'Awards', page: 'awards', format: 'banner' },
+    { key: 'awards-year', label: 'Awards archive', page: 'awards', format: 'banner' },
+  ];
+  for (const s of slotDefs)
+    await ensure(adSlots, { ...s, fallback: 'ad', isActive: true }, eq(adSlots.key, s.key));
 
   // ── a couple of games (Subject specialization) ────────────────────────────
   async function ensureGame(opts: {

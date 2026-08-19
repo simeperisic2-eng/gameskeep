@@ -79,7 +79,7 @@ export default async function UpcomingPage(): Promise<React.JSX.Element> {
         )}
 
         <div className="gk-catalog-foot">
-          <AdSlot />
+          <AdSlot slotKey="upcoming" />
         </div>
       </div>
     </>

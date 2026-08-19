@@ -2,6 +2,8 @@ import { eq } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
 import {
+  AD_PLACEMENT_STATUSES,
+  AD_SLOT_FALLBACKS,
   AI_ASSET_FLAGS,
   ARTICLE_ORIGINS,
   ARTICLE_TYPES,
@@ -19,6 +21,8 @@ import {
   VIDEO_PROVIDERS,
 } from '@gameskeep/shared/constants';
 import {
+  adPlacementCreate,
+  adSlotCreate,
   articleCreate,
   articleUpdate,
   awardCategoryCreate,
@@ -538,6 +542,51 @@ export const RESOURCES: ResourceDef[] = [
       F.ref('editionCategoryId', 'award-edition-categories', true),
       F.enum('outcomeType', AWARD_OUTCOME_TYPES, true),
       F.ref('nominationId', 'award-nominations', true),
+    ],
+  },
+
+  // ads / promotions (I8) — the slot inventory + advertiser placements. Placement
+  // creative is UGC (validated here, stored raw, escaped on public render); status
+  // is admin-set (no payment gateway).
+  {
+    name: 'ad-slots',
+    label: 'Ad slots',
+    table: schema.adSlots,
+    create: adSlotCreate,
+    update: adSlotCreate.partial(),
+    labelColumn: 'label',
+    fields: [
+      F.text('key', true),
+      F.text('label', true),
+      F.text('page', true),
+      F.text('format'),
+      F.enum('fallback', AD_SLOT_FALLBACKS),
+      F.bool('isActive'),
+      F.num('sort'),
+    ],
+  },
+  {
+    name: 'ad-placements',
+    label: 'Ad placements',
+    table: schema.adPlacements,
+    create: adPlacementCreate,
+    update: adPlacementCreate.partial(),
+    labelColumn: 'advertiserName',
+    fields: [
+      F.ref('slotId', 'ad-slots', true),
+      F.text('advertiserName', true),
+      F.text('advertiserContact'),
+      F.text('headline', true),
+      F.area('body'),
+      F.text('ctaUrl'),
+      F.text('ctaLabel'),
+      F.ref('promotedSubjectId', 'subjects'),
+      F.enum('status', AD_PLACEMENT_STATUSES),
+      F.dt('startsAt'),
+      F.dt('endsAt'),
+      F.num('priceCents'),
+      F.text('currency'),
+      F.area('notes'),
     ],
   },
 

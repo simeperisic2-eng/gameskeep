@@ -11,6 +11,7 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
       { label: 'About', href: '/about' },
       { label: 'Methodology', href: '/methodology' },
       { label: 'Contact', href: '/contact' },
+      { label: 'Promote your game', href: '/promote' },
     ],
   },
   {

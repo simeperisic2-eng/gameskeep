@@ -153,7 +153,7 @@ export default async function BrowsePage({
         )}
 
         <div className="gk-catalog-foot">
-          <AdSlot />
+          <AdSlot slotKey="catalog" />
         </div>
       </div>
     </>

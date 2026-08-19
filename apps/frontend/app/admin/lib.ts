@@ -86,6 +86,42 @@ export async function getDashboard(): Promise<DashboardData> {
   return res.data;
 }
 
+// ── ads / promotions (I8 Slice 2) ─────────────────────────────────────────────
+export interface AdInventoryRow {
+  slotKey: string;
+  label: string;
+  page: string;
+  format: string;
+  fallback: string;
+  state: 'active' | 'scheduled' | 'free';
+  placement: {
+    advertiser: string;
+    status: string;
+    startsAt: string | null;
+    endsAt: string | null;
+  } | null;
+}
+export interface AdSlotAnalytics {
+  slotKey: string;
+  label: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  placements: number;
+  occupied: boolean;
+}
+export interface AdAnalytics {
+  slots: AdSlotAnalytics[];
+  totals: { slots: number; free: number; impressions: number; clicks: number };
+}
+
+export async function getAdInventory(): Promise<AdInventoryRow[]> {
+  return (await adminGet<{ data: AdInventoryRow[] }>('/ads/inventory')).data;
+}
+export async function getAdAnalytics(): Promise<AdAnalytics> {
+  return (await adminGet<{ data: AdAnalytics }>('/ads/analytics')).data;
+}
+
 export async function listResource(name: string): Promise<Row[]> {
   const res = await adminGet<{ data: Row[] }>(`/${name}`);
   return res.data;

@@ -99,7 +99,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
         )}
 
         <div className="gk-catalog-foot">
-          <AdSlot />
+          <AdSlot slotKey="sources" />
         </div>
       </div>
     </>

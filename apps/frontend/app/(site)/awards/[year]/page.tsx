@@ -83,7 +83,7 @@ export default async function AwardsYearPage({
         </p>
 
         <div className="gk-aw-foot">
-          <AdSlot />
+          <AdSlot slotKey="awards-year" />
         </div>
       </div>
     </>

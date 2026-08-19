@@ -1,7 +1,13 @@
 import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getComments, getGame, getGameAwardWins, type GameDetail } from '@/lib/public-api';
+import {
+  getComments,
+  getGame,
+  getGameAwardWins,
+  getGamePromotion,
+  type GameDetail,
+} from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
 import { truncateWords } from '@/lib/format';
 import { breadcrumbLd, videoGameLd } from '@/lib/schema';
@@ -9,6 +15,7 @@ import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { CoverArt } from '../../_components/CoverArt';
 import { FollowButton } from '../../_components/FollowButton';
 import { AwardBadges } from '../../_components/AwardBadges';
+import { PromotedBadge } from '../../_components/PromotedBadge';
 import { RatingInput } from '../../_components/RatingInput';
 import { Comments } from '../../_components/Comments';
 import { RatingBlock } from '../../_components/RatingBlock';
@@ -142,6 +149,8 @@ export default async function GamePage({
 
   // Award wins (decided, published editions only) — the game-page winner badge.
   const awardWins = await getGameAwardWins(game.slug);
+  // An active paid promotion for this game (I8) — always labeled "Promoted".
+  const promotion = await getGamePromotion(game.slug);
 
   return (
     <>
@@ -168,6 +177,7 @@ export default async function GamePage({
               {game.series ? <span className="gk-chip">{game.series}</span> : null}
             </div>
             <AwardBadges wins={awardWins} />
+            <PromotedBadge promotion={promotion} />
             <div className="gk-title-row">
               <h1 className="gk-game-title">{game.name}</h1>
               <FollowButton entityType="game" slug={game.slug} />
@@ -247,7 +257,7 @@ export default async function GamePage({
 
             <RelatedGames games={game.relatedGames} />
 
-            <AdSlot />
+            <AdSlot slotKey="game-page" />
           </aside>
 
           {game.rating ? (

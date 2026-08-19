@@ -402,6 +402,17 @@ export type AwardCategoryKind = (typeof AWARD_CATEGORY_KINDS)[number];
 export const AWARD_OUTCOME_TYPES = ['critics', 'community'] as const;
 export type AwardOutcomeType = (typeof AWARD_OUTCOME_TYPES)[number];
 
+// Ad / promotion placements (I8 §2.10). Status is ADMIN-SET after off-site
+// payment — there is no payment gateway (owner decision). `active` = live +
+// labeled Promoted.
+export const AD_PLACEMENT_STATUSES = ['draft', 'scheduled', 'active', 'ended'] as const;
+export type AdPlacementStatus = (typeof AD_PLACEMENT_STATUSES)[number];
+
+// A slot's unsold-fallback: show the demo "AD" box, render page-native organic
+// content, or hide entirely (never an empty "ad here" box — blueprint slot rule).
+export const AD_SLOT_FALLBACKS = ['ad', 'organic', 'hide'] as const;
+export type AdSlotFallback = (typeof AD_SLOT_FALLBACKS)[number];
+
 // `deleted` = an anonymize-and-tombstone account (I6 Slice 7, GDPR decision 7):
 // PII scrubbed, credibility fields frozen so aggregates stay honest, cannot log in.
 export const USER_STATUSES = ['active', 'suspended', 'banned', 'deleted'] as const;

@@ -154,7 +154,7 @@ export default async function AwardsPage(): Promise<React.JSX.Element> {
         ) : null}
 
         <div className="gk-aw-foot">
-          <AdSlot />
+          <AdSlot slotKey="awards" />
         </div>
       </div>
     </>

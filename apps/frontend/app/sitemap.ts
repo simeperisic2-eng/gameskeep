@@ -45,6 +45,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     },
     { url: `${siteUrl}/contact`, lastModified: now, changeFrequency: 'monthly', priority: 0.4 },
+    { url: `${siteUrl}/promote`, lastModified: now, changeFrequency: 'monthly', priority: 0.3 },
     // Awards hub (always) + each published, decided edition's winners page.
     { url: `${siteUrl}/awards`, lastModified: now, changeFrequency: 'daily', priority: 0.6 },
   ];

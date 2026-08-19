@@ -85,6 +85,13 @@
       "when": 1787094574005,
       "tag": "0011_i7_newsletter_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787169957150,
+      "tag": "0012_i8_ads",
+      "breakpoints": true
     }
   ]
 }

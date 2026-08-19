@@ -176,7 +176,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
         {/* The exhaustive grid, one click away (never forced on entry). */}
         <div className="gk-disco-foot">
           {browseAll}
-          <AdSlot />
+          <AdSlot slotKey="games" />
         </div>
       </div>
     </>

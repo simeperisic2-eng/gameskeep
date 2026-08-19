@@ -73,6 +73,15 @@ const NAV: {
     ],
   },
   {
+    title: 'Advertising',
+    minRank: 40,
+    items: [
+      { label: 'Inventory & analytics', href: '/admin/ads', minRank: 40 },
+      { label: 'Placements', href: '/admin/ad-placements', minRank: 40 },
+      { label: 'Ad slots', href: '/admin/ad-slots', minRank: 40 },
+    ],
+  },
+  {
     title: 'Config & lists',
     minRank: 40,
     items: [
