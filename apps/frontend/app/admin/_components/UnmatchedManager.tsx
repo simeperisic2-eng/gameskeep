@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { adminFetch } from '../_lib/adminFetch';
 
 interface QueueItem {
   id: string;
@@ -20,7 +21,7 @@ async function call(
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(`/admin/api/${path}`, {
+    const res = await adminFetch(`/admin/api/${path}`, {
       method: 'POST',
       headers: body ? { 'content-type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,

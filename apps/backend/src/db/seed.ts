@@ -1,6 +1,7 @@
 import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from './client';
+import { PASSWORD_ALGO, hashPassword } from '../auth/password';
 import {
   articles,
   articleSubjects,
@@ -139,6 +140,41 @@ export async function seedDemo(): Promise<void> {
     },
     eq(users.username, 'admin'),
   );
+
+  // ── demo STAFF logins (I8 Control Panel — session RBAC needs real logins) ──
+  // The Control Panel is gated by the logged-in staff's rank (mod < admin <
+  // owner), so the demo seeds one login per staff rank with a KNOWN demo password
+  // — the panel is usable offline with zero real secrets, and an operator can see
+  // each role get a different panel.
+  // [[OWNER-TODO: REMOVE (or rotate) these demo staff accounts before any public
+  // launch — username/password below are a documented NON-secret for the demo
+  // only. Real staff get real accounts; the owner sets a real password via
+  // `npm run set-owner-password`.]]
+  const DEMO_STAFF_PASSWORD = 'Demo-Panel-2026!';
+  const moderatorRole = await ensure(roles, roleDefs[3]!, eq(roles.key, 'moderator'));
+  const adminRole = await ensure(roles, roleDefs[4]!, eq(roles.key, 'admin'));
+  const demoStaff = [
+    { username: 'demo-moderator', displayName: 'Demo Moderator', roleId: moderatorRole.id as string },
+    { username: 'demo-admin', displayName: 'Demo Admin', roleId: adminRole.id as string },
+    { username: 'demo-owner', displayName: 'Demo Owner', roleId: ownerRole.id as string },
+  ];
+  for (const s of demoStaff) {
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.username, s.username))
+      .limit(1);
+    if (existing) continue; // don't re-hash on every boot
+    await db.insert(users).values({
+      username: s.username,
+      email: `${s.username}@gameskeep.local`,
+      displayName: s.displayName,
+      roleId: s.roleId,
+      isEmailVerified: true,
+      passwordHash: await hashPassword(DEMO_STAFF_PASSWORD),
+      passwordAlgo: PASSWORD_ALGO,
+    });
+  }
 
   // ── a couple of games (Subject specialization) ────────────────────────────
   async function ensureGame(opts: {

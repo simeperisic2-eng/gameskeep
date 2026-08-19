@@ -33,6 +33,7 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
   users: RANK.owner,
   roles: RANK.owner,
   // moderator — content moderation + the panel bootstrap read
+  dashboard: RANK.moderator, // Control Panel overview — every staff role sees it
   topics: RANK.moderator,
   articles: RANK.moderator,
   relations: RANK.moderator,

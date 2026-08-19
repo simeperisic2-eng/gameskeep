@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdminGameRating, RatingStatus, VoteWeightView } from '../lib';
+import { adminFetch } from '../_lib/adminFetch';
 
 interface Props {
   status: RatingStatus;
@@ -14,7 +15,7 @@ async function call(
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(`/admin/api/${path}`, {
+    const res = await adminFetch(`/admin/api/${path}`, {
       method,
       headers: body ? { 'content-type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,
@@ -59,7 +60,7 @@ export default function RatingsManager({ status, games }: Props) {
 
   async function loadVotes(gameId: string) {
     setVotes(null);
-    const res = await fetch(`/admin/api/ratings/game/${gameId}/votes`);
+    const res = await adminFetch(`/admin/api/ratings/game/${gameId}/votes`);
     const json = (await res.json().catch(() => ({}))) as {
       data?: { votes: VoteWeightView[] };
     };

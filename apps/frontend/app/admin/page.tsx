@@ -1,83 +1,125 @@
 import type { Metadata } from 'next';
-import { getMeta } from './lib';
+import { getDashboard, type DashboardData } from './lib';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Admin · GamesKeep', robots: { index: false } };
+export const metadata: Metadata = { title: 'Dashboard · Control Panel', robots: { index: false } };
 
-// Group resources for a tidier index (purely presentational).
-const GROUPS: { title: string; names: string[] }[] = [
-  { title: 'Content', names: ['topics', 'articles', 'games', 'subjects', 'sources'] },
-  {
-    title: 'Game details',
-    names: [
-      'game-reviews',
-      'game-critic-reviews',
-      'game-external-ratings',
-      'game-content-flags',
-      'game-videos',
-      'game-prices',
-      'game-system-requirements',
-      'game-player-counts',
-      'game-user-ratings',
-    ],
-  },
-  {
-    title: 'Awards',
-    names: ['award-editions', 'award-edition-categories', 'award-nominations', 'award-outcomes'],
-  },
-  { title: 'Users', names: ['users'] },
-  { title: 'Catalog (I2)', names: ['unmatched-games'] },
-  {
-    title: 'Lists (extensible)',
-    names: ['roles', 'user-levels', 'topic-types', 'source-types', 'badges', 'award-categories'],
-  },
-];
+const fmtDate = (iso: string | null): string =>
+  iso
+    ? new Intl.DateTimeFormat('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'UTC',
+      }).format(new Date(iso))
+    : '—';
 
-export default async function AdminHome() {
-  const meta = await getMeta();
-  const byName = new Map(meta.resources.map((r) => [r.name, r]));
+const pct = (n: number, d: number): string => (d > 0 ? `${Math.round((n / d) * 100)}%` : '—');
+
+function Stat({ label, value }: { label: string; value: number | string }): React.JSX.Element {
+  return (
+    <div className="gk-cp-stat">
+      <span className="gk-cp-stat-value">
+        {typeof value === 'number' ? value.toLocaleString('en-US') : value}
+      </span>
+      <span className="gk-cp-stat-label">{label}</span>
+    </div>
+  );
+}
+
+export default async function DashboardPage(): Promise<React.JSX.Element> {
+  const d: DashboardData = await getDashboard();
+  const c = d.counts;
 
   return (
-    <main className="gk-admin">
-      <header className="gk-admin-head">
-        <h1 className="gk-title" style={{ fontSize: 30 }}>
-          GamesKeep Admin
-        </h1>
-        <span className="gk-mode">GAME DATA · I2</span>
+    <div className="gk-cp-page">
+      <header className="gk-cp-page-head">
+        <h1 className="gk-cp-page-title">Dashboard</h1>
+        <p className="gk-cp-page-sub">
+          Aggregate, anonymous overview — no per-user tracking. Generated {fmtDate(d.generatedAt)}.
+        </p>
       </header>
-      <p className="gk-sub">
-        Basic CRUD for every model (the polished Control Panel is I8).{' '}
-        <a href="/admin/relations">Manage relations →</a>{' '}
-        <a href="/admin/unmatched">Unmatched games →</a>{' '}
-        <a href="/admin/clustering">Topics &amp; clustering →</a>{' '}
-        <a href="/admin/bias">Bias engine →</a> <a href="/admin/ratings">Rating engine →</a>
-      </p>
 
-      {GROUPS.map((group) => (
-        <section key={group.title} className="gk-card" style={{ marginBottom: 18 }}>
-          <h2 className="gk-card-title">{group.title}</h2>
-          <ul className="gk-admin-grid">
-            {group.names.map((name) => {
-              const r = byName.get(name);
-              if (!r) return null;
-              return (
-                <li key={name}>
-                  <a className="gk-admin-link" href={`/admin/${name}`}>
-                    {r.label}
-                  </a>
-                </li>
-              );
-            })}
+      <section className="gk-cp-stats">
+        <Stat label="Topics" value={c.topics} />
+        <Stat label="Articles" value={c.articles} />
+        <Stat label="Games" value={c.games} />
+        <Stat label="Sources" value={c.sources} />
+        <Stat label="Users" value={c.users} />
+        <Stat label="Comments" value={c.comments} />
+        <Stat label="Ratings" value={c.ratings} />
+        <Stat label="Subscribers" value={c.subscribers} />
+      </section>
+
+      <div className="gk-cp-cols">
+        <section className="gk-cp-card">
+          <h2 className="gk-cp-card-title">
+            Community activity · last {d.activity.windowDays} days
+          </h2>
+          <div className="gk-cp-stats gk-cp-stats-sm">
+            <Stat label="New ratings" value={d.activity.ratings} />
+            <Stat label="New comments" value={d.activity.comments} />
+            <Stat label="New votes" value={d.activity.votes} />
+            <Stat label="New users" value={d.activity.newUsers} />
+          </div>
+          <p className="gk-cp-note">{d.trafficNote}</p>
+        </section>
+
+        <section className="gk-cp-card">
+          <h2 className="gk-cp-card-title">Pipeline health</h2>
+          <ul className="gk-cp-health">
+            <li>
+              <span>Articles embedded</span>
+              <b>
+                {d.pipeline.articlesEmbedded.toLocaleString('en-US')} /{' '}
+                {d.pipeline.articlesTotal.toLocaleString('en-US')}{' '}
+                <em>({pct(d.pipeline.articlesEmbedded, d.pipeline.articlesTotal)})</em>
+              </b>
+            </li>
+            <li>
+              <span>Topics summarized</span>
+              <b>
+                {d.pipeline.topicsSummarized.toLocaleString('en-US')} /{' '}
+                {d.pipeline.topicsTotal.toLocaleString('en-US')}{' '}
+                <em>({pct(d.pipeline.topicsSummarized, d.pipeline.topicsTotal)})</em>
+              </b>
+            </li>
+            <li>
+              <span>Games with computed ratings</span>
+              <b>{d.pipeline.ratingsComputed.toLocaleString('en-US')}</b>
+            </li>
+            <li>
+              <span>Last rating recompute</span>
+              <b>{fmtDate(d.pipeline.lastRatingComputedAt)}</b>
+            </li>
           </ul>
         </section>
-      ))}
+      </div>
 
-      <footer className="gk-foot">
-        pgvector columns present:{' '}
-        {meta.vectorColumns.length === 0
-          ? 'none'
-          : meta.vectorColumns.map((c) => `${c.table}.${c.column}`).join(', ')}
-      </footer>
-    </main>
+      <div className="gk-cp-cols">
+        <section className="gk-cp-card">
+          <h2 className="gk-cp-card-title">Top topics</h2>
+          <ol className="gk-cp-toplist">
+            {d.topTopics.map((t) => (
+              <li key={t.slug}>
+                <a href={`/topics/${t.slug}`}>{t.title}</a>
+                <span className="gk-cp-toplist-n">{t.articleCount} articles</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="gk-cp-card">
+          <h2 className="gk-cp-card-title">Source performance</h2>
+          <ol className="gk-cp-toplist">
+            {d.topSources.map((s) => (
+              <li key={s.slug}>
+                <a href={`/sources/${s.slug}`}>{s.name}</a>
+                <span className="gk-cp-toplist-n">{s.articleCount} articles</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
+    </div>
   );
 }

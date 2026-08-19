@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { adminFetch } from '../_lib/adminFetch';
 
 type Option = { id: string; label: string };
 
@@ -35,7 +36,7 @@ function useLink(endpoint: string) {
   const [msg, setMsg] = useState<string | null>(null);
   async function submit(body: Record<string, unknown>, method: 'POST' | 'DELETE') {
     setMsg(null);
-    const res = await fetch(`/admin/api/relations/${endpoint}`, {
+    const res = await adminFetch(`/admin/api/relations/${endpoint}`, {
       method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

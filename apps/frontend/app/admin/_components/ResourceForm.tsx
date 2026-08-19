@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { FieldSpec } from '../lib';
+import { adminFetch } from '../_lib/adminFetch';
 
 type Option = { id: string; label: string };
 type FieldValue = string | boolean;
@@ -86,7 +87,7 @@ export default function ResourceForm({ resource, mode, id, fields, initial, refO
     setBusy(true);
     try {
       const path = mode === 'create' ? `/admin/api/${resource}` : `/admin/api/${resource}/${id}`;
-      const res = await fetch(path, {
+      const res = await adminFetch(path, {
         method: mode === 'create' ? 'POST' : 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),

@@ -32,6 +32,7 @@
     "verify:b2": "node scripts/b2-check.mjs",
     "verify:i6": "node scripts/i6-check.mjs",
     "verify:i7": "node scripts/i7-check.mjs",
+    "verify:i8": "node scripts/i8-check.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

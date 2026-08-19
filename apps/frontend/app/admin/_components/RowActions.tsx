@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { adminFetch } from '../_lib/adminFetch';
 
 interface Props {
   resource: string;
@@ -14,7 +15,7 @@ export default function RowActions({ resource, id }: Props) {
     if (!confirm('Delete this row? This cannot be undone.')) return;
     setBusy(true);
     try {
-      const res = await fetch(`/admin/api/${resource}/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/admin/api/${resource}/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const json: unknown = await res.json().catch(() => ({}));
         const msg =

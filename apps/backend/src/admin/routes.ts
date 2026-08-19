@@ -10,6 +10,7 @@ import { articleSubjects, articleTopics, auditLogs, topicSubjects } from '../db/
 import { diffRows, writeAudit } from './audit';
 import { registerArticleAdminRoutes } from './article-routes';
 import { registerAwardAdminRoutes } from './award-routes';
+import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
@@ -336,6 +337,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── awards routes (before generic so they win) ──────────────────────────
       await registerAwardAdminRoutes(admin);
+
+      // ── Control Panel dashboard (before generic so it wins) ──────────────────
+      await registerDashboardRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

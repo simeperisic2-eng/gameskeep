@@ -1,10 +1,14 @@
 /**
- * Server-side helpers for the admin console. Reads (lists, single rows, the
- * resource metadata) call the backend directly with the demo admin token;
- * writes go through the same-origin proxy route (see api/[...path]/route.ts).
+ * Server-side helpers for the Control Panel (SPEC I8, Slice 1). Reads forward the
+ * logged-in STAFF's session cookie to the backend, which applies I6 RBAC per the
+ * staff's rank — the old demo-admin-token read path is retired (that token is now
+ * automation/verify only). Writes go through the same-origin BFF (which also
+ * forwards the session + CSRF). Non-staff never reach here (the admin layout gate
+ * redirects them to login first).
  */
+import { cookies } from 'next/headers';
+
 const BACKEND = process.env.BACKEND_INTERNAL_URL ?? 'http://localhost:4000';
-const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 
 export interface FieldSpec {
   name: string;
@@ -31,8 +35,9 @@ export interface AdminMeta {
 export type Row = Record<string, unknown>;
 
 async function adminGet<T>(path: string): Promise<T> {
+  const cookieHeader = (await cookies()).toString();
   const res = await fetch(`${BACKEND}/admin/api${path}`, {
-    headers: { 'x-admin-token': TOKEN },
+    headers: { cookie: cookieHeader },
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`admin API ${path} → HTTP ${res.status}`);
@@ -41,6 +46,44 @@ async function adminGet<T>(path: string): Promise<T> {
 
 export function getMeta(): Promise<AdminMeta> {
   return adminGet<AdminMeta>('/_meta');
+}
+
+// ── dashboard (I8 Slice 1) ────────────────────────────────────────────────────
+export interface DashboardData {
+  counts: {
+    topics: number;
+    articles: number;
+    games: number;
+    sources: number;
+    users: number;
+    comments: number;
+    ratings: number;
+    subscribers: number;
+  };
+  topTopics: { slug: string; title: string; articleCount: number }[];
+  topSources: { slug: string; name: string; articleCount: number }[];
+  activity: {
+    windowDays: number;
+    ratings: number;
+    comments: number;
+    votes: number;
+    newUsers: number;
+  };
+  pipeline: {
+    articlesTotal: number;
+    articlesEmbedded: number;
+    topicsTotal: number;
+    topicsSummarized: number;
+    ratingsComputed: number;
+    lastRatingComputedAt: string | null;
+  };
+  trafficNote: string;
+  generatedAt: string;
+}
+
+export async function getDashboard(): Promise<DashboardData> {
+  const res = await adminGet<{ data: DashboardData }>('/dashboard');
+  return res.data;
 }
 
 export async function listResource(name: string): Promise<Row[]> {

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdminArticleBias, BiasBreakdown, BiasStatus, TopicBiasView } from '../lib';
+import { adminFetch } from '../_lib/adminFetch';
 
 interface Props {
   status: BiasStatus;
@@ -15,7 +16,7 @@ async function call(
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(`/admin/api/${path}`, {
+    const res = await adminFetch(`/admin/api/${path}`, {
       method,
       headers: body ? { 'content-type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,

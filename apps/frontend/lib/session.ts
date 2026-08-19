@@ -27,7 +27,7 @@ export interface SessionUser {
   username: string;
   displayName: string | null;
   isEmailVerified: boolean;
-  role: { key: string; label: string; isStaff: boolean };
+  role: { key: string; label: string; isStaff: boolean; rank: number };
   level: SessionLevel | null;
   badges: SessionBadge[];
 }

@@ -130,7 +130,7 @@ function publicUser(u: SessionUser): Record<string, unknown> {
     displayName: u.displayName,
     avatarUrl: u.avatarUrl,
     isEmailVerified: u.isEmailVerified,
-    role: { key: u.role.key, label: u.role.label, isStaff: u.role.isStaff },
+    role: { key: u.role.key, label: u.role.label, isStaff: u.role.isStaff, rank: u.role.rank },
     level: u.level, // name only (basic); /auth/me enriches with progress + badges
     createdAt: u.createdAt,
   };
