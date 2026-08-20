@@ -11,6 +11,7 @@ import { diffRows, writeAudit } from './audit';
 import { registerArticleAdminRoutes } from './article-routes';
 import { registerAwardAdminRoutes } from './award-routes';
 import { registerAdAdminRoutes } from './ad-routes';
+import { registerNewsletterAdminRoutes } from './newsletter-routes';
 import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
@@ -344,6 +345,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── ad / promotion management (before generic so it wins) ────────────────
       await registerAdAdminRoutes(admin);
+
+      // ── newsletter (before generic so it wins) ───────────────────────────────
+      await registerNewsletterAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

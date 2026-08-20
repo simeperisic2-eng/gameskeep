@@ -12,6 +12,7 @@ import {
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
   LAUNCH_STATE_FLAGS,
+  NEWSLETTER_CAMPAIGN_KINDS,
   SOURCE_STATUSES,
   SUBJECT_TYPES,
   TOPIC_STATUSES,
@@ -582,6 +583,44 @@ export const adPlacementCreate = z.object({
 
 /** Admin sets a placement's status manually (after off-site payment). */
 export const adStatusInput = z.object({ status: z.enum(AD_PLACEMENT_STATUSES) });
+
+// ── newsletter campaigns (I8 Slice 3) ─────────────────────────────────────────
+/**
+ * A segment is either the reserved 'all' or a subscription `source` label
+ * (lowercase slug-ish). The audience RESOLVER — not this schema — enforces the
+ * GDPR gate (active + consented only); this just constrains the shape.
+ */
+const newsletterSegment = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits and hyphens only')
+  .default('all');
+
+/**
+ * Staff compose a campaign. `body` is plain text (rendered escaped; sent as a
+ * plain-text email — no HTML/UGC injection surface). Scheduling is optional
+ * metadata; the demo send is manual (there is no real dispatcher).
+ */
+export const newsletterCampaignCreate = z.object({
+  subject: z.string().trim().min(1).max(200),
+  preheader: z.string().trim().max(200).optional(),
+  body: z.string().trim().min(1).max(20_000),
+  segment: newsletterSegment,
+  kind: z.enum(NEWSLETTER_CAMPAIGN_KINDS).default('manual'),
+  scheduledAt: z.coerce.date().optional(),
+});
+
+/** Editing a DRAFT campaign — every field optional; the route guards the status. */
+export const newsletterCampaignUpdate = z.object({
+  subject: z.string().trim().min(1).max(200).optional(),
+  preheader: z.string().trim().max(200).optional(),
+  body: z.string().trim().min(1).max(20_000).optional(),
+  segment: newsletterSegment.optional(),
+  scheduledAt: z.coerce.date().nullable().optional(),
+  status: z.enum(['draft', 'scheduled', 'canceled']).optional(),
+});
 
 // ── game data-source / unmatched queue (I2) ──────────────────────────────────
 /**

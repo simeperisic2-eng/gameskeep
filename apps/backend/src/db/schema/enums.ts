@@ -12,6 +12,8 @@ import {
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
   LAUNCH_STATE_FLAGS,
+  NEWSLETTER_CAMPAIGN_KINDS,
+  NEWSLETTER_CAMPAIGN_STATUSES,
   SOURCE_STATUSES,
   SUBJECT_TYPES,
   TOPIC_STATUSES,
@@ -37,6 +39,14 @@ export const awardCategoryKindEnum = pgEnum('award_category_kind', AWARD_CATEGOR
 export const awardOutcomeTypeEnum = pgEnum('award_outcome_type', AWARD_OUTCOME_TYPES);
 export const adPlacementStatusEnum = pgEnum('ad_placement_status', AD_PLACEMENT_STATUSES);
 export const adSlotFallbackEnum = pgEnum('ad_slot_fallback', AD_SLOT_FALLBACKS);
+export const newsletterCampaignStatusEnum = pgEnum(
+  'newsletter_campaign_status',
+  NEWSLETTER_CAMPAIGN_STATUSES,
+);
+export const newsletterCampaignKindEnum = pgEnum(
+  'newsletter_campaign_kind',
+  NEWSLETTER_CAMPAIGN_KINDS,
+);
 export const userStatusEnum = pgEnum('user_status', USER_STATUSES);
 export const auditActionEnum = pgEnum('audit_action', AUDIT_ACTIONS);
 export const aiAssetFlagEnum = pgEnum('ai_asset_flag', AI_ASSET_FLAGS);

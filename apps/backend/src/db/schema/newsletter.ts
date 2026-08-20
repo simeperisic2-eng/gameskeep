@@ -1,13 +1,16 @@
 import {
   boolean,
   index,
+  integer,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
 import { users } from './users';
+import { newsletterCampaignKindEnum, newsletterCampaignStatusEnum } from './enums';
 import { primaryId, timestamps } from './_shared';
 
 /**
@@ -46,5 +49,49 @@ export const newsletterSubscriptions = pgTable(
     uniqueIndex('newsletter_sub_email_unique').on(t.email),
     uniqueIndex('newsletter_sub_token_unique').on(t.unsubscribeToken),
     index('newsletter_sub_active_idx').on(t.active),
+  ],
+);
+
+/**
+ * Newsletter campaigns (SPEC I8, Slice 3; BLUEPRINT 2.8). Staff compose a
+ * campaign, pick a segment, and send it — the "send" fans out to the Mock
+ * EmailSender (writes to `email_outbox`, ZERO network). There is NO real
+ * dispatcher and NO new AI: a `digest` body is assembled from the EXISTING
+ * topic summaries (`topics.tldr`/`ai_summary`).
+ *
+ * `body` is plain text sent as a plain-text email (no HTML/UGC → no injection
+ * surface). The audience is resolved at SEND time from `newsletter_subscriptions`
+ * with a GDPR gate (active + not-withdrawn only); we store the resolved
+ * `recipientCount` for the record, never a per-recipient list here. Opens/clicks
+ * are structural (0 in demo — no tracking pixel); `growth` analytics come from
+ * the real subscription timeline. Every create/edit/send is audit-logged.
+ */
+export const newsletterCampaigns = pgTable(
+  'newsletter_campaigns',
+  {
+    id: primaryId(),
+    subject: varchar('subject', { length: 200 }).notNull(),
+    // Optional inbox-preview line (the "preheader").
+    preheader: varchar('preheader', { length: 200 }),
+    // Plain-text body (rendered escaped; emailed as text/plain).
+    body: text('body').notNull(),
+    // 'all' or a subscription `source` label — the segment targeted at send.
+    segment: varchar('segment', { length: 40 }).notNull().default('all'),
+    kind: newsletterCampaignKindEnum('kind').notNull().default('manual'),
+    status: newsletterCampaignStatusEnum('status').notNull().default('draft'),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    // Resolved consented-audience size at send time (aggregate — no PII list).
+    recipientCount: integer('recipient_count').notNull().default(0),
+    // Structural engagement counters (0 in demo — no per-user tracking).
+    opens: integer('opens').notNull().default(0),
+    clicks: integer('clicks').notNull().default(0),
+    // The staff account that created it (loose pointer; audit log is authoritative).
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps(),
+  },
+  (t) => [
+    index('newsletter_campaign_status_idx').on(t.status),
+    index('newsletter_campaign_created_idx').on(t.createdAt),
   ],
 );

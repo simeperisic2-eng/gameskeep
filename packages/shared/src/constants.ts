@@ -413,6 +413,29 @@ export type AdPlacementStatus = (typeof AD_PLACEMENT_STATUSES)[number];
 export const AD_SLOT_FALLBACKS = ['ad', 'organic', 'hide'] as const;
 export type AdSlotFallback = (typeof AD_SLOT_FALLBACKS)[number];
 
+// Newsletter campaigns (I8 §2.8). Lifecycle is staff-driven: draft → (scheduled)
+// → sent, or canceled. `sending` is the brief in-flight state a send moves
+// through. There is no real dispatch in demo — a send fans out to the Mock
+// EmailSender (writes to `email_outbox`, ZERO network).
+export const NEWSLETTER_CAMPAIGN_STATUSES = [
+  'draft',
+  'scheduled',
+  'sending',
+  'sent',
+  'canceled',
+] as const;
+export type NewsletterCampaignStatus = (typeof NEWSLETTER_CAMPAIGN_STATUSES)[number];
+
+// How a campaign body was authored: `manual` (staff-written) or `digest`
+// (assembled from the EXISTING topic summaries — no new AI is generated).
+export const NEWSLETTER_CAMPAIGN_KINDS = ['manual', 'digest'] as const;
+export type NewsletterCampaignKind = (typeof NEWSLETTER_CAMPAIGN_KINDS)[number];
+
+// The reserved audience segment that targets every consented subscriber. Any
+// other value targets subscribers whose `source` matches it (e.g. 'awards').
+// Segmentation is GDPR-gated in the resolver: withdrawn/inactive are excluded.
+export const NEWSLETTER_SEGMENT_ALL = 'all';
+
 // `deleted` = an anonymize-and-tombstone account (I6 Slice 7, GDPR decision 7):
 // PII scrubbed, credibility fields frozen so aggregates stay honest, cannot log in.
 export const USER_STATUSES = ['active', 'suspended', 'banned', 'deleted'] as const;

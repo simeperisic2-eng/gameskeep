@@ -361,3 +361,124 @@
   color: var(--gk-accent);
   border-color: rgba(245, 179, 1, 0.5);
 }
+
+/* ── newsletter (I8 Slice 3) ──────────────────────────────────────────────── */
+.gk-adstate.is-sent {
+  color: #7fc7a4;
+  border-color: rgba(127, 199, 164, 0.4);
+}
+.gk-cp-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--gk-border);
+  background: var(--gk-bg);
+  color: var(--gk-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gk-cp-btn:hover:not(:disabled) {
+  border-color: var(--gk-accent);
+  color: var(--gk-accent);
+}
+.gk-cp-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gk-cp-btn.is-primary {
+  background: var(--gk-accent);
+  border-color: var(--gk-accent);
+  color: #1a1710;
+}
+.gk-cp-btn.is-primary:hover:not(:disabled) {
+  color: #1a1710;
+  filter: brightness(1.06);
+}
+.gk-cp-btn.is-small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.gk-cp-flash {
+  background: var(--gk-accent-soft);
+  border: 1px solid rgba(245, 179, 1, 0.4);
+  color: var(--gk-text);
+  border-radius: var(--gk-radius);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 13.5px;
+}
+.gk-nl-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.gk-nl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--gk-text-dim);
+}
+.gk-nl-field-wide {
+  grid-column: 1 / -1;
+}
+.gk-nl-field input,
+.gk-nl-field select,
+.gk-nl-field textarea,
+.gk-nl-search input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--gk-border);
+  background: var(--gk-bg);
+  color: var(--gk-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+.gk-nl-field textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.gk-nl-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+.gk-nl-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.gk-nl-search input {
+  flex: 1 1 auto;
+}
+.gk-nl-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 120px;
+  padding-top: 8px;
+}
+.gk-nl-spark-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 6px;
+}
+.gk-nl-spark-bar {
+  width: 60%;
+  min-height: 3px;
+  background: var(--gk-accent);
+  border-radius: 4px 4px 0 0;
+}
+.gk-nl-spark-label {
+  font-size: 10px;
+  color: var(--gk-text-dim);
+}
+@media (max-width: 640px) {
+  .gk-nl-form {
+    grid-template-columns: 1fr;
+  }
+}

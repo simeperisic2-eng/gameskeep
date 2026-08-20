@@ -1,6 +1,11 @@
 import { env } from '../config/env';
 import { getEmailSender } from './index';
-import { accountExistsEmail, passwordResetEmail, verificationEmail } from './templates';
+import {
+  accountExistsEmail,
+  newsletterEmail,
+  passwordResetEmail,
+  verificationEmail,
+} from './templates';
 
 /**
  * High-level send helpers (SPEC I6, Slice 2). Each builds a message from the
@@ -41,4 +46,27 @@ export async function sendAccountExistsNotice(
 ): Promise<void> {
   const msg = accountExistsEmail(toEmail, env.PUBLIC_SITE_URL);
   await dispatch(() => getEmailSender().send(msg, { relatedUserId }), 'account-exists');
+}
+
+/**
+ * Send one newsletter to one consented subscriber (SPEC I8, Slice 3). Returns
+ * whether it was accepted by the sender so a campaign send can tally real
+ * deliveries. In demo the Mock sender writes ONE `email_outbox` row (zero
+ * network); a single failure must not abort a whole campaign, so we catch here.
+ */
+export async function sendNewsletterEmail(
+  toEmail: string,
+  subject: string,
+  body: string,
+  unsubscribeToken: string,
+  relatedUserId?: string,
+): Promise<boolean> {
+  const msg = newsletterEmail(toEmail, subject, body, unsubscribeToken, env.PUBLIC_SITE_URL);
+  try {
+    await getEmailSender().send(msg, { relatedUserId });
+    return true;
+  } catch (err) {
+    console.error('[email] newsletter send failed:', err instanceof Error ? err.message : err);
+    return false;
+  }
 }

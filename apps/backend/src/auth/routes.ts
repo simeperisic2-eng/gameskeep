@@ -12,6 +12,7 @@ import {
 import { db } from '../db/client';
 import { roles, users } from '../db/schema';
 import { deleteAccount, exportAccount, recordConsent } from '../gdpr/service';
+import { deactivateSubscriptionForUser, MARKETING_CONSENT_TYPE } from '../awards/subscribe';
 import { env, isProduction } from '../config/env';
 import { sendError } from '../admin/http';
 import {
@@ -376,6 +377,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           }
           const { consentType, version, granted } = consentInput.parse(req.body);
           await recordConsent(session.user.id, consentType, version, granted, req.ip);
+          // GDPR (I8 Slice 3): withdrawing MARKETING consent here must also
+          // suppress the newsletter subscription, so segmentation can never
+          // target a user who opted out via the account panel (not the link).
+          if (consentType === MARKETING_CONSENT_TYPE && !granted) {
+            await deactivateSubscriptionForUser(session.user.id);
+          }
           reply.send({ ok: true });
         } catch (err) {
           sendError(reply, err);

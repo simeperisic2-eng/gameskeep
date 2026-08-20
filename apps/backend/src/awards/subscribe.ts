@@ -126,6 +126,22 @@ export async function unsubscribe(token: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Suppress a user's newsletter subscription when they WITHDRAW marketing consent
+ * through a path OTHER than the unsubscribe link (e.g. the account-panel consent
+ * toggle → `POST /auth/consent`). Keeps the subscription's `active` flag in lock-
+ * step with the consent ledger so segmentation can never target a withdrawn user
+ * (SPEC I8, Slice 3 — GDPR gate). Idempotent; no-op if they have no subscription.
+ */
+export async function deactivateSubscriptionForUser(userId: string): Promise<void> {
+  await db
+    .update(newsletterSubscriptions)
+    .set({ active: false, unsubscribedAt: new Date(), updatedAt: new Date() })
+    .where(
+      sql`${newsletterSubscriptions.userId} = ${userId} and ${newsletterSubscriptions.active} = true`,
+    );
+}
+
 /** Count of active subscribers (optionally for one source) — analytics/read only. */
 export async function activeSubscriberCount(source?: string): Promise<number> {
   const [row] = await db

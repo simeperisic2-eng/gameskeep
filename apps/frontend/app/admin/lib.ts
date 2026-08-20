@@ -122,6 +122,44 @@ export async function getAdAnalytics(): Promise<AdAnalytics> {
   return (await adminGet<{ data: AdAnalytics }>('/ads/analytics')).data;
 }
 
+// ── newsletter (I8 Slice 3) ───────────────────────────────────────────────────
+export interface NewsletterCampaignRow {
+  id: string;
+  subject: string;
+  segment: string;
+  kind: string;
+  status: string;
+  recipientCount: number;
+  opens: number;
+  clicks: number;
+  scheduledAt: string | null;
+  sentAt: string | null;
+  createdAt: string | null;
+}
+export interface NewsletterOverview {
+  subscribers: { total: number; active: number; unsubscribed: number };
+  segments: { segment: string; active: number }[];
+  growth: { weekEnding: string; activeSubscribers: number }[];
+  campaigns: NewsletterCampaignRow[];
+}
+export interface SubscriberRow {
+  id: string;
+  email: string;
+  source: string;
+  active: boolean;
+  registered: boolean;
+  createdAt: string | null;
+  unsubscribedAt: string | null;
+}
+
+export async function getNewsletterOverview(): Promise<NewsletterOverview> {
+  return (await adminGet<{ data: NewsletterOverview }>('/newsletter/overview')).data;
+}
+export async function getSubscribers(q?: string): Promise<SubscriberRow[]> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return (await adminGet<{ data: SubscriberRow[] }>(`/newsletter/subscribers${qs}`)).data;
+}
+
 export async function listResource(name: string): Promise<Row[]> {
   const res = await adminGet<{ data: Row[] }>(`/${name}`);
   return res.data;

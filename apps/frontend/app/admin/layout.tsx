@@ -82,6 +82,11 @@ const NAV: {
     ],
   },
   {
+    title: 'Newsletter',
+    minRank: 40,
+    items: [{ label: 'Campaigns & subscribers', href: '/admin/newsletter', minRank: 40 }],
+  },
+  {
     title: 'Config & lists',
     minRank: 40,
     items: [

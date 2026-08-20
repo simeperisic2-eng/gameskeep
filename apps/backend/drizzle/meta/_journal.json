@@ -92,6 +92,13 @@
       "when": 1787169957150,
       "tag": "0012_i8_ads",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787175774726,
+      "tag": "0013_i8_newsletter_campaigns",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,19 @@
  *  14.  the public ad slot is leak-proof (creative only — no price/contact/notes)
  *  15.  promoted-game badge: the promotion resolves + the game page shows Promoted
  *
+ *  Slice 3 — newsletter (compose / segment / send / GDPR)
+ *  16.  the newsletter admin section is RBAC-gated (moderator 403, admin 200)
+ *  17.  GDPR consent-sync: withdrawing MARKETING consent via /auth/consent
+ *       deactivates the subscription (segmentation can't target a withdrawer)
+ *  18.  Mock send writes ONLY to the outbox (zero network): a send grows the
+ *       outbox by EXACTLY recipientCount, every new row is provider=mock
+ *  19.  segmentation excludes non-consented + unsubscribed: a withdrawn user and
+ *       a token-unsubscribed address receive ZERO newsletter mail
+ *  20.  no PII beyond the address: the subscriber list has emails but no
+ *       ip / passwordHash / username / displayName; overview is aggregate
+ *  21.  digest reuses EXISTING summaries (no new AI): the generated draft is
+ *       kind=digest and its body carries a real topic slug + its stored summary
+ *
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
 import { execSync } from 'node:child_process';
@@ -345,6 +358,155 @@ async function main() {
         jar: adm.jar,
         csrf: adm.csrf,
       });
+
+  // ════════════════════════ Slice 3 — newsletter ═════════════════════════════
+  // ── 16. newsletter admin section is RBAC-gated ──────────────────────────────
+  const modNl = await code(BACK, '/admin/api/newsletter/overview', mod.jar);
+  const admNl = await code(BACK, '/admin/api/newsletter/overview', adm.jar);
+  check(
+    '16. Newsletter admin section: moderator 403, admin 200',
+    modNl === 403 && admNl === 200,
+    `mod=${modNl} adm=${admNl}`,
+  );
+
+  // subscribe helper (public, CSRF-gated awards scope) — anonymous or a session.
+  async function subscribeAs(email, jar, csrf) {
+    const ctx = jar ? { jar, csrf } : await withCsrf();
+    return api(BACK, '/awards/subscribe', {
+      method: 'POST',
+      jar: ctx.jar,
+      csrf: ctx.csrf,
+      body: { email, consent: true },
+    });
+  }
+  const emailA = `i8nla_${RUN}@example.test`; // anonymous, stays consented → targeted
+  const emailC = `i8nlc_${RUN}@example.test`; // anonymous, self-unsubscribes → excluded
+  await subscribeAs(emailA);
+  await subscribeAs(emailC);
+
+  // subB: a registered user subscribes, then WITHDRAWS marketing consent.
+  const nlB = await makeVerified('nlb');
+  await subscribeAs(nlB.u.email, nlB.jar, nlB.csrf);
+  await api(BACK, '/auth/consent', {
+    method: 'POST',
+    jar: nlB.jar,
+    csrf: nlB.csrf,
+    body: { consentType: 'marketing', version: 'marketing-2026-01-demo', granted: false },
+  });
+
+  // ── 17. GDPR consent-sync: the withdrawal deactivated B's subscription ──────
+  const bActive = sqlOne(
+    `SELECT active FROM newsletter_subscriptions WHERE email='${nlB.u.email}'`,
+  );
+  check(
+    '17. Marketing-consent withdrawal (/auth/consent) deactivates the subscription',
+    bActive === 'f',
+    `B.active=${bActive || 'none'}`,
+  );
+
+  // C self-unsubscribes via the login-free capability token (public, no CSRF).
+  const cToken = sqlOne(
+    `SELECT unsubscribe_token FROM newsletter_subscriptions WHERE email='${emailC}'`,
+  );
+  const cUnsub = await api(BACK, '/public/newsletter/unsubscribe', {
+    method: 'POST',
+    body: { token: cToken },
+  });
+  const cActive = sqlOne(`SELECT active FROM newsletter_subscriptions WHERE email='${emailC}'`);
+
+  // ── 18. Mock send writes ONLY to the outbox, exactly recipientCount rows ─────
+  const outBefore = Number(sqlOne(`SELECT count(*) FROM email_outbox WHERE purpose='newsletter'`));
+  const mkCampaign = await api(BACK, '/admin/api/newsletter/campaigns', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { subject: `NL Test ${RUN}`, segment: 'all', body: `Hello from ${RUN}.` },
+  });
+  const campId = mkCampaign.json?.data?.id;
+  const sendRes = await api(BACK, `/admin/api/newsletter/campaigns/${campId}/send`, {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+  });
+  const recipientCount = sendRes.json?.data?.recipientCount ?? -1;
+  const outAfter = Number(sqlOne(`SELECT count(*) FROM email_outbox WHERE purpose='newsletter'`));
+  const allMock =
+    sqlOne(`SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND provider<>'mock'`) ===
+    '0';
+  const aGotMail = Number(
+    sqlOne(`SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND to_email='${emailA}'`),
+  );
+  check(
+    '18. Mock send: outbox grew by EXACTLY recipientCount, all rows provider=mock (zero network)',
+    sendRes.status === 200 &&
+      recipientCount >= 1 &&
+      outAfter - outBefore === recipientCount &&
+      allMock &&
+      aGotMail === 1,
+    `recip=${recipientCount} delta=${outAfter - outBefore} mockOnly=${allMock} A=${aGotMail}`,
+  );
+
+  // ── 19. segmentation excludes withdrawn (B) + unsubscribed (C) ──────────────
+  const bMail = Number(
+    sqlOne(
+      `SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND to_email='${nlB.u.email}'`,
+    ),
+  );
+  const cMail = Number(
+    sqlOne(`SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND to_email='${emailC}'`),
+  );
+  check(
+    '19. Segmentation excludes non-consented (withdrawn B) + token-unsubscribed C',
+    cUnsub.status === 200 && cActive === 'f' && bMail === 0 && cMail === 0,
+    `cUnsub=${cUnsub.status} cActive=${cActive} B=${bMail} C=${cMail}`,
+  );
+
+  // ── 20. no PII beyond the address ───────────────────────────────────────────
+  const subs = await api(BACK, '/admin/api/newsletter/subscribers', { jar: adm.jar });
+  const subsRaw = JSON.stringify(subs.json ?? {});
+  check(
+    '20. Subscriber list: address only — no ip / passwordHash / username / displayName',
+    subs.status === 200 &&
+      /@/.test(subsRaw) &&
+      !/passwordHash|\$argon2|"ip"|"username"|"displayName"/i.test(subsRaw),
+    'address-only PII',
+  );
+
+  // ── 21. digest reuses EXISTING summaries (no new AI) ────────────────────────
+  const digSlug = sqlOne(
+    `SELECT slug FROM topics WHERE (tldr IS NOT NULL OR ai_summary IS NOT NULL) ORDER BY last_activity_at DESC NULLS LAST LIMIT 1`,
+  );
+  const digSummary = sqlOne(
+    `SELECT coalesce(tldr, ai_summary) FROM topics WHERE slug='${digSlug}'`,
+  );
+  const mkDigest = await api(BACK, '/admin/api/newsletter/digest', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+  });
+  const digestId = mkDigest.json?.data?.id;
+  const digestBody = digestId
+    ? sqlOne(`SELECT body FROM newsletter_campaigns WHERE id='${digestId}'`)
+    : '';
+  const digestKind = digestId
+    ? sqlOne(`SELECT kind FROM newsletter_campaigns WHERE id='${digestId}'`)
+    : '';
+  check(
+    '21. Digest reuses existing summaries: kind=digest + body carries a real topic slug + summary',
+    mkDigest.status === 201 &&
+      digestKind === 'digest' &&
+      Boolean(digSlug) &&
+      digestBody.includes(digSlug) &&
+      (digSummary === '' || digestBody.includes(digSummary.slice(0, 40))),
+    `kind=${digestKind} slug=${digestBody.includes(digSlug)} summary=${digSummary ? digestBody.includes(digSummary.slice(0, 40)) : 'n/a'}`,
+  );
+
+  // cleanup the newsletter test data (campaigns + the three test subscriptions)
+  sqlOne(`DELETE FROM newsletter_campaigns WHERE subject LIKE 'NL Test ${RUN}' OR kind='digest'`);
+  sqlOne(
+    `DELETE FROM newsletter_subscriptions WHERE email IN ('${emailA}','${emailC}','${nlB.u.email}')`,
+  );
+  sqlOne(`DELETE FROM email_outbox WHERE purpose='newsletter'`);
 
   print();
 }

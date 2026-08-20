@@ -5877,3 +5877,24 @@ a.gk-tile-cover {
   border: none;
   cursor: pointer;
 }
+
+/* ── unsubscribe (I8 Slice 3) ─────────────────────────────────────────────── */
+.gk-unsub {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.gk-unsub-msg {
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  color: var(--gk-ink-soft, inherit);
+}
+.gk-unsub .gk-doc-cta {
+  border: none;
+  cursor: pointer;
+}
+.gk-unsub .gk-doc-cta:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

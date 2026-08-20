@@ -5,7 +5,7 @@
  * or rendered into served HTML. Plain-text bodies (no HTML/UGC → no injection
  * surface). The `EmailSender` seam turns these into `email_outbox` rows.
  */
-export type EmailPurpose = 'verify_email' | 'password_reset' | 'account_exists';
+export type EmailPurpose = 'verify_email' | 'password_reset' | 'account_exists' | 'newsletter';
 
 export interface EmailMessage {
   toEmail: string;
@@ -58,6 +58,35 @@ export function passwordResetEmail(
       '',
       'This link expires in 1 hour and can be used once. If you did not request this,',
       'ignore this message — your password is unchanged.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * A newsletter campaign, sent to ONE consented subscriber (SPEC I8, Slice 3).
+ * The body is staff-authored plain text (or a digest assembled from existing
+ * summaries) — sent as text/plain, so there is no HTML/UGC injection surface.
+ * Every marketing email MUST carry a working, login-free unsubscribe link
+ * (GDPR / CAN-SPAM) built from the recipient's own capability token.
+ */
+export function newsletterEmail(
+  toEmail: string,
+  subject: string,
+  body: string,
+  unsubscribeToken: string,
+  siteUrl: string,
+): EmailMessage {
+  const unsubscribe = `${origin(siteUrl)}/unsubscribe?token=${unsubscribeToken}`;
+  return {
+    toEmail,
+    purpose: 'newsletter',
+    subject,
+    bodyText: [
+      body.trim(),
+      '',
+      '—',
+      'You are receiving this because you subscribed to GamesKeep updates.',
+      `Unsubscribe at any time: ${unsubscribe}`,
     ].join('\n'),
   };
 }

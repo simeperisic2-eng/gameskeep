@@ -14,6 +14,7 @@ import {
 } from './queries';
 import { getPublicProfile } from './profile';
 import { promotionForGame, slotPublicView } from '../ads/service';
+import { unsubscribe } from '../awards/subscribe';
 import { sendError } from '../admin/http';
 
 /**
@@ -167,6 +168,23 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
       pub.get<{ Params: { slug: string } }>('/promotion/:slug', async (req, reply) => {
         try {
           reply.send({ data: await promotionForGame(req.params.slug) });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // Login-free newsletter unsubscribe (SPEC I8, Slice 3). The unguessable
+      // per-recipient token IS the authorization capability, so this needs no
+      // session/CSRF (the email recipient has neither) — CSRF guards ambient
+      // credentials, which don't apply here. Enumeration-safe: the reply is the
+      // same generic 200 whether or not the token matched. `no-store` so no
+      // intermediary caches a mutation.
+      pub.post<{ Body: { token?: unknown } }>('/newsletter/unsubscribe', async (req, reply) => {
+        try {
+          const token = typeof req.body?.token === 'string' ? req.body.token : '';
+          if (token) await unsubscribe(token);
+          reply.header('cache-control', 'no-store');
+          reply.send({ ok: true });
         } catch (err) {
           sendError(reply, err);
         }
