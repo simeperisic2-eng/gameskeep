@@ -40,6 +40,14 @@
  *  21.  digest reuses EXISTING summaries (no new AI): the generated draft is
  *       kind=digest and its body carries a real topic slug + its stored summary
  *
+ *  Slice 4 — list / slot configuration (nothing hardcoded)
+ *  22.  the lists config section is RBAC-gated (moderator 403, admin 200) and
+ *       persists (a PATCH is read back — not a hardcoded value)
+ *  23.  a MANUAL game pin floats that game to the FRONT of Top Rated on the
+ *       public homepage (auto ranking still runs underneath)
+ *  24.  AUTO-pin promoted games: an active game promotion surfaces at the front
+ *       of Top Rated when the option is on (auto default, manual override)
+ *
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
 import { execSync } from 'node:child_process';
@@ -507,6 +515,82 @@ async function main() {
     `DELETE FROM newsletter_subscriptions WHERE email IN ('${emailA}','${emailC}','${nlB.u.email}')`,
   );
   sqlOne(`DELETE FROM email_outbox WHERE purpose='newsletter'`);
+
+  // ════════════════════════ Slice 4 — list / slot configuration ═══════════════
+  // ── 22. lists config section RBAC-gated + persists (not hardcoded) ──────────
+  const modCfg = await code(BACK, '/admin/api/lists/config', mod.jar);
+  const patchCfg = await api(BACK, '/admin/api/lists/config', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { heroCount: 11 },
+  });
+  const readCfg = await api(BACK, '/admin/api/lists/config', { jar: adm.jar });
+  check(
+    '22. Lists config: moderator 403, admin PATCH persists (heroCount read back = 11)',
+    modCfg === 403 && patchCfg.status === 200 && readCfg.json?.data?.config?.heroCount === 11,
+    `mod=${modCfg} patch=${patchCfg.status} heroCount=${readCfg.json?.data?.config?.heroCount}`,
+  );
+
+  // ── 23. a MANUAL game pin floats to the FRONT of Top Rated ──────────────────
+  const home1 = await api(BACK, '/public/homepage');
+  const top1 = (home1.json?.data?.topRated ?? []).map((g) => g.slug);
+  const pinTarget = top1.length >= 2 ? top1[top1.length - 1] : top1[0];
+  await api(BACK, '/admin/api/lists/config', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { pinnedGameSlugs: [pinTarget], pinPromotedGames: false },
+  });
+  const home2 = await api(BACK, '/public/homepage');
+  const top2 = (home2.json?.data?.topRated ?? []).map((g) => g.slug);
+  check(
+    '23. Manual game pin floats the game to the FRONT of Top Rated',
+    Boolean(pinTarget) && top2[0] === pinTarget,
+    `pin=${pinTarget} front=${top2[0]}`,
+  );
+
+  // ── 24. AUTO-pin promoted games surfaces at the FRONT of Top Rated ──────────
+  // Promote a DIFFERENT scored game (must be in the ranked set → pick from top1).
+  const promoTarget = top1.find((s) => s !== pinTarget) ?? top1[0];
+  const promoSubjectId = sqlOne(`SELECT id FROM subjects WHERE slug='${promoTarget}'`);
+  const slotIdForPromo = sqlOne(`SELECT id FROM ad_slots WHERE key='home'`);
+  const promoPlacement = await api(BACK, '/admin/api/ad-placements', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: {
+      slotId: slotIdForPromo,
+      advertiserName: `Lists Promo ${RUN}`,
+      headline: `Featured ${RUN}`,
+      promotedSubjectId: promoSubjectId,
+      status: 'active',
+    },
+  });
+  // Clear the manual pin so the ONLY thing pulling promoTarget forward is the auto-pin.
+  await api(BACK, '/admin/api/lists/config', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { pinnedGameSlugs: [], pinPromotedGames: true },
+  });
+  const home3 = await api(BACK, '/public/homepage');
+  const top3 = (home3.json?.data?.topRated ?? []).map((g) => g.slug);
+  check(
+    '24. Auto-pin: an active game promotion floats to the FRONT of Top Rated',
+    promoPlacement.status < 300 && Boolean(promoTarget) && top3[0] === promoTarget,
+    `promo=${promoTarget} front=${top3[0]}`,
+  );
+
+  // cleanup: remove the promo placement + reset the lists config to defaults
+  const promoPid = promoPlacement.json?.data?.id;
+  if (promoPid)
+    await api(BACK, `/admin/api/ad-placements/${promoPid}`, {
+      method: 'DELETE',
+      jar: adm.jar,
+      csrf: adm.csrf,
+    });
+  sqlOne(`DELETE FROM app_settings WHERE key='lists'`);
 
   print();
 }

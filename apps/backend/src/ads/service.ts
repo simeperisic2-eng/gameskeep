@@ -103,6 +103,23 @@ export async function promotionForGame(
   return p ?? null;
 }
 
+/**
+ * Subject slugs of every game with an ACTIVE promotion right now (I8 Slice 4).
+ * Feeds the homepage "auto-pin promoted games" option — a paid placement can
+ * surface its game at the front of Top Rated (auto default; a manual pin still
+ * overrides). Leak-proof: returns slugs only.
+ */
+export async function activePromotedGameSlugs(now: Date = new Date()): Promise<string[]> {
+  const rows = await db
+    .select({ slug: subjects.slug })
+    .from(adPlacements)
+    .innerJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
+    .where(liveWindow(now));
+  const seen: string[] = [];
+  for (const r of rows) if (r.slug && !seen.includes(r.slug)) seen.push(r.slug);
+  return seen;
+}
+
 // ── admin views (aggregate, staff-only) ──────────────────────────────────────
 export interface InventoryRow {
   slotKey: string;

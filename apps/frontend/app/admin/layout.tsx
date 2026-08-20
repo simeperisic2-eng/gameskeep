@@ -90,6 +90,7 @@ const NAV: {
     title: 'Config & lists',
     minRank: 40,
     items: [
+      { label: 'Lists & slots', href: '/admin/lists', minRank: 40 },
       { label: 'User levels', href: '/admin/user-levels', minRank: 40 },
       { label: 'Badges', href: '/admin/badges', minRank: 40 },
       { label: 'Topic types', href: '/admin/topic-types', minRank: 40 },

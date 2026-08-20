@@ -612,6 +612,34 @@ export const newsletterCampaignCreate = z.object({
   scheduledAt: z.coerce.date().optional(),
 });
 
+// ── homepage list / ranking config (I8 Slice 4) ───────────────────────────────
+/** A slug pin list — each entry a lowercase slug; the backend dedupes + clamps. */
+const pinSlugList = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(160)
+      .regex(/^[a-z0-9-]+$/, 'lowercase slug (a-z, 0-9, hyphens)'),
+  )
+  .max(50);
+
+/**
+ * Admin edits the homepage rail sizes + pins (all in `app_settings.lists`).
+ * Every field optional (PATCH-merge); the backend clamps + audits. Nothing here
+ * is hardcoded at the render site.
+ */
+export const listsConfigInput = z.object({
+  heroCount: z.number().int().min(1).max(24).optional(),
+  feedCount: z.number().int().min(1).max(60).optional(),
+  topRatedCount: z.number().int().min(1).max(24).optional(),
+  focusCount: z.number().int().min(1).max(24).optional(),
+  pinnedTopicSlugs: pinSlugList.optional(),
+  pinnedGameSlugs: pinSlugList.optional(),
+  pinPromotedGames: z.boolean().optional(),
+});
+
 /** Editing a DRAFT campaign — every field optional; the route guards the status. */
 export const newsletterCampaignUpdate = z.object({
   subject: z.string().trim().min(1).max(200).optional(),

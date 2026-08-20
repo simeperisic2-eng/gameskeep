@@ -33,6 +33,8 @@ import {
   topicTypes,
   users,
 } from '../db/schema';
+import { activePromotedGameSlugs } from '../ads/service';
+import { applyPins, listsSettings } from '../lists/settings';
 
 /**
  * Public read-side composition (SPEC I5a) — the ONLY data the public homepage and
@@ -416,41 +418,53 @@ function buildBriefing(cards: TopicCard[], hero: TopicCard[], feed: TopicCard[])
  * Compose the homepage payload from stored data. The hero leads with the most-
  * covered multi-source stories; the main feed is the rest, newest-first.
  */
-export async function getHomepageData(heroLimit = 8, feedLimit = 18): Promise<HomepageData> {
-  const [cards, latest, ranked, genres] = await Promise.all([
+export async function getHomepageData(): Promise<HomepageData> {
+  // AUTO + MANUAL: rail sizes + pins come from the admin `lists` config (nothing
+  // hardcoded); the automatic ordering runs underneath and pins float on top.
+  const [cards, latest, ranked, genres, cfg] = await Promise.all([
     loadTopicCards(),
     loadLatestArticles(10),
     loadRankedGames(),
     loadGenres(),
+    listsSettings(),
   ]);
+  const promotedSlugs = cfg.pinPromotedGames ? await activePromotedGameSlugs() : [];
 
-  // Hero: lead with the most-covered, multi-source stories (newspaper front page).
+  // Hero: lead with the most-covered, multi-source stories (newspaper front
+  // page), then float any manually-pinned topics to the very front.
   const byCoverage = [...cards].sort(
     (a, b) =>
       b.sourceCount - a.sourceCount ||
       b.articleCount - a.articleCount ||
       activityTime(b) - activityTime(a),
   );
-  const hero = byCoverage.slice(0, heroLimit);
+  const hero = applyPins(byCoverage, (c) => c.slug, cfg.pinnedTopicSlugs).slice(0, cfg.heroCount);
   const heroIds = new Set(hero.map((c) => c.id));
 
   // Main feed: everything else, newest-active first.
   const feed = cards
     .filter((c) => !heroIds.has(c.id))
     .sort((a, b) => activityTime(b) - activityTime(a))
-    .slice(0, feedLimit);
+    .slice(0, cfg.feedCount);
 
   // Games-in-focus (disconnect) and Top-rated must show DIFFERENT games: the
   // focus set is the biggest gaps; Top-rated then EXCLUDES those.
   const controversial = ranked
     .filter((g) => g.disconnectValue != null)
     .sort((a, b) => (b.disconnectValue ?? 0) - (a.disconnectValue ?? 0))
-    .slice(0, 6);
+    .slice(0, cfg.focusCount);
   const focusSlugs = new Set(controversial.slice(0, 3).map((g) => g.slug));
-  const topRated = ranked
-    .filter((g) => !focusSlugs.has(g.slug))
-    .sort((a, b) => topScore(b) - topScore(a))
-    .slice(0, 6);
+  // Auto-pin: promoted games first (if enabled), then explicit manual pins win
+  // (manual override). Both float above the automatic score order.
+  const gamePins = [
+    ...cfg.pinnedGameSlugs,
+    ...promotedSlugs.filter((s) => !cfg.pinnedGameSlugs.includes(s)),
+  ];
+  const topRated = applyPins(
+    ranked.filter((g) => !focusSlugs.has(g.slug)).sort((a, b) => topScore(b) - topScore(a)),
+    (g) => g.slug,
+    gamePins,
+  ).slice(0, cfg.topRatedCount);
 
   return {
     hero,

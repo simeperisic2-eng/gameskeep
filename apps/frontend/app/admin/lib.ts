@@ -160,6 +160,51 @@ export async function getSubscribers(q?: string): Promise<SubscriberRow[]> {
   return (await adminGet<{ data: SubscriberRow[] }>(`/newsletter/subscribers${qs}`)).data;
 }
 
+// ── lists / slot configuration (I8 Slice 4) ───────────────────────────────────
+export interface ListsConfig {
+  heroCount: number;
+  feedCount: number;
+  topRatedCount: number;
+  focusCount: number;
+  pinnedTopicSlugs: string[];
+  pinnedGameSlugs: string[];
+  pinPromotedGames: boolean;
+}
+export interface ListsPreview {
+  hero: { slug: string; title: string }[];
+  topRated: { slug: string; name: string }[];
+  controversial: { slug: string; name: string }[];
+}
+export interface SlotPlacementRow {
+  slotKey: string;
+  label: string;
+  page: string;
+  format: string;
+  fallback: string;
+  state: 'active' | 'scheduled' | 'free';
+  placement: {
+    advertiser: string;
+    status: string;
+    startsAt: string | null;
+    endsAt: string | null;
+  } | null;
+}
+
+export async function getListsConfig(): Promise<{
+  config: ListsConfig;
+  promotedGameSlugs: string[];
+}> {
+  return (
+    await adminGet<{ data: { config: ListsConfig; promotedGameSlugs: string[] } }>('/lists/config')
+  ).data;
+}
+export async function getListsPreview(): Promise<ListsPreview> {
+  return (await adminGet<{ data: ListsPreview }>('/lists/preview')).data;
+}
+export async function getListsSlots(): Promise<SlotPlacementRow[]> {
+  return (await adminGet<{ data: SlotPlacementRow[] }>('/lists/slots')).data;
+}
+
 export async function listResource(name: string): Promise<Row[]> {
   const res = await adminGet<{ data: Row[] }>(`/${name}`);
   return res.data;

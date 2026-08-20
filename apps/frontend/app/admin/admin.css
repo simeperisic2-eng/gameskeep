@@ -482,3 +482,55 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── lists / slot configuration (I8 Slice 4) ──────────────────────────────── */
+.gk-nl-check {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--gk-text);
+  line-height: 1.5;
+}
+.gk-nl-check input {
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+.gk-lists-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+.gk-lists-preview-h {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gk-text-dim);
+  margin: 0 0 8px;
+}
+.gk-lists-preview-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--gk-text);
+}
+.gk-lists-preview-list li {
+  line-height: 1.4;
+}
+.gk-lists-pin {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--gk-accent);
+  border: 1px solid rgba(245, 179, 1, 0.4);
+  background: var(--gk-accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
