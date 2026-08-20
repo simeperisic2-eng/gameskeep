@@ -80,7 +80,11 @@ export function newsletterEmail(
   return {
     toEmail,
     purpose: 'newsletter',
-    subject,
+    // SECURITY (I8 review F5): the subject is the only staff-authored, variable
+    // header. Collapse any CR/LF so it can never inject additional headers when
+    // the seam is swapped to a real SMTP sender (harmless with the Mock/outbox
+    // sender, which writes it to a DB column — fixed at the source regardless).
+    subject: subject.replace(/[\r\n]+/g, ' ').trim(),
     bodyText: [
       body.trim(),
       '',

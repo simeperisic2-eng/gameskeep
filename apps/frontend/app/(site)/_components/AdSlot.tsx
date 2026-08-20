@@ -1,4 +1,5 @@
 import { getAdSlot } from '@/lib/public-api';
+import { isHttpUrl } from '@/lib/url';
 
 /**
  * Ad / promoted slot (SPEC I8, Slice 2; BLUEPRINT slot rule). A slot references a
@@ -22,7 +23,7 @@ export async function AdSlot({ slotKey }: { slotKey: string }): Promise<React.JS
           {placement.body ? <p className="gk-slot-promo-body">{placement.body}</p> : null}
           <div className="gk-slot-promo-foot">
             <span className="gk-slot-promo-by">Paid promotion · {placement.advertiser}</span>
-            {placement.ctaUrl ? (
+            {isHttpUrl(placement.ctaUrl) ? (
               <a
                 className="gk-slot-promo-cta"
                 href={placement.ctaUrl}

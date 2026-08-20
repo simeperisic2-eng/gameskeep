@@ -58,12 +58,21 @@ export async function registerNewsletterAdminRoutes(admin: FastifyInstance): Pro
       try {
         const rows = await listSubscribers(req.query.q, 500);
         const header = 'email,source,active,registered,created_at,unsubscribed_at';
+        // A CSV cell can't break out structurally (commas/quotes/newlines are
+        // quoted+escaped). SECURITY (I8 review F3): additionally neutralize
+        // spreadsheet FORMULA injection — a cell whose value begins with = + - @
+        // (or a tab/CR) is prefixed with a `'` so Excel/Sheets treat it as text,
+        // not a formula (a `+`/`-`-leading email passes email validation).
+        const cell = (v: unknown): string => {
+          let s = String(v);
+          if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+          return `"${s.replace(/"/g, '""')}"`;
+        };
         const csv = [
           header,
           ...rows.map((r) =>
             [r.email, r.source, r.active, r.registered, r.createdAt ?? '', r.unsubscribedAt ?? '']
-              // A CSV cell can't break out — commas/quotes/newlines are quoted+escaped.
-              .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+              .map(cell)
               .join(','),
           ),
         ].join('\n');

@@ -21,7 +21,7 @@ import {
   retractVote,
   type AwardActor,
 } from './service';
-import { subscribe, unsubscribe } from './subscribe';
+import { emailOwnedByVerifiedUser, subscribe, unsubscribe } from './subscribe';
 
 /**
  * Public + community Awards API (SPEC I7, Slice 1). Reads (the live tally) are
@@ -197,13 +197,16 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
             });
             return;
           }
+          // SECURITY (I8 review F1): only bind the session user's id when the
+          // subscribed address is THEIR OWN verified email — otherwise a
+          // signed-in caller could attach their account (and consent) to any
+          // email. A mismatch is treated as an anonymous subscribe.
           const session = await sessionFromRequest(req);
-          await subscribe({
-            email,
-            userId: session?.user.id ?? null,
-            source: 'awards',
-            ip: req.ip,
-          });
+          const linkedUserId =
+            session && (await emailOwnedByVerifiedUser(session.user.id, email))
+              ? session.user.id
+              : null;
+          await subscribe({ email, userId: linkedUserId, source: 'awards', ip: req.ip });
           reply.send({ ok: true }); // generic — never an "is this email known?" oracle
         } catch (err) {
           sendAwardError(reply, err);

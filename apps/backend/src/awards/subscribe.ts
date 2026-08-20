@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client';
-import { newsletterSubscriptions } from '../db/schema';
+import { newsletterSubscriptions, users } from '../db/schema';
 import { coarsenIp } from '../auth/session';
 import { recordConsent } from '../gdpr/service';
 
@@ -40,6 +40,33 @@ export interface SubscribeInput {
 }
 
 /**
+ * True iff `email` is the VERIFIED email of user `userId` (case-insensitive).
+ *
+ * SECURITY (I8 review F1 — HIGH): the subscribe route takes `email` from the
+ * request BODY but the actor from the SESSION. Attaching the session user's id
+ * to an arbitrary body email let a signed-in attacker repoint a victim's
+ * subscription to the attacker's account — the consent gate then read the
+ * ATTACKER's consent, so a withdrawn victim could be mailed. The signed-in link
+ * is now bound to the caller's OWN verified email only; any other email is
+ * treated as anonymous.
+ */
+export async function emailOwnedByVerifiedUser(userId: string, email: string): Promise<boolean> {
+  const wanted = email.trim().toLowerCase();
+  const [row] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.id, userId),
+        eq(sql`lower(${users.email})`, wanted),
+        eq(users.isEmailVerified, true),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
  * Explicit opt-in subscribe. Idempotent: re-subscribing reactivates and refreshes
  * the row (keeping its existing unsubscribe token + any known user link). Records
  * the marketing consent grant for a signed-in subscriber.
@@ -59,8 +86,11 @@ export async function subscribe(input: SubscribeInput): Promise<void> {
     await db
       .update(newsletterSubscriptions)
       .set({
-        // Never DROP a known user link if an anonymous re-subscribe comes in.
-        userId: input.userId ?? existing.userId,
+        // WRITE-ONCE owner link (I8 review F1): keep an existing non-null link;
+        // only adopt the incoming id when the row is currently anonymous. A
+        // third party can therefore never repoint someone else's subscription to
+        // their own account (which would swap whose consent the gate reads).
+        userId: existing.userId ?? input.userId ?? null,
         source,
         consentVersion: MARKETING_CONSENT_VERSION,
         active: true,

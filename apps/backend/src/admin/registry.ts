@@ -56,6 +56,7 @@ import {
 import * as schema from '../db/schema';
 import { db } from '../db/client';
 import { slugify } from '../lib/slug';
+import { DEFAULT_SECTION_RANK, SECTION_RANK_DEFAULTS } from './rbac';
 import { diffRows, writeAudit } from './audit';
 
 export { slugify };
@@ -806,6 +807,22 @@ export const RESOURCES: ResourceDef[] = [
 ];
 
 export const RESOURCE_BY_NAME = new Map(RESOURCES.map((r) => [r.name, r]));
+
+/**
+ * The minimum rank required to VIEW audit rows for an `entityType` (I8 review
+ * F2). The audit trail carries denormalized change snapshots (e.g. a `users`
+ * row's email + roleId), so reading it must honour the SAME gate as reading the
+ * live resource — otherwise a rank-40 admin, correctly 403'd from the owner-only
+ * `users`/`roles` tables, could harvest that PII + role-change history from
+ * `/_audit`. We take the strictest of: the resource's own `minRank`, its section
+ * default, and the global default (admin-40). Non-resource entity types
+ * (relations, app-settings, ad-placement, …) stay at admin-40.
+ */
+export function auditViewRank(entityType: string): number {
+  const res = RESOURCE_BY_NAME.get(entityType);
+  const sectionRank = SECTION_RANK_DEFAULTS[entityType];
+  return Math.max(res?.minRank ?? 0, sectionRank ?? 0, DEFAULT_SECTION_RANK);
+}
 
 export function listResourceMeta() {
   return RESOURCES.map((r) => ({

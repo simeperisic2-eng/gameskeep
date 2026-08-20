@@ -6,6 +6,19 @@ import './globals.css';
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
 /**
+ * Render every route dynamically (I8 phase-close). The strict nonce-CSP in
+ * `proxy.ts` stamps a PER-REQUEST nonce onto Next's hydration scripts; a
+ * statically-prerendered page bakes its scripts at build time with no nonce, so
+ * under `script-src 'strict-dynamic'` those scripts would be refused and the
+ * page wouldn't hydrate (breaking the auth/promote forms). Forcing dynamic
+ * rendering makes the nonce apply everywhere. Cost is the ~13 previously-static
+ * doc/auth pages — accepted (they're light, still SSR, still crawlable); the
+ * content pages were already dynamic. Data is still cache-everything at the API
+ * layer, so this does not add heavy per-request work.
+ */
+export const dynamic = 'force-dynamic';
+
+/**
  * Brand type (SPEC I5a). next/font self-hosts these at build time — the fonts
  * are bundled and served from our origin, so there is NO runtime network to
  * Google (honors the offline-demo rule). Space Grotesk = display/headings (a

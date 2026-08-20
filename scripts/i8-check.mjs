@@ -48,6 +48,21 @@
  *  24.  AUTO-pin promoted games: an active game promotion surfaces at the front
  *       of Top Rated when the option is on (auto default, manual override)
  *
+ *  Slice 6 — phase-close security fixes (regressions for the review findings)
+ *  25.  F1 (HIGH): a signed-in caller CANNOT hijack another user's subscription
+ *       (userId stays the victim's, write-once) and a withdrawn victim is NOT
+ *       mailed while a legit consented subscriber still is
+ *  26.  F2 (MED): /_audit is rank-gated by the target entity — a rank-40 admin
+ *       gets 403 on entityType=users and no user-PII leaks in a broad read;
+ *       owner still reads it
+ *  27.  F3 (LOW): the subscriber CSV neutralizes formula-lead cells (a +/-/=/@
+ *       leading email is prefixed with an apostrophe)
+ *  28.  F4 (LOW): a javascript: ctaUrl (planted past input validation) is NOT
+ *       rendered as an href at the render site (creative still shows, no link)
+ *  29.  F5 (LOW): the newsletter subject's CR/LF is stripped at the send seam
+ *  30.  strict nonce-CSP: script-src carries a nonce + strict-dynamic and has NO
+ *       'unsafe-inline'
+ *
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
 import { execSync } from 'node:child_process';
@@ -591,6 +606,173 @@ async function main() {
       csrf: adm.csrf,
     });
   sqlOne(`DELETE FROM app_settings WHERE key='lists'`);
+
+  // ════════════════════════ Slice 6 — phase-close security fixes ══════════════
+  // ── 25. F1: signed-in subscribe cannot hijack another user's subscription ────
+  const vB = await makeVerified('f1v'); // victim (registered)
+  await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: vB.jar,
+    csrf: vB.csrf,
+    body: { email: vB.u.email, consent: true },
+  });
+  await api(BACK, '/auth/consent', {
+    method: 'POST',
+    jar: vB.jar,
+    csrf: vB.csrf,
+    body: { consentType: 'marketing', version: 'marketing-2026-01-demo', granted: false },
+  }); // B withdraws
+  const aA = await makeVerified('f1a'); // attacker
+  await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: aA.jar,
+    csrf: aA.csrf,
+    body: { email: vB.u.email, consent: true },
+  }); // attacker subscribes the victim's email
+  const cC = await makeVerified('f1c'); // legit consented recipient
+  await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: cC.jar,
+    csrf: cC.csrf,
+    body: { email: cC.u.email, consent: true },
+  });
+  const bLink = sqlOne(`SELECT user_id FROM newsletter_subscriptions WHERE email='${vB.u.email}'`);
+  const bId = sqlOne(`SELECT id FROM users WHERE email='${vB.u.email}'`);
+  const aId = sqlOne(`SELECT id FROM users WHERE email='${aA.u.email}'`);
+  const mk1 = await api(BACK, '/admin/api/newsletter/campaigns', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { subject: `F1 ${RUN}`, segment: 'all', body: 'x' },
+  });
+  const snd1 = await api(BACK, `/admin/api/newsletter/campaigns/${mk1.json?.data?.id}/send`, {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+  });
+  const bMailed = Number(
+    sqlOne(
+      `SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND to_email='${vB.u.email}'`,
+    ),
+  );
+  const cMailed = Number(
+    sqlOne(
+      `SELECT count(*) FROM email_outbox WHERE purpose='newsletter' AND to_email='${cC.u.email}'`,
+    ),
+  );
+  check(
+    "25. F1: signed-in subscribe can't hijack another user's row; withdrawn victim not mailed, legit one is",
+    bLink === bId && bLink !== aId && bMailed === 0 && cMailed === 1,
+    `linkedTo=${bLink === bId ? 'B(ok)' : 'A(HIJACKED)'} bMailed=${bMailed} cMailed=${cMailed} sent=${snd1.json?.data?.recipientCount}`,
+  );
+  sqlOne(`DELETE FROM newsletter_campaigns WHERE subject LIKE 'F1 ${RUN}'`);
+  sqlOne(`DELETE FROM email_outbox WHERE purpose='newsletter'`);
+  sqlOne(`DELETE FROM newsletter_subscriptions WHERE email IN ('${vB.u.email}','${cC.u.email}')`);
+  sqlOne(`DELETE FROM users WHERE email IN ('${vB.u.email}','${aA.u.email}','${cC.u.email}')`);
+
+  // ── 26. F2: /_audit is rank-gated by the target entityType ──────────────────
+  const roleReg = sqlOne(`SELECT id FROM roles WHERE key='registered'`);
+  const secretEmail = `f2_${RUN}@secret.example`;
+  const cu = await api(BACK, '/admin/api/users', {
+    method: 'POST',
+    jar: own.jar,
+    csrf: own.csrf,
+    body: { username: `f2_${RUN}`, email: secretEmail, roleId: roleReg },
+  });
+  const f2uid = cu.json?.data?.id;
+  const admAuditUsers = await code(BACK, '/admin/api/_audit?entityType=users', adm.jar);
+  const admBroad = await api(BACK, '/admin/api/_audit?limit=200', { jar: adm.jar });
+  const ownAuditUsers = await code(BACK, '/admin/api/_audit?entityType=users', own.jar);
+  check(
+    '26. F2: _audit rank-gated by entity — admin 403 on users audit + no PII leak; owner 200',
+    admAuditUsers === 403 && !admBroad.text.includes(secretEmail) && ownAuditUsers === 200,
+    `admUsers=${admAuditUsers} broadLeak=${admBroad.text.includes(secretEmail)} ownUsers=${ownAuditUsers}`,
+  );
+  if (f2uid)
+    await api(BACK, `/admin/api/users/${f2uid}`, {
+      method: 'DELETE',
+      jar: own.jar,
+      csrf: own.csrf,
+    });
+  sqlOne(`DELETE FROM audit_logs WHERE entity_id='${f2uid}'`);
+  sqlOne(`DELETE FROM users WHERE email='${secretEmail}'`);
+
+  // ── 27. F3: CSV export neutralizes formula-lead cells ───────────────────────
+  const f3email = `+f3${RUN}@evil.example`;
+  const f3ctx = await withCsrf();
+  await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: f3ctx.jar,
+    csrf: f3ctx.csrf,
+    body: { email: f3email, consent: true },
+  });
+  const csvRes = await api(BACK, '/admin/api/newsletter/subscribers/export', { jar: adm.jar });
+  const f3line = csvRes.text.split('\n').find((l) => l.includes(f3email)) ?? '';
+  check(
+    '27. F3: CSV neutralizes formula-lead cells (+/-/=/@ prefixed with an apostrophe)',
+    csvRes.status === 200 && f3line.includes(`"'${f3email}"`),
+    `line=${f3line.slice(0, 40)}`,
+  );
+  sqlOne(`DELETE FROM newsletter_subscriptions WHERE email='${f3email}'`);
+
+  // ── 28. F4: a javascript: ctaUrl is not rendered as an href at the render site
+  const homeSlotF4 = sqlOne(`SELECT id FROM ad_slots WHERE key='home'`);
+  sqlOne(
+    `INSERT INTO ad_placements (slot_id, advertiser_name, headline, cta_url, cta_label, status) VALUES ('${homeSlotF4}','F4 Adv','F4 Headline ${RUN}','javascript:alert(1)','Click','active')`,
+  );
+  const homeF4 = await pageText('/');
+  const jsHref = /href=["']javascript:/i.test(homeF4);
+  const f4Creative = homeF4.includes(`F4 Headline ${RUN}`);
+  check(
+    '28. F4: javascript: ctaUrl not rendered as href (creative shows, no link)',
+    f4Creative && !jsHref,
+    `creative=${f4Creative} jsHref=${jsHref}`,
+  );
+  sqlOne(`DELETE FROM ad_placements WHERE headline='F4 Headline ${RUN}'`);
+
+  // ── 29. F5: newsletter subject CR/LF stripped at the send seam ──────────────
+  const rc = await makeVerified('f5');
+  await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: rc.jar,
+    csrf: rc.csrf,
+    body: { email: rc.u.email, consent: true },
+  });
+  const mk5 = await api(BACK, '/admin/api/newsletter/campaigns', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { subject: `Hi ${RUN}\r\nBcc: evil@x.com`, segment: 'all', body: 'x' },
+  });
+  await api(BACK, `/admin/api/newsletter/campaigns/${mk5.json?.data?.id}/send`, {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+  });
+  const storedSubj = sqlOne(
+    `SELECT subject FROM email_outbox WHERE purpose='newsletter' AND to_email='${rc.u.email}' ORDER BY created_at DESC LIMIT 1`,
+  );
+  check(
+    '29. F5: newsletter subject CR/LF stripped at the send seam (no header injection)',
+    storedSubj.length > 0 && !/[\r\n]/.test(storedSubj),
+    `stored=${JSON.stringify(storedSubj).slice(0, 50)}`,
+  );
+  sqlOne(`DELETE FROM newsletter_campaigns WHERE subject LIKE 'Hi ${RUN}%'`);
+  sqlOne(`DELETE FROM email_outbox WHERE purpose='newsletter'`);
+  sqlOne(`DELETE FROM newsletter_subscriptions WHERE email='${rc.u.email}'`);
+  sqlOne(`DELETE FROM users WHERE email='${rc.u.email}'`);
+
+  // ── 30. strict nonce-CSP ────────────────────────────────────────────────────
+  const cspRes = await fetch(`${FRONT}/`, { cache: 'no-store' });
+  const csp = cspRes.headers.get('content-security-policy') ?? '';
+  const scriptSrc = (csp.match(/script-src[^;]*/) || [''])[0];
+  check(
+    "30. Strict nonce-CSP: script-src has a nonce + strict-dynamic and NO 'unsafe-inline'",
+    /nonce-/.test(scriptSrc) &&
+      /strict-dynamic/.test(scriptSrc) &&
+      !/unsafe-inline/.test(scriptSrc),
+    scriptSrc.replace(/nonce-[^']*/, 'nonce-<N>'),
+  );
 
   print();
 }

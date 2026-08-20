@@ -22,7 +22,13 @@ import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './c
 import { actorOf, sendError, type Actor } from './http';
 import { adminAuthHook, getAdminAuth } from './guard';
 import { moderateComment } from '../community/service';
-import { RESOURCE_BY_NAME, listResourceMeta, uniqueSlug, type ResourceDef } from './registry';
+import {
+  RESOURCE_BY_NAME,
+  auditViewRank,
+  listResourceMeta,
+  uniqueSlug,
+  type ResourceDef,
+} from './registry';
 
 function requireResource(reply: FastifyReply, name: string): ResourceDef | null {
   const resource = RESOURCE_BY_NAME.get(name);
@@ -164,8 +170,21 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       }));
 
       // Read the immutable audit trail (full audit UI is I8). Optional filters.
-      admin.get('/_audit', async (req) => {
+      // SECURITY (I8 review F2): the audit snapshots embed each entity's fields
+      // (e.g. a user's email + roleId), so reads are gated by the target
+      // entityType's own view-rank — a rank-40 admin can't harvest owner-only
+      // users/roles PII/role-history here. An explicit over-rank entityType is a
+      // 403; a broad query silently drops rows the caller couldn't otherwise see.
+      admin.get('/_audit', async (req, reply) => {
         const q = req.query as { entityType?: string; entityId?: string; limit?: string };
+        const rank = getAdminAuth(req)?.rank ?? 0;
+        if (q.entityType && rank < auditViewRank(q.entityType)) {
+          reply.code(403).send({
+            error: 'forbidden',
+            message: 'This audit scope requires a higher rank.',
+          });
+          return;
+        }
         const conds = [];
         if (q.entityType) conds.push(eq(auditLogs.entityType, q.entityType));
         if (q.entityId) conds.push(eq(auditLogs.entityId, q.entityId));
@@ -177,7 +196,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           .where(where)
           .orderBy(desc(auditLogs.createdAt))
           .limit(limit);
-        return { data: rows };
+        reply.send({ data: rows.filter((r) => rank >= auditViewRank(r.entityType)) });
       });
 
       // ── relation routes (declared before /:resource so they take precedence) ──

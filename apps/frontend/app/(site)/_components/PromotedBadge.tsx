@@ -1,4 +1,5 @@
 import type { GamePromotion } from '@/lib/public-api';
+import { isHttpUrl } from '@/lib/url';
 
 /**
  * "Promoted" badge on a game page (SPEC I8, Slice 2) when the game has an ACTIVE
@@ -18,7 +19,7 @@ export function PromotedBadge({
       <span className="gk-promoted-text">Paid promotion · {promotion.advertiser}</span>
     </>
   );
-  return promotion.ctaUrl ? (
+  return isHttpUrl(promotion.ctaUrl) ? (
     <a
       className="gk-promoted-badge"
       href={promotion.ctaUrl}
