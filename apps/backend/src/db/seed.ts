@@ -206,6 +206,11 @@ export async function seedDemo(): Promise<void> {
     platforms: string[];
     steamAppId: number;
     summary: string;
+    status?: string;
+    releaseDate?: string;
+    isIndie?: boolean;
+    upcomingFeatured?: boolean;
+    tags?: string[];
   }): Promise<Row> {
     const subject = await ensure(
       subjects,
@@ -216,17 +221,25 @@ export async function seedDemo(): Promise<void> {
       games,
       {
         subjectId: subject.id,
-        status: 'released',
+        status: opts.status ?? 'released',
+        releaseDate: opts.releaseDate ?? null,
         developer: opts.developer,
         publisher: opts.publisher,
         genres: opts.genres,
         platforms: opts.platforms,
+        tags: opts.tags ?? null,
         steamAppId: opts.steamAppId,
         summary: opts.summary,
+        isIndie: opts.isIndie ?? false,
+        upcomingFeatured: opts.upcomingFeatured ?? false,
       },
       eq(games.subjectId, subject.id as string),
     );
   }
+
+  /** YYYY-MM-DD `n` days from today (UTC); negative = past. Recomputed per boot. */
+  const dayOffset = (n: number): string =>
+    new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
   const cyberpunk = await ensureGame({
     slug: 'cyberpunk-2077',
@@ -314,6 +327,66 @@ export async function seedDemo(): Promise<void> {
     summary: 'An action-driven entry in the Final Fantasy series set in Valisthea.',
   });
 
+  // ── Upcoming enrichment demo data (fictional; showcases each group) ──────────
+  // An EDITORIAL-FEATURED upcoming title (unlabeled curatorial pin), an INDIE
+  // upcoming title, and two recently-RELEASED indie titles for the "New" section
+  // (dates recomputed per boot so New is never empty). Promoted (paid) entries
+  // ship EMPTY (like ad placements) — added at review time, not seeded.
+  await ensureGame({
+    slug: 'aether-drift',
+    name: 'Aether Drift',
+    developer: 'Skyforge Collective',
+    publisher: 'Meridian Games',
+    genres: ['Adventure', 'Puzzle'],
+    platforms: ['PC', 'PS5', 'Switch'],
+    steamAppId: 3100010,
+    summary: 'A hand-painted sky-sailing adventure across floating archipelagos.',
+    status: 'in_development',
+    releaseDate: dayOffset(90),
+    upcomingFeatured: true,
+  });
+  await ensureGame({
+    slug: 'hollow-verge',
+    name: 'Hollow Verge',
+    developer: 'Lantern Room',
+    publisher: 'Lantern Room',
+    genres: ['Metroidvania', 'Action'],
+    platforms: ['PC', 'Switch'],
+    steamAppId: 3100020,
+    summary: 'A moody hand-drawn metroidvania from a two-person studio.',
+    status: 'announced',
+    isIndie: true,
+    tags: ['indie', 'metroidvania'],
+  });
+  await ensureGame({
+    slug: 'pixel-rebound',
+    name: 'Pixel Rebound',
+    developer: 'Cornerlight',
+    publisher: 'Cornerlight',
+    genres: ['Platformer', 'Roguelike'],
+    platforms: ['PC'],
+    steamAppId: 3100030,
+    summary: 'A punchy roguelite platformer that just launched into 1.0.',
+    status: 'released',
+    releaseDate: dayOffset(-6),
+    isIndie: true,
+    tags: ['indie'],
+  });
+  await ensureGame({
+    slug: 'tidewatcher',
+    name: 'Tidewatcher',
+    developer: 'Saltbox Games',
+    publisher: 'Saltbox Games',
+    genres: ['Strategy', 'Survival'],
+    platforms: ['PC', 'Xbox Series'],
+    steamAppId: 3100040,
+    summary: 'A cozy coastal base-builder about weathering the tides.',
+    status: 'released',
+    releaseDate: dayOffset(-18),
+    isIndie: true,
+    tags: ['indie', 'cozy'],
+  });
+
   // ── rating data so the I4b engine has differing layers to compute ────────────
   await seedRatings({
     cyberpunkId: cyberpunk.id as string,
@@ -328,6 +401,30 @@ export async function seedDemo(): Promise<void> {
     trustedLevelId: (await ensure(userLevels, levelDefs[2]!, eq(userLevels.key, 'trusted')))
       .id as string,
   });
+
+  // ── Upcoming DLC / expansions — add-ons tied to a PARENT game, not yet out ────
+  // Runs AFTER seedRatings (which seeds the detail DLC like Phantom Liberty via a
+  // `hasAny`-guarded helper) so this ADDS to a game's DLC rather than pre-empting
+  // it. `game_dlc` has no unique constraint, so we existence-check by (game, name)
+  // — re-seeding on every boot stays idempotent.
+  async function ensureDlc(
+    gameId: string,
+    name: string,
+    priceCents: number,
+    days: number,
+  ): Promise<void> {
+    const [existing] = await db
+      .select({ id: gameDlc.id })
+      .from(gameDlc)
+      .where(and(eq(gameDlc.gameId, gameId), eq(gameDlc.name, name)))
+      .limit(1);
+    if (existing) return;
+    await db
+      .insert(gameDlc)
+      .values({ gameId, name, priceCents, currency: 'USD', releaseDate: dayOffset(days) });
+  }
+  await ensureDlc(baldursGate3.id as string, 'Baldur’s Gate 3 — Patch 9: New Horizons', 0, 45);
+  await ensureDlc(cyberpunk.id as string, 'Cyberpunk 2077 — Nightscape (Expansion)', 2999, 120);
 
   // ── a source or two ───────────────────────────────────────────────────────
   const mainstream = await ensure(

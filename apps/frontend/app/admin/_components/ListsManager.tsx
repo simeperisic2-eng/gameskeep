@@ -111,6 +111,11 @@ export function ListsManager({
           <NumberField k="feedCount" label="Main feed" hint="the rest, newest first" />
           <NumberField k="topRatedCount" label="Top rated games" hint="ranking rail" />
           <NumberField k="focusCount" label="Games in focus" hint="biggest disconnect" />
+          <NumberField
+            k="newWindowDays"
+            label="“New” window (days)"
+            hint="Upcoming → recently released"
+          />
         </div>
       </section>
 

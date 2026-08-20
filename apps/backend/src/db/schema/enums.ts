@@ -18,6 +18,7 @@ import {
   SUBJECT_TYPES,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
+  UPCOMING_OVERRIDES,
   USER_STATUSES,
   VIDEO_PROVIDERS,
 } from '@gameskeep/shared/constants';
@@ -56,3 +57,4 @@ export const videoProviderEnum = pgEnum('video_provider', VIDEO_PROVIDERS);
 export const externalRatingKindEnum = pgEnum('external_rating_kind', EXTERNAL_RATING_KINDS);
 export const sysReqKindEnum = pgEnum('sys_req_kind', ['minimum', 'recommended']);
 export const unmatchedStatusEnum = pgEnum('unmatched_status', UNMATCHED_STATUSES);
+export const upcomingOverrideEnum = pgEnum('upcoming_override', UPCOMING_OVERRIDES);

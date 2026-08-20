@@ -436,6 +436,15 @@ export type NewsletterCampaignKind = (typeof NEWSLETTER_CAMPAIGN_KINDS)[number];
 // Segmentation is GDPR-gated in the resolver: withdrawn/inactive are excluded.
 export const NEWSLETTER_SEGMENT_ALL = 'all';
 
+// Upcoming manual override (Upcoming enrichment, decision 1). A game appears in
+// Upcoming automatically by pre-release STATUS; an admin can explicitly override
+// that: `show` force-includes regardless of status, `hide` force-excludes. Null
+// (unset) = auto-by-status. The override always wins, and auto vs manually-placed
+// stays distinguishable. Editorial `upcomingFeatured` (an UNLABELED curatorial
+// pin) is separate from the PAID Promoted flag (the I8 placement, always labeled).
+export const UPCOMING_OVERRIDES = ['show', 'hide'] as const;
+export type UpcomingOverride = (typeof UPCOMING_OVERRIDES)[number];
+
 // `deleted` = an anonymize-and-tombstone account (I6 Slice 7, GDPR decision 7):
 // PII scrubbed, credibility fields frozen so aggregates stay honest, cannot log in.
 export const USER_STATUSES = ['active', 'suspended', 'banned', 'deleted'] as const;

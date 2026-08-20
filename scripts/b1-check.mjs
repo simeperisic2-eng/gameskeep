@@ -202,14 +202,16 @@ async function main() {
     h.startsWith('https://'),
   );
   const upHtml = pages.upcoming;
+  // Upcoming enrichment added a genre/platform FILTER bar (also `gk-chip-link`,
+  // linking within /upcoming?…); the CARD taxonomy chips still deep-link OUT to
+  // the browse catalog. Assert the card chips deep-link (≥3) rather than that
+  // EVERY chip does (the filter chips legitimately stay on /upcoming).
   const upChips = hrefsOf(upHtml, 'gk-chip-link');
+  const browseChips = upChips.filter((h) => h.startsWith('/games/browse?'));
   check(
     '8. Coverage headlines link OUT to the original (+ "Read at" kept); upcoming taxonomy chips deep-link',
-    coverageTitles.length >= 3 &&
-      topicHtml.includes('Read at') &&
-      upChips.length >= 3 &&
-      upChips.every((h) => h.startsWith('/games/browse?')),
-    `${coverageTitles.length} outbound headlines, ${upChips.length} upcoming chips`,
+    coverageTitles.length >= 3 && topicHtml.includes('Read at') && browseChips.length >= 3,
+    `${coverageTitles.length} outbound headlines, ${browseChips.length}/${upChips.length} browse chips`,
   );
 
   // ── 9. a chip destination actually resolves to the filtered catalog ─────────

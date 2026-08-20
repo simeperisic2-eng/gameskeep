@@ -33,7 +33,7 @@ import {
   topicTypes,
   users,
 } from '../db/schema';
-import { activePromotedGameSlugs } from '../ads/service';
+import { activeGamePromotions, activePromotedGameSlugs } from '../ads/service';
 import { applyPins, listsSettings } from '../lists/settings';
 
 /**
@@ -1769,7 +1769,33 @@ function todayIso(): string {
   return `${d.getUTCFullYear()}-${m}-${day}`;
 }
 
-/** The upcoming slate (announced / in-development / early-access), soonest first. */
+/** Sort helper: dated soonest→latest first; undated (TBA) last, alphabetical. */
+function byReleaseThenName(
+  a: { releaseDate: string | null; name: string },
+  b: { releaseDate: string | null; name: string },
+): number {
+  if (a.releaseDate && b.releaseDate)
+    return a.releaseDate.localeCompare(b.releaseDate) || a.name.localeCompare(b.name);
+  if (a.releaseDate) return -1;
+  if (b.releaseDate) return 1;
+  return a.name.localeCompare(b.name);
+}
+
+/** A pre-release game is "upcoming" by status: announced / in-dev / not-yet-out EA. */
+function isPreReleaseByStatus(status: string, releaseDate: string | null, today: string): boolean {
+  if (status === 'announced' || status === 'in_development') return true;
+  // early-access is already playable — keep it only while its 1.0 is still ahead
+  // (or undated); never a years-old EA launch.
+  if (status === 'early_access') return releaseDate == null || releaseDate >= today;
+  return false;
+}
+
+/**
+ * The upcoming slate (AUTO by status + MANUAL override). A game is in Upcoming
+ * when it's pre-release by status OR force-shown by an admin, and NOT when it's
+ * force-hidden — the override always wins. Soonest-first. Used by the homepage
+ * "coming soon" rail; the /upcoming page uses the grouped `getUpcomingPage`.
+ */
 export async function getUpcomingData(): Promise<UpcomingGame[]> {
   const rows = await db
     .select({
@@ -1785,41 +1811,256 @@ export async function getUpcomingData(): Promise<UpcomingGame[]> {
       series: games.series,
       summary: games.summary,
       coverUrl: games.coverUrl,
+      upcomingOverride: games.upcomingOverride,
     })
     .from(games)
-    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
-    .where(inArray(games.status, ['announced', 'in_development', 'early_access']));
+    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')));
 
   const today = todayIso();
-  return (
-    rows
-      // "Upcoming" = not yet out. Announced / in-development are pre-release by
-      // status; early-access games are already playable, so keep those only when
-      // their 1.0 is still ahead (or undated) — never a years-old EA launch.
-      .filter((r) => r.status !== 'early_access' || r.releaseDate == null || r.releaseDate >= today)
-      .map((r) => ({
-        id: r.id,
-        slug: r.slug,
-        name: r.name,
-        status: r.status,
-        releaseDate: r.releaseDate ?? null,
-        genres: r.genres ?? [],
-        platforms: r.platforms ?? [],
-        developer: r.developer ?? null,
-        publisher: r.publisher ?? null,
-        series: r.series ?? null,
-        summary: r.summary ?? null,
-        coverUrl: publicAssetUrl(r.coverUrl),
-      }))
-      .sort((a, b) => {
-        // Dated games first, soonest → latest; undated (TBA) last, alphabetical.
-        if (a.releaseDate && b.releaseDate)
-          return a.releaseDate.localeCompare(b.releaseDate) || a.name.localeCompare(b.name);
-        if (a.releaseDate) return -1;
-        if (b.releaseDate) return 1;
-        return a.name.localeCompare(b.name);
-      })
-  );
+  return rows
+    .filter((r) => {
+      if (r.upcomingOverride === 'hide') return false; // manual force-hide wins
+      if (r.upcomingOverride === 'show') return true; // manual force-show wins
+      return isPreReleaseByStatus(r.status, r.releaseDate ?? null, today);
+    })
+    .map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      name: r.name,
+      status: r.status,
+      releaseDate: r.releaseDate ?? null,
+      genres: r.genres ?? [],
+      platforms: r.platforms ?? [],
+      developer: r.developer ?? null,
+      publisher: r.publisher ?? null,
+      series: r.series ?? null,
+      summary: r.summary ?? null,
+      coverUrl: publicAssetUrl(r.coverUrl),
+    }))
+    .sort(byReleaseThenName);
+}
+
+// ── Upcoming enrichment: grouped discovery + New + overrides + promoted ───────
+export interface UpcomingEntry extends UpcomingGame {
+  isIndie: boolean;
+  /** Editorial curatorial pin — floats the entry up. UNLABELED (our own opinion). */
+  featured: boolean;
+  /** PAID promotion (I8 placement) — carries the render-forced Promoted label. */
+  promoted: { advertiser: string } | null;
+}
+
+export interface UpcomingDlcEntry {
+  id: string;
+  name: string;
+  parentSlug: string;
+  parentName: string;
+  releaseDate: string | null;
+  priceCents: number | null;
+  currency: string;
+  url: string | null;
+}
+
+export interface UpcomingPageData {
+  games: UpcomingEntry[];
+  dlc: UpcomingDlcEntry[];
+  newReleases: UpcomingEntry[];
+  /** Facets for the genre/platform filters (reuse the A1 filter URLs). */
+  genres: string[];
+  platforms: string[];
+  newWindowDays: number;
+  filters: { genre: string | null; platform: string | null; indie: boolean };
+}
+
+export interface UpcomingFilters {
+  genre?: string;
+  platform?: string;
+  indie?: boolean;
+}
+
+const NEW_WINDOW_DAYS_DEFAULT = 30;
+
+/**
+ * The "New" window in days (recently-released) — admin-configurable, NOT
+ * hardcoded. Lives in the `lists` app_setting alongside the other homepage
+ * list/ranking knobs (edited on the Control Panel's Lists & slots page).
+ */
+async function newWindowDays(): Promise<number> {
+  try {
+    const [row] = await db
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, 'lists'))
+      .limit(1);
+    const raw = (row?.value ?? {}) as { newWindowDays?: unknown };
+    const n = raw.newWindowDays;
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 365) return n;
+  } catch {
+    /* fall through to default */
+  }
+  return NEW_WINDOW_DAYS_DEFAULT;
+}
+
+/** YYYY-MM-DD `days` before today (UTC) — the lower bound of the "New" window. */
+function isoDaysAgo(days: number): string {
+  const d = new Date(Date.now() - days * 86_400_000);
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${m}-${day}`;
+}
+
+const normUpcomingFilter = (v: string | undefined): string | null => {
+  const s = (v ?? '').trim().toLowerCase();
+  return s ? s : null;
+};
+
+/**
+ * The enriched Upcoming page (Upcoming enrichment). Groups by entry type —
+ * upcoming games, upcoming DLC/expansions (add-ons tied to a parent), and a
+ * "New" section (recently released within the admin-configured window). AUTO +
+ * MANUAL: pre-release-by-status default, admin force-show/hide overrides, an
+ * editorial (unlabeled) featured pin, and the PAID Promoted flag (I8 placement,
+ * always labeled) surfaced + floated. Genre/platform/indie filters reuse the A1
+ * pattern; facets derive from the full upcoming set so the option list is stable.
+ */
+export async function getUpcomingPage(filters: UpcomingFilters = {}): Promise<UpcomingPageData> {
+  const today = todayIso();
+  const [windowDays, promotions] = await Promise.all([newWindowDays(), activeGamePromotions()]);
+  const since = isoDaysAgo(windowDays);
+
+  const rows = await db
+    .select({
+      id: games.id,
+      slug: subjects.slug,
+      name: subjects.name,
+      status: games.status,
+      releaseDate: games.releaseDate,
+      genres: games.genres,
+      platforms: games.platforms,
+      developer: games.developer,
+      publisher: games.publisher,
+      series: games.series,
+      summary: games.summary,
+      coverUrl: games.coverUrl,
+      upcomingOverride: games.upcomingOverride,
+      upcomingFeatured: games.upcomingFeatured,
+      isIndie: games.isIndie,
+    })
+    .from(games)
+    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')));
+
+  const toEntry = (r: (typeof rows)[number]): UpcomingEntry => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    status: r.status,
+    releaseDate: r.releaseDate ?? null,
+    genres: r.genres ?? [],
+    platforms: r.platforms ?? [],
+    developer: r.developer ?? null,
+    publisher: r.publisher ?? null,
+    series: r.series ?? null,
+    summary: r.summary ?? null,
+    coverUrl: publicAssetUrl(r.coverUrl),
+    isIndie: r.isIndie,
+    featured: r.upcomingFeatured,
+    promoted: promotions.has(r.slug) ? { advertiser: promotions.get(r.slug)! } : null,
+  });
+
+  // Upcoming games: pre-release by status OR force-shown; never force-hidden.
+  const upcoming = rows
+    .filter((r) => {
+      if (r.upcomingOverride === 'hide') return false;
+      if (r.upcomingOverride === 'show') return true;
+      return isPreReleaseByStatus(r.status, r.releaseDate ?? null, today);
+    })
+    .map(toEntry);
+
+  // New: released within the window, force-hidden respected (never force-shown —
+  // "New" is strictly a post-release window, not an override target).
+  const newReleases = rows
+    .filter(
+      (r) =>
+        r.upcomingOverride !== 'hide' &&
+        r.status === 'released' &&
+        r.releaseDate != null &&
+        r.releaseDate <= today &&
+        r.releaseDate >= since,
+    )
+    .map(toEntry)
+    .sort((a, b) => (b.releaseDate ?? '').localeCompare(a.releaseDate ?? '')); // newest first
+
+  // Facets from the FULL upcoming set (stable option list), before filtering.
+  const genres = facetList(upcoming.flatMap((g) => g.genres));
+  const platforms = facetList(upcoming.flatMap((g) => g.platforms));
+
+  // Apply the requested filters to the games section only.
+  const genre = normUpcomingFilter(filters.genre);
+  const platform = normUpcomingFilter(filters.platform);
+  const indie = filters.indie === true;
+  let filtered = upcoming;
+  if (genre) filtered = filtered.filter((g) => g.genres.some((x) => x.toLowerCase() === genre));
+  if (platform)
+    filtered = filtered.filter((g) => g.platforms.some((x) => x.toLowerCase() === platform));
+  if (indie) filtered = filtered.filter((g) => g.isIndie);
+
+  // Featured/promoted float to the front; then soonest-first.
+  const gamesSorted = filtered.sort((a, b) => {
+    const aTop = a.featured || a.promoted ? 1 : 0;
+    const bTop = b.featured || b.promoted ? 1 : 0;
+    if (aTop !== bTop) return bTop - aTop;
+    return byReleaseThenName(a, b);
+  });
+
+  // Upcoming DLC / expansions: add-ons tied to a PARENT game, not yet out.
+  const dlcRows = await db
+    .select({
+      id: gameDlc.id,
+      name: gameDlc.name,
+      releaseDate: gameDlc.releaseDate,
+      priceCents: gameDlc.priceCents,
+      currency: gameDlc.currency,
+      url: gameDlc.url,
+      parentSlug: subjects.slug,
+      parentName: subjects.name,
+    })
+    .from(gameDlc)
+    .innerJoin(games, eq(gameDlc.gameId, games.id))
+    .innerJoin(subjects, eq(games.subjectId, subjects.id));
+  const dlc = dlcRows
+    .filter((d) => d.releaseDate == null || d.releaseDate >= today)
+    .map((d) => ({
+      id: d.id,
+      name: d.name,
+      parentSlug: d.parentSlug,
+      parentName: d.parentName,
+      releaseDate: d.releaseDate ?? null,
+      priceCents: d.priceCents ?? null,
+      currency: d.currency,
+      url: d.url ?? null,
+    }))
+    .sort(byReleaseThenName);
+
+  return {
+    games: gamesSorted,
+    dlc,
+    newReleases,
+    genres,
+    platforms,
+    newWindowDays: windowDays,
+    filters: { genre, platform, indie },
+  };
+}
+
+/** Distinct, case-folded facet values sorted by frequency (for a filter list). */
+function facetList(values: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    const key = v.trim();
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map((e) => e[0]);
 }
 
 // ── sources (SPEC I5b; BLUEPRINT 2.5) ────────────────────────────────────────

@@ -1,14 +1,17 @@
-import type { UpcomingGame } from '@/lib/public-api';
+import type { UpcomingEntry, UpcomingGame } from '@/lib/public-api';
 import { CoverArt } from './CoverArt';
 import { HypeButton } from './HypeButton';
 
 /**
- * Upcoming game card (SPEC I5b; BLUEPRINT 2.4) — status + release date + a live
- * countdown, with the community HYPE vote shown as a labeled placeholder slot
- * (it activates with accounts in I6, like the community ratings slot). The
- * countdown is computed server-side at render (this page is force-dynamic), so
- * crawlers get a real number, not a client timer.
+ * Upcoming game card (SPEC I5b; BLUEPRINT 2.4; Upcoming enrichment) — status +
+ * release date + a live countdown + the HYPE placeholder. Enrichment (optional):
+ * a PAID `promoted` carries the render-forced "Promoted · advertiser" label (as
+ * prominent as a bias flag — transparency is not relaxed for revenue); an
+ * `isIndie` shows an "Indie" chip; an editorial `featured` gets a subtle accent
+ * frame + a NEUTRAL "Editor's pick" marker (our free curatorial choice — NOT a
+ * paid label). The countdown is computed server-side at render (force-dynamic).
  */
+type CardGame = UpcomingGame & Partial<Pick<UpcomingEntry, 'isIndie' | 'featured' | 'promoted'>>;
 const STATUS_LABEL: Record<string, string> = {
   announced: 'Announced',
   in_development: 'In development',
@@ -45,20 +48,36 @@ function countdown(days: number | null): { value: string; unit: string } {
   return { value: String(Math.round(days / 30)), unit: 'months' };
 }
 
-export function UpcomingCard({ game }: { game: UpcomingGame }): React.JSX.Element {
+export function UpcomingCard({ game }: { game: CardGame }): React.JSX.Element {
   const days = daysUntil(game.releaseDate);
   const cd = countdown(days);
   const statusLabel = STATUS_LABEL[game.status] ?? game.status;
   const maker = game.developer ?? game.publisher;
+  const promoted = game.promoted ?? null;
+  const featured = Boolean(game.featured);
 
   return (
-    <article className="gk-upcard">
+    <article
+      className={`gk-upcard${promoted ? ' is-promoted' : ''}${featured && !promoted ? ' is-featured' : ''}`}
+    >
+      {/* PAID promotion — the render-forced label (never a toggleable field). */}
+      {promoted ? (
+        <div className="gk-upcard-promoted" aria-label="Promoted content">
+          <span className="gk-slot-flag">Promoted</span>
+          <span className="gk-upcard-promoted-by">Paid promotion · {promoted.advertiser}</span>
+        </div>
+      ) : featured ? (
+        <div className="gk-upcard-featured" aria-label="Editor's pick">
+          Editor’s pick
+        </div>
+      ) : null}
       <a className="gk-upcard-cover" href={`/games/${game.slug}`}>
         <CoverArt label={game.name} imageUrl={game.coverUrl} variant="thumb" />
       </a>
       <div className="gk-upcard-body">
         <div className="gk-upcard-top">
           <span className={`gk-status gk-status-game-${game.status}`}>{statusLabel}</span>
+          {game.isIndie ? <span className="gk-chip gk-chip-indie">Indie</span> : null}
           {game.series ? <span className="gk-chip">{game.series}</span> : null}
         </div>
 

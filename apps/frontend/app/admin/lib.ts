@@ -169,6 +169,7 @@ export interface ListsConfig {
   pinnedTopicSlugs: string[];
   pinnedGameSlugs: string[];
   pinPromotedGames: boolean;
+  newWindowDays: number;
 }
 export interface ListsPreview {
   hero: { slug: string; title: string }[];

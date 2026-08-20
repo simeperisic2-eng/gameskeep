@@ -485,15 +485,66 @@ export interface UpcomingGame {
   coverUrl: string | null;
 }
 
-/** Fetch the upcoming slate for SSR. Never throws — empty list on failure. */
-export async function getUpcoming(): Promise<UpcomingGame[]> {
+/** An Upcoming/New entry — a game + its enrichment flags (indie/featured/promoted). */
+export interface UpcomingEntry extends UpcomingGame {
+  isIndie: boolean;
+  /** Editorial curatorial pin — UNLABELED (our opinion, not paid). */
+  featured: boolean;
+  /** PAID promotion — carries the render-forced "Promoted" label. */
+  promoted: { advertiser: string } | null;
+}
+
+export interface UpcomingDlcEntry {
+  id: string;
+  name: string;
+  parentSlug: string;
+  parentName: string;
+  releaseDate: string | null;
+  priceCents: number | null;
+  currency: string;
+  url: string | null;
+}
+
+export interface UpcomingPageData {
+  games: UpcomingEntry[];
+  dlc: UpcomingDlcEntry[];
+  newReleases: UpcomingEntry[];
+  genres: string[];
+  platforms: string[];
+  newWindowDays: number;
+  filters: { genre: string | null; platform: string | null; indie: boolean };
+}
+
+const EMPTY_UPCOMING: UpcomingPageData = {
+  games: [],
+  dlc: [],
+  newReleases: [],
+  genres: [],
+  platforms: [],
+  newWindowDays: 30,
+  filters: { genre: null, platform: null, indie: false },
+};
+
+/** Fetch the grouped Upcoming page for SSR. Never throws — empty groups on failure. */
+export async function getUpcoming(
+  filters: {
+    genre?: string;
+    platform?: string;
+    indie?: boolean;
+  } = {},
+): Promise<UpcomingPageData> {
+  const qs = new URLSearchParams();
+  if (filters.genre) qs.set('genre', filters.genre);
+  if (filters.platform) qs.set('platform', filters.platform);
+  if (filters.indie) qs.set('indie', '1');
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
   try {
-    const res = await fetch(`${backendUrl}/public/upcoming`, { cache: 'no-store' });
-    if (!res.ok) return [];
-    const body = (await res.json()) as { data?: UpcomingGame[] };
-    return body.data ?? [];
+    const res = await fetch(`${backendUrl}/public/upcoming${suffix}`, { cache: 'no-store' });
+    if (!res.ok) return EMPTY_UPCOMING;
+    const body = (await res.json()) as { data?: UpcomingPageData };
+    return body.data ?? EMPTY_UPCOMING;
   } catch {
-    return [];
+    return EMPTY_UPCOMING;
   }
 }
 

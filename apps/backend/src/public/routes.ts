@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { gameSuggestionInput } from '@gameskeep/shared/validation';
 import {
   getCatalogData,
   getDiscoveryData,
@@ -10,11 +11,13 @@ import {
   getSourceDetail,
   getSourcesData,
   getTopicDetail,
-  getUpcomingData,
+  getUpcomingPage,
 } from './queries';
 import { getPublicProfile } from './profile';
 import { promotionForGame, slotPublicView } from '../ads/service';
 import { unsubscribe } from '../awards/subscribe';
+import { allowSuggest, suggestGame } from '../catalog/suggest';
+import { csrfOk, CSRF_HEADER } from '../auth/session';
 import { sendError } from '../admin/http';
 
 /**
@@ -106,10 +109,49 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
         }
       });
 
-      // The upcoming slate (BLUEPRINT 2.4) — status + release date for countdowns.
-      pub.get('/upcoming', async (_req, reply) => {
+      // The enriched Upcoming page (Upcoming enrichment; BLUEPRINT 2.4) — grouped
+      // (games / DLC & expansions / New) with status+overrides+promoted+filters.
+      pub.get<{ Querystring: { genre?: string; platform?: string; indie?: string } }>(
+        '/upcoming',
+        async (req, reply) => {
+          try {
+            const { genre, platform, indie } = req.query;
+            reply.send({
+              data: await getUpcomingPage({
+                genre,
+                platform,
+                indie: indie === '1' || indie === 'true',
+              }),
+            });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+
+      // Public "Suggest a missing game" (Upcoming enrichment, decision 3). A new
+      // PUBLIC write surface: CSRF-gated (the scope hook below), zod-validated +
+      // escaped UGC, rate-limited, and files a PENDING unmatched-game row — it
+      // NEVER publishes. An editor reviews the queue and adds the game.
+      pub.post<{ Body: unknown }>('/suggest-game', async (req, reply) => {
         try {
-          reply.send({ data: await getUpcomingData() });
+          if (!csrfOk(req)) {
+            reply.code(403).send({
+              error: 'csrf',
+              message: `Missing or mismatched ${CSRF_HEADER} header (fetch /auth/csrf first).`,
+            });
+            return;
+          }
+          if (!allowSuggest(req.ip)) {
+            reply.code(429).send({
+              error: 'rate_limited',
+              message: 'Too many suggestions — try again shortly.',
+            });
+            return;
+          }
+          const input = gameSuggestionInput.parse(req.body);
+          await suggestGame(input, req.ip);
+          reply.send({ ok: true }); // generic — never an "is this game known?" oracle
         } catch (err) {
           sendError(reply, err);
         }

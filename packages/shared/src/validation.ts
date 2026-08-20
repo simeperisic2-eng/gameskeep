@@ -17,6 +17,7 @@ import {
   SUBJECT_TYPES,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
+  UPCOMING_OVERRIDES,
   USER_STATUSES,
   VIDEO_PROVIDERS,
 } from './constants';
@@ -147,6 +148,10 @@ export const gameCreate = z.object({
   hltbCompletionistHours: z.number().min(0).max(100_000).optional(),
   steamCompletionRate: z.number().min(0).max(100).optional(),
   externalRefs: externalRefs.optional(),
+  // Upcoming enrichment overrides (auto + manual). `null` clears back to auto.
+  upcomingOverride: z.enum(UPCOMING_OVERRIDES).nullable().optional(),
+  upcomingFeatured: z.boolean().optional(),
+  isIndie: z.boolean().optional(),
 });
 
 export const sourceCreate = z.object({
@@ -584,6 +589,41 @@ export const adPlacementCreate = z.object({
 /** Admin sets a placement's status manually (after off-site payment). */
 export const adStatusInput = z.object({ status: z.enum(AD_PLACEMENT_STATUSES) });
 
+// ── public "Suggest a missing game" (Upcoming enrichment, decision 3) ─────────
+/**
+ * UGC from an unauthenticated submitter — validated + length-bounded here,
+ * stored raw in the unmatched queue's `rawContext`, rendered ESCAPED in admin.
+ * Files a PENDING row only; nothing publishes without editor approval.
+ */
+export const gameSuggestionInput = z.object({
+  name: z.string().trim().min(1, 'a game name is required').max(200),
+  platform: z.string().trim().max(80).optional(),
+  note: z.string().trim().max(1000).optional(),
+  url: httpUrl.optional(),
+});
+export type GameSuggestionInput = z.infer<typeof gameSuggestionInput>;
+
+/**
+ * Admin-only promotion PRICING reference (Upcoming enrichment, decision 4). An
+ * internal note staff read when preparing an OFF-SITE offer — RBAC-gated, NEVER
+ * in any public payload. No on-site payment; pricing is configurable, not code.
+ */
+export const promoPricingInput = z.object({
+  note: z.string().trim().max(2000).optional(),
+  tiers: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(80),
+        priceCents: z.number().int().min(0).max(100_000_000).optional(),
+        currency: z.string().trim().length(3).default('USD'),
+        note: z.string().trim().max(400).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
+});
+export type PromoPricingInput = z.infer<typeof promoPricingInput>;
+
 // ── newsletter campaigns (I8 Slice 3) ─────────────────────────────────────────
 /**
  * A segment is either the reserved 'all' or a subscription `source` label
@@ -638,6 +678,8 @@ export const listsConfigInput = z.object({
   pinnedTopicSlugs: pinSlugList.optional(),
   pinnedGameSlugs: pinSlugList.optional(),
   pinPromotedGames: z.boolean().optional(),
+  // Upcoming enrichment: "New" (recently-released) window, in days.
+  newWindowDays: z.number().int().min(1).max(365).optional(),
 });
 
 /** Editing a DRAFT campaign — every field optional; the route guards the status. */

@@ -19,6 +19,7 @@ import {
   gameStatusEnum,
   launchStateFlagEnum,
   sysReqKindEnum,
+  upcomingOverrideEnum,
   videoProviderEnum,
 } from './enums';
 import { sources } from './sources';
@@ -76,6 +77,16 @@ export const games = pgTable(
     // Provider id mapping (I2): { igdb, rawg, steam, mock } — lets the live
     // IGDB/RAWG path round-trip and de-dupe by external id with no migration.
     externalRefs: jsonb('external_refs').$type<Record<string, string | number>>(),
+
+    // Upcoming enrichment (AUTO + MANUAL OVERRIDE). A game shows in Upcoming
+    // automatically by pre-release STATUS; `upcomingOverride` lets an admin force
+    // it: 'show' (include regardless of status) / 'hide' (exclude) / null (auto).
+    // `upcomingFeatured` is an EDITORIAL, UNLABELED curatorial pin (distinct from
+    // the PAID Promoted flag, which is the always-labeled I8 ad-placement).
+    // `isIndie` is an editor-set property/filter (indie is a label, not a page).
+    upcomingOverride: upcomingOverrideEnum('upcoming_override'),
+    upcomingFeatured: boolean('upcoming_featured').notNull().default(false),
+    isIndie: boolean('is_indie').notNull().default(false),
 
     ...timestamps(),
   },

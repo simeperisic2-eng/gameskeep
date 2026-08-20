@@ -28,6 +28,8 @@ export interface ListsSettings {
   pinnedGameSlugs: string[];
   /** Auto-surface games with an ACTIVE promotion at the front of Top Rated. */
   pinPromotedGames: boolean;
+  /** Upcoming enrichment: how many days back counts as "New" (recently released). */
+  newWindowDays: number;
 }
 
 export const LISTS_SETTINGS_KEY = 'lists';
@@ -40,6 +42,7 @@ export const LISTS_DEFAULTS: ListsSettings = {
   pinnedTopicSlugs: [],
   pinnedGameSlugs: [],
   pinPromotedGames: true,
+  newWindowDays: 30,
 };
 
 function clampInt(v: unknown, min: number, max: number, fallback: number): number {
@@ -72,6 +75,7 @@ function coerce(raw: unknown): ListsSettings {
       typeof o.pinPromotedGames === 'boolean'
         ? o.pinPromotedGames
         : LISTS_DEFAULTS.pinPromotedGames,
+    newWindowDays: clampInt(o.newWindowDays, 1, 365, LISTS_DEFAULTS.newWindowDays),
   };
 }
 
@@ -96,6 +100,7 @@ export interface ListsSettingsPatch {
   pinnedTopicSlugs?: string[];
   pinnedGameSlugs?: string[];
   pinPromotedGames?: boolean;
+  newWindowDays?: number;
 }
 
 /** Patch the list config (only provided fields change) and audit the old→new diff. */
@@ -116,6 +121,7 @@ export async function setListsSettings(
       ? coerceSlugs(patch.pinnedGameSlugs)
       : current.pinnedGameSlugs,
     pinPromotedGames: patch.pinPromotedGames ?? current.pinPromotedGames,
+    newWindowDays: patch.newWindowDays ?? current.newWindowDays,
   };
   const value = next as unknown as Record<string, unknown>;
   await db
@@ -134,8 +140,9 @@ export async function setListsSettings(
       pinnedTopicSlugs: { from: current.pinnedTopicSlugs, to: next.pinnedTopicSlugs },
       pinnedGameSlugs: { from: current.pinnedGameSlugs, to: next.pinnedGameSlugs },
       pinPromotedGames: { from: current.pinPromotedGames, to: next.pinPromotedGames },
+      newWindowDays: { from: current.newWindowDays, to: next.newWindowDays },
     },
-    summary: `updated homepage lists (hero ${next.heroCount}, feed ${next.feedCount}, top ${next.topRatedCount}, focus ${next.focusCount}, ${next.pinnedGameSlugs.length} pinned game(s), promoted-pin ${next.pinPromotedGames ? 'on' : 'off'})`,
+    summary: `updated homepage lists (hero ${next.heroCount}, feed ${next.feedCount}, top ${next.topRatedCount}, focus ${next.focusCount}, ${next.pinnedGameSlugs.length} pinned game(s), promoted-pin ${next.pinPromotedGames ? 'on' : 'off'}, New window ${next.newWindowDays}d)`,
     actor,
   });
   return next;

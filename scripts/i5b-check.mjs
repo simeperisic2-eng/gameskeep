@@ -130,8 +130,10 @@ async function main() {
   }
 
   // ── 4. upcoming API ─────────────────────────────────────────────────────────
+  // Upcoming enrichment: the payload is now GROUPED ({ games, dlc, newReleases,
+  // … }); the pre-release slate is `data.games`.
   const up = await getJson(`${BACK}/public/upcoming`);
-  const ud = up.json?.data;
+  const ud = up.json?.data?.games;
   const upcomingStatuses = new Set(['announced', 'in_development', 'early_access']);
   check(
     '4. Upcoming API returns the slate (status + some dates), soonest-first',

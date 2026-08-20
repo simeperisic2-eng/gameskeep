@@ -17,6 +17,7 @@ import {
   SUBJECT_TYPES,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
+  UPCOMING_OVERRIDES,
   USER_STATUSES,
   VIDEO_PROVIDERS,
 } from '@gameskeep/shared/constants';
@@ -384,6 +385,10 @@ export const RESOURCES: ResourceDef[] = [
       F.num('hltbCompletionistHours'),
       F.num('steamCompletionRate'),
       F.json('externalRefs'),
+      // Upcoming enrichment (auto + manual override). Override wins over status.
+      F.enum('upcomingOverride', UPCOMING_OVERRIDES),
+      F.bool('upcomingFeatured'),
+      F.bool('isIndie'),
     ],
   },
   {

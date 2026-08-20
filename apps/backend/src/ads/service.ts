@@ -1,7 +1,8 @@
 import { and, desc, eq, isNull, or, sql, gte, lte } from 'drizzle-orm';
 import type { AdPlacementStatus } from '@gameskeep/shared/constants';
+import type { PromoPricingInput } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
-import { adPlacements, adSlots, subjects } from '../db/schema';
+import { adPlacements, adSlots, appSettings, subjects } from '../db/schema';
 import { writeAudit, type AuditActor } from '../admin/audit';
 
 /**
@@ -118,6 +119,24 @@ export async function activePromotedGameSlugs(now: Date = new Date()): Promise<s
   const seen: string[] = [];
   for (const r of rows) if (r.slug && !seen.includes(r.slug)) seen.push(r.slug);
   return seen;
+}
+
+/**
+ * A slug → advertiser map for every game with an ACTIVE promotion (Upcoming
+ * enrichment). Lets the Upcoming view mark a PAID Promoted entry AND name the
+ * advertiser for the render-forced "Promoted · <advertiser>" label — the same
+ * always-labeled transparency as the game-page badge. Leak-proof (slug +
+ * advertiser display name only; never price / contact / notes).
+ */
+export async function activeGamePromotions(now: Date = new Date()): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ slug: subjects.slug, advertiser: adPlacements.advertiserName })
+    .from(adPlacements)
+    .innerJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
+    .where(liveWindow(now));
+  const map = new Map<string, string>();
+  for (const r of rows) if (r.slug && !map.has(r.slug)) map.set(r.slug, r.advertiser);
+  return map;
 }
 
 // ── admin views (aggregate, staff-only) ──────────────────────────────────────
@@ -242,6 +261,75 @@ export async function adAnalytics(): Promise<{
     };
   });
   return { slots, totals: { slots: slots.length, free, impressions: impTotal, clicks: clkTotal } };
+}
+
+// ── admin-only promotion pricing reference (Upcoming enrichment, decision 4) ──
+export interface PromoPricing {
+  note: string | null;
+  tiers: { label: string; priceCents: number | null; currency: string; note: string | null }[];
+}
+
+const PROMO_PRICING_KEY = 'promo-pricing';
+const EMPTY_PRICING: PromoPricing = { note: null, tiers: [] };
+
+/**
+ * The internal promotion pricing reference. RBAC-gated (the `ads` admin section
+ * = admin-40) and NEVER returned by any public route — staff read it only when
+ * preparing an off-site offer. Coerced defensively from stored JSON.
+ */
+export async function getPromoPricing(): Promise<PromoPricing> {
+  try {
+    const [row] = await db
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, PROMO_PRICING_KEY))
+      .limit(1);
+    const raw = (row?.value ?? {}) as Record<string, unknown>;
+    const tiers = Array.isArray(raw.tiers) ? raw.tiers : [];
+    return {
+      note: typeof raw.note === 'string' ? raw.note : null,
+      tiers: tiers.slice(0, 20).map((t) => {
+        const o = (t && typeof t === 'object' ? t : {}) as Record<string, unknown>;
+        return {
+          label: typeof o.label === 'string' ? o.label : '',
+          priceCents: typeof o.priceCents === 'number' ? o.priceCents : null,
+          currency: typeof o.currency === 'string' ? o.currency : 'USD',
+          note: typeof o.note === 'string' ? o.note : null,
+        };
+      }),
+    };
+  } catch {
+    return { ...EMPTY_PRICING };
+  }
+}
+
+/** Set the internal pricing reference (audited). Admin-only; never public. */
+export async function setPromoPricing(
+  input: PromoPricingInput,
+  actor: AuditActor,
+): Promise<PromoPricing> {
+  const value = {
+    note: input.note ?? null,
+    tiers: (input.tiers ?? []).map((t) => ({
+      label: t.label,
+      priceCents: t.priceCents ?? null,
+      currency: t.currency,
+      note: t.note ?? null,
+    })),
+  };
+  await db
+    .insert(appSettings)
+    .values({ key: PROMO_PRICING_KEY, value })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+  await writeAudit({
+    action: 'update',
+    entityType: 'app-settings',
+    entityId: PROMO_PRICING_KEY,
+    changes: { tiers: { to: value.tiers.length } },
+    summary: `updated promotion pricing reference (${value.tiers.length} tier(s))`,
+    actor,
+  });
+  return value;
 }
 
 /** Admin manually sets a placement's status (the activation switch). Audited. */

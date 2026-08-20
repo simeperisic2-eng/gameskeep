@@ -1,6 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { adStatusInput } from '@gameskeep/shared/validation';
-import { adAnalytics, inventory, setPlacementStatus } from '../ads/service';
+import { adStatusInput, promoPricingInput } from '@gameskeep/shared/validation';
+import {
+  adAnalytics,
+  getPromoPricing,
+  inventory,
+  setPlacementStatus,
+  setPromoPricing,
+} from '../ads/service';
 import { actorOf, sendError } from './http';
 
 /**
@@ -25,6 +31,25 @@ export async function registerAdAdminRoutes(admin: FastifyInstance): Promise<voi
   admin.get('/ads/analytics', async (_req, reply) => {
     try {
       reply.send({ data: await adAnalytics() });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // Internal promotion PRICING reference (Upcoming enrichment, decision 4).
+  // Admin-only (the `ads` section = admin-40); NEVER exposed on a public route —
+  // staff read it when preparing an off-site offer.
+  admin.get('/ads/pricing', async (_req, reply) => {
+    try {
+      reply.send({ data: await getPromoPricing() });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+  admin.patch('/ads/pricing', async (req, reply) => {
+    try {
+      const input = promoPricingInput.parse(req.body);
+      reply.send({ data: await setPromoPricing(input, actorOf(req)) });
     } catch (err) {
       sendError(reply, err);
     }

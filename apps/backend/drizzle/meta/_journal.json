@@ -99,6 +99,13 @@
       "when": 1787175774726,
       "tag": "0013_i8_newsletter_campaigns",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787261186259,
+      "tag": "0014_upcoming_enrichment",
+      "breakpoints": true
     }
   ]
 }
