@@ -35,6 +35,15 @@ export default async function AccountPage(): Promise<React.JSX.Element> {
   const data = await getMyExport();
   const ratings = data?.ratings ?? [];
   const comments = data?.comments ?? [];
+  const follows = data?.follows ?? [];
+
+  // A compact "at a glance" summary — reorganizes data the panel already loads
+  // (no new fetch, no new behavior; Slice 5 is cosmetic).
+  const stats: { label: string; value: number }[] = [
+    { label: 'Ratings', value: ratings.length },
+    { label: 'Comments', value: comments.length },
+    { label: 'Following', value: follows.length },
+  ];
 
   return (
     <main className="gk-container gk-account">
@@ -51,6 +60,14 @@ export default async function AccountPage(): Promise<React.JSX.Element> {
               <span className="gk-unverified-tag"> · email not verified</span>
             ) : null}
           </p>
+          <dl className="gk-account-stats">
+            {stats.map((s) => (
+              <div key={s.label} className="gk-account-stat">
+                <dt>{s.label}</dt>
+                <dd>{s.value.toLocaleString('en-US')}</dd>
+              </div>
+            ))}
+          </dl>
           {user.level ? (
             <div className="gk-level-progress">
               <div className="gk-level-progress-top">
@@ -118,6 +135,10 @@ export default async function AccountPage(): Promise<React.JSX.Element> {
 
       <section className="gk-panel">
         <h2 className="gk-feed-section-title">Your data</h2>
+        <p className="gk-account-section-note">
+          You’re in control of your data. Export a full copy any time, or delete your account —
+          we’ll anonymize what has to stay so community scores remain honest.
+        </p>
         <AccountActions />
       </section>
     </main>

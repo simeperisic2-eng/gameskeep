@@ -4888,6 +4888,31 @@ a.gk-tile-cover {
 .gk-unverified-tag {
   color: #e0a44a;
 }
+.gk-account-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s6);
+  margin: var(--s3) 0;
+}
+.gk-account-stat dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gk-text-dim);
+}
+.gk-account-stat dd {
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--gk-text);
+}
+.gk-account-section-note {
+  margin: 0 0 var(--s4);
+  color: var(--gk-text-dim);
+  font-size: 13.5px;
+  line-height: 1.55;
+  max-width: 60ch;
+}
 .gk-account-links {
   font-size: 13px;
   margin: var(--s3) 0 0;
@@ -4989,6 +5014,9 @@ a.gk-tile-cover {
   .gk-account-action {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .gk-account-stats {
+    justify-content: center;
   }
 }
 
