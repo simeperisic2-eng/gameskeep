@@ -27,6 +27,18 @@ import { subjects } from './subjects';
 import { users } from './users';
 import { primaryId, timestamps } from './_shared';
 
+/**
+ * Demo-seed marker (Phase P hygiene). Set ONLY by the demo seed on the fictional
+ * showcase rows whose release dates it keeps relative to "today" (the Upcoming
+ * "New" games). `writtenReleaseDate` is the value the seed last wrote: a row whose
+ * date no longer matches it was changed by someone else and is left alone.
+ */
+export interface DemoSeedMarker {
+  key: string;
+  releaseOffsetDays: number;
+  writtenReleaseDate: string | null;
+}
+
 /** Stored disconnect sub-levels (SPEC I4b §2) — primary + the two detail gaps. */
 export interface DisconnectDetail {
   ourVsCritics: number | null;
@@ -87,6 +99,10 @@ export const games = pgTable(
     upcomingOverride: upcomingOverrideEnum('upcoming_override'),
     upcomingFeatured: boolean('upcoming_featured').notNull().default(false),
     isIndie: boolean('is_indie').notNull().default(false),
+
+    // Demo-seed marker (see DemoSeedMarker). Null for every real, imported or
+    // admin-created game; deliberately NOT an admin-editable field.
+    demoSeed: jsonb('demo_seed').$type<DemoSeedMarker>(),
 
     ...timestamps(),
   },

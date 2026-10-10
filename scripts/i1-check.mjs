@@ -222,6 +222,10 @@ async function main() {
     newType.status === 201 && topicWithType.status === 201,
     `${newType.status}/${topicWithType.status}`,
   );
+  // Clean up the typed topic too — an empty topic left behind accumulates across
+  // runs and skews later checks that count topics (verify:i3's summary ratio).
+  const typedTopicId = topicWithType.json?.data?.id;
+  if (typedTopicId) created.push({ resource: 'topics', id: typedTopicId });
   if (typeId) created.push({ resource: 'topic-types', id: typeId });
 
   // 11) validation rejects bad input

@@ -1,9 +1,11 @@
 import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from './client';
+import { isDemo } from '../config/env';
 import { PASSWORD_ALGO, hashPassword } from '../auth/password';
 import {
   adSlots,
+  auditLogs,
   articles,
   articleSubjects,
   articleTopics,
@@ -33,6 +35,7 @@ import {
   topicTypes,
   users,
   userLevels,
+  type DemoSeedMarker,
 } from './schema';
 
 /**
@@ -53,6 +56,91 @@ async function ensure(table: PgTable, values: Row, where: SQL): Promise<Row> {
   const [row] = await db.select().from(table).where(where).limit(1);
   if (!row) throw new Error('seed: row missing after insert');
   return row as Row;
+}
+
+/** A stored `games.demo_seed` value, or null when absent/malformed (untrusted JSON). */
+function parseDemoSeed(raw: unknown): DemoSeedMarker | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.key !== 'string' || !o.key) return null;
+  if (
+    typeof o.releaseOffsetDays !== 'number' ||
+    !Number.isInteger(o.releaseOffsetDays) ||
+    Math.abs(o.releaseOffsetDays) > 3650
+  ) {
+    return null;
+  }
+  const written = o.writtenReleaseDate;
+  if (written !== null && typeof written !== 'string') return null;
+  return { key: o.key, releaseOffsetDays: o.releaseOffsetDays, writtenReleaseDate: written };
+}
+
+/**
+ * Keep the demo "New" showcase games' release dates relative to TODAY on every
+ * boot. `ensure()` is insert-if-absent, so without this the dates freeze at the
+ * first boot and the "New" window empties as real time passes.
+ *
+ * Guarded so it can only ever move a seed-owned, untouched row:
+ *  - demo mode only (the seed itself is demo-only; this re-checks);
+ *  - only rows carrying the `demo_seed` marker whose key matches a definition;
+ *  - never a row a human touched: any staff audit entry on the game, or a
+ *    release date that no longer equals what the seed last wrote, leaves the
+ *    row alone for good.
+ * A row seeded before the marker existed is ADOPTED only if it is provably the
+ * seed's own: matching fictional slug, no provider refs (imported rows always
+ * carry them) and no staff audit history.
+ */
+async function refreshDemoReleaseDates(
+  defs: { slug: string; key: string; releaseOffsetDays: number }[],
+  dayOffset: (n: number) => string,
+): Promise<void> {
+  if (!isDemo()) return;
+  for (const def of defs) {
+    const [row] = await db
+      .select({
+        id: games.id,
+        releaseDate: games.releaseDate,
+        demoSeed: games.demoSeed,
+        externalRefs: games.externalRefs,
+      })
+      .from(games)
+      .innerJoin(subjects, eq(games.subjectId, subjects.id))
+      .where(and(eq(subjects.slug, def.slug), eq(subjects.type, 'game')))
+      .limit(1);
+    if (!row) continue;
+
+    const [audited] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(auditLogs)
+      .where(and(eq(auditLogs.entityType, 'games'), eq(auditLogs.entityId, row.id)));
+    if (Number(audited?.n ?? 0) > 0) continue; // a human touched it — never again
+
+    let marker = parseDemoSeed(row.demoSeed);
+    if (!marker) {
+      if (row.demoSeed != null || row.externalRefs != null) continue; // not provably ours
+      marker = {
+        key: def.key,
+        releaseOffsetDays: def.releaseOffsetDays,
+        writtenReleaseDate: row.releaseDate,
+      };
+    }
+    if (marker.key !== def.key || marker.writtenReleaseDate !== row.releaseDate) continue;
+
+    const next = dayOffset(marker.releaseOffsetDays);
+    if (next === row.releaseDate && row.demoSeed != null) continue; // already current
+    await db
+      .update(games)
+      .set({ releaseDate: next, demoSeed: { ...marker, writtenReleaseDate: next } })
+      .where(
+        and(
+          eq(games.id, row.id),
+          // Race-safe: only if the date is still the one we checked.
+          row.releaseDate === null
+            ? isNull(games.releaseDate)
+            : eq(games.releaseDate, row.releaseDate),
+        ),
+      );
+  }
 }
 
 export async function seedDemo(): Promise<void> {
@@ -211,6 +299,8 @@ export async function seedDemo(): Promise<void> {
     isIndie?: boolean;
     upcomingFeatured?: boolean;
     tags?: string[];
+    /** Marks a date-relative demo showcase row (see refreshDemoReleaseDates). */
+    demoSeed?: { key: string; releaseOffsetDays: number };
   }): Promise<Row> {
     const subject = await ensure(
       subjects,
@@ -232,6 +322,9 @@ export async function seedDemo(): Promise<void> {
         summary: opts.summary,
         isIndie: opts.isIndie ?? false,
         upcomingFeatured: opts.upcomingFeatured ?? false,
+        demoSeed: opts.demoSeed
+          ? { ...opts.demoSeed, writtenReleaseDate: opts.releaseDate ?? null }
+          : null,
       },
       eq(games.subjectId, subject.id as string),
     );
@@ -330,8 +423,9 @@ export async function seedDemo(): Promise<void> {
   // ── Upcoming enrichment demo data (fictional; showcases each group) ──────────
   // An EDITORIAL-FEATURED upcoming title (unlabeled curatorial pin), an INDIE
   // upcoming title, and two recently-RELEASED indie titles for the "New" section
-  // (dates recomputed per boot so New is never empty). Promoted (paid) entries
-  // ship EMPTY (like ad placements) — added at review time, not seeded.
+  // (marked `demoSeed`, so refreshDemoReleaseDates keeps their dates relative to
+  // today on every boot and New never empties). Promoted (paid) entries ship
+  // EMPTY (like ad placements) — added at review time, not seeded.
   await ensureGame({
     slug: 'aether-drift',
     name: 'Aether Drift',
@@ -371,6 +465,7 @@ export async function seedDemo(): Promise<void> {
     releaseDate: dayOffset(-6),
     isIndie: true,
     tags: ['indie'],
+    demoSeed: { key: 'upcoming-new:pixel-rebound', releaseOffsetDays: -6 },
   });
   await ensureGame({
     slug: 'tidewatcher',
@@ -385,7 +480,15 @@ export async function seedDemo(): Promise<void> {
     releaseDate: dayOffset(-18),
     isIndie: true,
     tags: ['indie', 'cozy'],
+    demoSeed: { key: 'upcoming-new:tidewatcher', releaseOffsetDays: -18 },
   });
+  await refreshDemoReleaseDates(
+    [
+      { slug: 'pixel-rebound', key: 'upcoming-new:pixel-rebound', releaseOffsetDays: -6 },
+      { slug: 'tidewatcher', key: 'upcoming-new:tidewatcher', releaseOffsetDays: -18 },
+    ],
+    dayOffset,
+  );
 
   // ── rating data so the I4b engine has differing layers to compute ────────────
   await seedRatings({

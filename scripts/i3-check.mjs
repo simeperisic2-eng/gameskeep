@@ -162,10 +162,17 @@ async function main() {
     delayTopic && Boolean(delayTopic.tldr) && Boolean(delayTopic.aiSummary),
     delayTopic ? `tldr="${(delayTopic.tldr ?? '').slice(0, 50)}…"` : '',
   );
+  // Only topics with ≥1 article count: an empty topic (e.g. one an admin/verify
+  // created by hand) is never public and has nothing to summarize, so it must
+  // not skew the ratio. The list must cover every topic, or the ratio is partial.
+  const realTopics = topics.filter((t) => t.articleCount >= 1);
+  const realWithSummary = realTopics.filter((t) => Boolean(t.aiSummary)).length;
   check(
-    'Most topics have an AI summary',
-    stats?.topicsWithSummary > 0 && stats?.topicsWithSummary >= topicsCount - 2,
-    `${stats?.topicsWithSummary}/${topicsCount}`,
+    'Most topics (with ≥1 article) have an AI summary',
+    topics.length === topicsCount &&
+      realWithSummary > 0 &&
+      realWithSummary >= realTopics.length - 2,
+    `${realWithSummary}/${realTopics.length} (${topicsCount - realTopics.length} empty excluded)`,
   );
 
   // 6) game attach + unmatched queue
