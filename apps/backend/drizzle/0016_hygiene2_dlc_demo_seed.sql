@@ -1,0 +1,1 @@
+ALTER TABLE "game_dlc" ADD COLUMN "demo_seed" jsonb;

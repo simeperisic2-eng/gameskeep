@@ -55,8 +55,8 @@ export async function registerBiasAdminRoutes(admin: FastifyInstance): Promise<v
     try {
       const patch = biasWeightsUpdate.parse(req.body);
       const next = await setBiasWeights(patch, actorOf(req));
-      await enqueueBiasRecompute('weights-changed');
-      reply.send({ data: next, recompute: 'enqueued' });
+      const jobId = await enqueueBiasRecompute('weights-changed');
+      reply.send({ data: next, recompute: 'enqueued', recomputeJobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }
@@ -65,8 +65,8 @@ export async function registerBiasAdminRoutes(admin: FastifyInstance): Promise<v
   // Recompute all scores off the request path (poll /bias/status for completion).
   admin.post('/bias/recompute', async (_req, reply) => {
     try {
-      await enqueueBiasRecompute('manual');
-      reply.code(202).send({ enqueued: true });
+      const jobId = await enqueueBiasRecompute('manual');
+      reply.code(202).send({ enqueued: true, jobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }

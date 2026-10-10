@@ -75,27 +75,66 @@ function parseDemoSeed(raw: unknown): DemoSeedMarker | null {
   return { key: o.key, releaseOffsetDays: o.releaseOffsetDays, writtenReleaseDate: written };
 }
 
+type DemoSeedDef = { key: string; releaseOffsetDays: number };
+
 /**
- * Keep the demo "New" showcase games' release dates relative to TODAY on every
- * boot. `ensure()` is insert-if-absent, so without this the dates freeze at the
- * first boot and the "New" window empties as real time passes.
- *
- * Guarded so it can only ever move a seed-owned, untouched row:
- *  - demo mode only (the seed itself is demo-only; this re-checks);
- *  - only rows carrying the `demo_seed` marker whose key matches a definition;
- *  - never a row a human touched: any staff audit entry on the game, or a
- *    release date that no longer equals what the seed last wrote, leaves the
- *    row alone for good.
- * A row seeded before the marker existed is ADOPTED only if it is provably the
- * seed's own: matching fictional slug, no provider refs (imported rows always
- * carry them) and no staff audit history.
+ * Should a dated demo row move, and to what? Pure — the guards in one place:
+ *  - never a row a human touched (any staff audit entry on it);
+ *  - only a row carrying a marker whose key matches the definition — or a row
+ *    seeded before the marker existed that is provably the seed's own (`adoptable`);
+ *  - never a row whose date no longer equals what the seed last wrote.
+ * Returns null to leave the row alone.
+ */
+function demoRefreshDecision(input: {
+  currentDate: string | null;
+  storedMarker: unknown;
+  def: DemoSeedDef;
+  audited: boolean;
+  adoptable: boolean;
+  dayOffset: (n: number) => string;
+}): { next: string; marker: DemoSeedMarker } | null {
+  if (input.audited) return null;
+  let marker = parseDemoSeed(input.storedMarker);
+  if (!marker) {
+    if (input.storedMarker != null || !input.adoptable) return null; // not provably ours
+    marker = { ...input.def, writtenReleaseDate: input.currentDate };
+  }
+  if (marker.key !== input.def.key || marker.writtenReleaseDate !== input.currentDate) return null;
+  const next = input.dayOffset(marker.releaseOffsetDays);
+  if (next === input.currentDate && input.storedMarker != null) return null; // already current
+  return { next, marker: { ...marker, writtenReleaseDate: next } };
+}
+
+async function hasStaffAudit(entityType: string, entityId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(auditLogs)
+    .where(and(eq(auditLogs.entityType, entityType), eq(auditLogs.entityId, entityId)));
+  return Number(row?.n ?? 0) > 0;
+}
+
+/**
+ * Keep the demo's dated showcase rows (the Upcoming "New" + featured games, the
+ * upcoming DLC) relative to TODAY on every boot. `ensure()` is insert-if-absent,
+ * so without this their dates freeze at the first boot and the Upcoming / New
+ * groups drift empty as real time passes. Demo mode only (the seed itself is
+ * demo-only; this re-checks). Guards: see demoRefreshDecision. A pre-marker game
+ * is adoptable only with the seed's fictional slug and no provider refs
+ * (imported rows always carry them); a pre-marker DLC only with the seed's exact
+ * name under the seed's parent game. Updates are conditional on the date we read.
  */
 async function refreshDemoReleaseDates(
-  defs: { slug: string; key: string; releaseOffsetDays: number }[],
+  gameDefs: (DemoSeedDef & { slug: string })[],
+  dlcDefs: (DemoSeedDef & { gameId: string; name: string })[],
   dayOffset: (n: number) => string,
 ): Promise<void> {
   if (!isDemo()) return;
-  for (const def of defs) {
+  const sameDate = (
+    col: typeof games.releaseDate | typeof gameDlc.releaseDate,
+    v: string | null,
+  ) => (v === null ? isNull(col) : eq(col, v));
+
+  for (const def of gameDefs) {
     const [row] = await db
       .select({
         id: games.id,
@@ -108,38 +147,41 @@ async function refreshDemoReleaseDates(
       .where(and(eq(subjects.slug, def.slug), eq(subjects.type, 'game')))
       .limit(1);
     if (!row) continue;
-
-    const [audited] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(auditLogs)
-      .where(and(eq(auditLogs.entityType, 'games'), eq(auditLogs.entityId, row.id)));
-    if (Number(audited?.n ?? 0) > 0) continue; // a human touched it — never again
-
-    let marker = parseDemoSeed(row.demoSeed);
-    if (!marker) {
-      if (row.demoSeed != null || row.externalRefs != null) continue; // not provably ours
-      marker = {
-        key: def.key,
-        releaseOffsetDays: def.releaseOffsetDays,
-        writtenReleaseDate: row.releaseDate,
-      };
-    }
-    if (marker.key !== def.key || marker.writtenReleaseDate !== row.releaseDate) continue;
-
-    const next = dayOffset(marker.releaseOffsetDays);
-    if (next === row.releaseDate && row.demoSeed != null) continue; // already current
+    const decision = demoRefreshDecision({
+      currentDate: row.releaseDate,
+      storedMarker: row.demoSeed,
+      def,
+      audited: await hasStaffAudit('games', row.id),
+      adoptable: row.externalRefs == null,
+      dayOffset,
+    });
+    if (!decision) continue;
     await db
       .update(games)
-      .set({ releaseDate: next, demoSeed: { ...marker, writtenReleaseDate: next } })
-      .where(
-        and(
-          eq(games.id, row.id),
-          // Race-safe: only if the date is still the one we checked.
-          row.releaseDate === null
-            ? isNull(games.releaseDate)
-            : eq(games.releaseDate, row.releaseDate),
-        ),
-      );
+      .set({ releaseDate: decision.next, demoSeed: decision.marker })
+      .where(and(eq(games.id, row.id), sameDate(games.releaseDate, row.releaseDate)));
+  }
+
+  for (const def of dlcDefs) {
+    const [row] = await db
+      .select({ id: gameDlc.id, releaseDate: gameDlc.releaseDate, demoSeed: gameDlc.demoSeed })
+      .from(gameDlc)
+      .where(and(eq(gameDlc.gameId, def.gameId), eq(gameDlc.name, def.name)))
+      .limit(1);
+    if (!row) continue;
+    const decision = demoRefreshDecision({
+      currentDate: row.releaseDate,
+      storedMarker: row.demoSeed,
+      def,
+      audited: await hasStaffAudit('game-dlc', row.id),
+      adoptable: true, // matched by the seed's exact (parent game, name) pair
+      dayOffset,
+    });
+    if (!decision) continue;
+    await db
+      .update(gameDlc)
+      .set({ releaseDate: decision.next, demoSeed: decision.marker })
+      .where(and(eq(gameDlc.id, row.id), sameDate(gameDlc.releaseDate, row.releaseDate)));
   }
 }
 
@@ -438,6 +480,7 @@ export async function seedDemo(): Promise<void> {
     status: 'in_development',
     releaseDate: dayOffset(90),
     upcomingFeatured: true,
+    demoSeed: { key: 'upcoming-featured:aether-drift', releaseOffsetDays: 90 },
   });
   await ensureGame({
     slug: 'hollow-verge',
@@ -482,13 +525,6 @@ export async function seedDemo(): Promise<void> {
     tags: ['indie', 'cozy'],
     demoSeed: { key: 'upcoming-new:tidewatcher', releaseOffsetDays: -18 },
   });
-  await refreshDemoReleaseDates(
-    [
-      { slug: 'pixel-rebound', key: 'upcoming-new:pixel-rebound', releaseOffsetDays: -6 },
-      { slug: 'tidewatcher', key: 'upcoming-new:tidewatcher', releaseOffsetDays: -18 },
-    ],
-    dayOffset,
-  );
 
   // ── rating data so the I4b engine has differing layers to compute ────────────
   await seedRatings({
@@ -522,12 +558,48 @@ export async function seedDemo(): Promise<void> {
       .where(and(eq(gameDlc.gameId, gameId), eq(gameDlc.name, name)))
       .limit(1);
     if (existing) return;
-    await db
-      .insert(gameDlc)
-      .values({ gameId, name, priceCents, currency: 'USD', releaseDate: dayOffset(days) });
+    const releaseDate = dayOffset(days);
+    await db.insert(gameDlc).values({
+      gameId,
+      name,
+      priceCents,
+      currency: 'USD',
+      releaseDate,
+      demoSeed: {
+        key: `upcoming-dlc:${name}`,
+        releaseOffsetDays: days,
+        writtenReleaseDate: releaseDate,
+      },
+    });
   }
-  await ensureDlc(baldursGate3.id as string, 'Baldur’s Gate 3 — Patch 9: New Horizons', 0, 45);
-  await ensureDlc(cyberpunk.id as string, 'Cyberpunk 2077 — Nightscape (Expansion)', 2999, 120);
+  const bg3Dlc = 'Baldur’s Gate 3 — Patch 9: New Horizons';
+  const cyberpunkDlc = 'Cyberpunk 2077 — Nightscape (Expansion)';
+  await ensureDlc(baldursGate3.id as string, bg3Dlc, 0, 45);
+  await ensureDlc(cyberpunk.id as string, cyberpunkDlc, 2999, 120);
+
+  // Keep every dated showcase row relative to today (see refreshDemoReleaseDates).
+  await refreshDemoReleaseDates(
+    [
+      { slug: 'aether-drift', key: 'upcoming-featured:aether-drift', releaseOffsetDays: 90 },
+      { slug: 'pixel-rebound', key: 'upcoming-new:pixel-rebound', releaseOffsetDays: -6 },
+      { slug: 'tidewatcher', key: 'upcoming-new:tidewatcher', releaseOffsetDays: -18 },
+    ],
+    [
+      {
+        gameId: baldursGate3.id as string,
+        name: bg3Dlc,
+        key: `upcoming-dlc:${bg3Dlc}`,
+        releaseOffsetDays: 45,
+      },
+      {
+        gameId: cyberpunk.id as string,
+        name: cyberpunkDlc,
+        key: `upcoming-dlc:${cyberpunkDlc}`,
+        releaseOffsetDays: 120,
+      },
+    ],
+    dayOffset,
+  );
 
   // ── a source or two ───────────────────────────────────────────────────────
   const mainstream = await ensure(

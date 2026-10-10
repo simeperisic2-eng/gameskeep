@@ -73,15 +73,22 @@ async function waitForArticles(min) {
   return (await api('GET', '/clustering/status')).json;
 }
 
-/** Trigger an ingest and wait for a fresh run to finish (finishedAt changes). */
+/**
+ * Trigger an ingest and wait for THAT run to finish: the stored state carries the
+ * id of the job that wrote it. (Waiting for "any finishedAt change" raced boot-time
+ * or earlier jobs on the same queue and read a reset mid-flight.)
+ */
 async function ingestAndWait({ reset = false } = {}) {
-  const before = await api('GET', '/clustering/status');
-  const beforeAt = before.json?.lastIngest?.finishedAt ?? '';
-  await api('POST', '/clustering/ingest', reset ? { reset: true } : {});
-  for (let i = 0; i < 90; i += 1) {
-    await sleep(2000);
-    const s = await api('GET', '/clustering/status');
-    if ((s.json?.lastIngest?.finishedAt ?? '') !== beforeAt) return s.json;
+  const res = await api('POST', '/clustering/ingest', reset ? { reset: true } : {});
+  const jobId = res.json?.jobId;
+  // No id → nothing to wait on; the checks that follow then fail visibly.
+  if (jobId) {
+    for (let i = 0; i < 120; i += 1) {
+      await sleep(2000);
+      const state = (await api('GET', `/clustering/jobs/${encodeURIComponent(jobId)}`)).json?.data
+        ?.state;
+      if (state === 'completed' || state === 'failed') break;
+    }
   }
   return (await api('GET', '/clustering/status')).json;
 }

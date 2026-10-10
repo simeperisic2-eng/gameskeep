@@ -137,7 +137,17 @@ async function main() {
   );
 
   // ── 3. force-HIDE override wins over status ─────────────────────────────────
-  const hideSlug = d.games[0].slug;
+  // Use an upcoming game WITHOUT a demo-seed marker: an admin edit (this PATCH is
+  // audited) permanently opts a row out of the seed's date refresh, so verify must
+  // never touch the dated showcase rows.
+  const markerless = new Set(
+    sqlOne(
+      `SELECT s.slug FROM games g JOIN subjects s ON s.id=g.subject_id WHERE g.demo_seed IS NULL`,
+    )
+      .split('\n')
+      .map((x) => x.trim()),
+  );
+  const hideSlug = d.games.find((g) => markerless.has(g.slug))?.slug ?? '';
   const hideGameId = sqlOne(
     `SELECT g.id FROM games g JOIN subjects s ON s.id=g.subject_id WHERE s.slug='${hideSlug}'`,
   );
@@ -164,7 +174,7 @@ async function main() {
   // A released catalog game that is NOT already in Upcoming.
   const upSlugs = new Set(d.games.map((g) => g.slug));
   const relSlug = sqlOne(
-    `SELECT s.slug FROM games g JOIN subjects s ON s.id=g.subject_id WHERE g.status='released' ORDER BY s.slug LIMIT 30`,
+    `SELECT s.slug FROM games g JOIN subjects s ON s.id=g.subject_id WHERE g.status='released' AND g.demo_seed IS NULL ORDER BY s.slug LIMIT 30`,
   )
     .split('\n')
     .map((x) => x.trim())

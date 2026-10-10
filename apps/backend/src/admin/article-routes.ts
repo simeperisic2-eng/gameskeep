@@ -6,7 +6,7 @@ import {
   topicMergeInput,
   topicSplitInput,
 } from '@gameskeep/shared/validation';
-import { enqueueArticleIngest, readArticleIngestState } from '../articles/jobs';
+import { enqueueArticleIngest, getArticlesQueue, readArticleIngestState } from '../articles/jobs';
 import { getClusteringStats, listTopicsWithSources } from '../articles/queries';
 import { getClusterSettings, setClusterSettings } from '../articles/settings';
 import { mergeTopics, reassignArticle, splitTopic } from '../articles/merge-split';
@@ -29,6 +29,26 @@ export async function registerArticleAdminRoutes(admin: FastifyInstance): Promis
         readArticleIngestState(),
       ]);
       reply.send({ ...stats, lastIngest });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // One articles-queue job's state (ingest / re-cluster / bias recompute), so a
+  // caller can wait for the job IT enqueued rather than "whichever finished last".
+  admin.get<{ Params: { id: string } }>('/clustering/jobs/:id', async (req, reply) => {
+    try {
+      const id = req.params.id;
+      if (!/^[A-Za-z0-9:_-]{1,64}$/.test(id)) {
+        reply.code(400).send({ error: 'bad_request', message: 'Invalid job id.' });
+        return;
+      }
+      const job = await getArticlesQueue().getJob(id);
+      if (!job) {
+        reply.code(404).send({ error: 'not_found' });
+        return;
+      }
+      reply.send({ data: { id: job.id, state: await job.getState() } });
     } catch (err) {
       sendError(reply, err);
     }
@@ -69,8 +89,9 @@ export async function registerArticleAdminRoutes(admin: FastifyInstance): Promis
   admin.post('/clustering/ingest', async (req, reply) => {
     try {
       const { reset } = clusterIngestInput.parse(req.body ?? {});
-      await enqueueArticleIngest({ reason: reset ? 'recluster' : 'manual', reset });
-      reply.code(202).send({ enqueued: true, reset });
+      const jobId = await enqueueArticleIngest({ reason: reset ? 'recluster' : 'manual', reset });
+      // jobId lets a caller wait for THIS run (lastIngest.jobId), not just any run.
+      reply.code(202).send({ enqueued: true, reset, jobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }

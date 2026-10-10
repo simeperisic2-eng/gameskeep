@@ -281,6 +281,8 @@ export const gameDlc = pgTable(
     currency: varchar('currency', { length: 3 }).notNull().default('USD'),
     releaseDate: text('release_date'), // YYYY-MM-DD
     url: text('url'),
+    // Demo-seed marker (see DemoSeedMarker) — only the seed's dated showcase DLC.
+    demoSeed: jsonb('demo_seed').$type<DemoSeedMarker>(),
     ...timestamps(),
   },
   (t) => [index('game_dlc_game_idx').on(t.gameId)],

@@ -78,27 +78,32 @@ async function waitForArticles(min) {
   return (await api('GET', '/clustering/status')).json;
 }
 
-/** Trigger a full re-cluster and wait for it to finish (finishedAt changes). */
-async function reclusterAndWait() {
-  const before = (await api('GET', '/clustering/status')).json?.lastIngest?.finishedAt ?? '';
-  await api('POST', '/clustering/ingest', { reset: true });
-  for (let i = 0; i < 120; i += 1) {
-    await sleep(2000);
-    const s = (await api('GET', '/clustering/status')).json;
-    if ((s?.lastIngest?.finishedAt ?? '') !== before) return s;
+/** Poll one articles-queue job until it completes or fails (bounded). */
+async function waitForJob(jobId, tries, intervalMs) {
+  if (!jobId) return;
+  for (let i = 0; i < tries; i += 1) {
+    await sleep(intervalMs);
+    const state = (await api('GET', `/clustering/jobs/${encodeURIComponent(jobId)}`)).json?.data
+      ?.state;
+    if (state === 'completed' || state === 'failed') return;
   }
+}
+
+/** Trigger a full re-cluster and wait for THAT job (not whichever run finished last). */
+async function reclusterAndWait() {
+  const jobId = (await api('POST', '/clustering/ingest', { reset: true })).json?.jobId;
+  await waitForJob(jobId, 120, 2000);
   return (await api('GET', '/clustering/status')).json;
 }
 
-/** Trigger a bias-only recompute and wait for it to finish. */
+/**
+ * Trigger a bias-only recompute and wait for THAT job. The queue runs one job at a
+ * time, so once ours is done any recompute queued before it (e.g. by a weights
+ * PATCH) has finished too.
+ */
 async function recomputeAndWait() {
-  const before = (await api('GET', '/bias/status')).json?.lastRecompute?.finishedAt ?? '';
-  await api('POST', '/bias/recompute', {});
-  for (let i = 0; i < 60; i += 1) {
-    await sleep(1500);
-    const s = (await api('GET', '/bias/status')).json;
-    if ((s?.lastRecompute?.finishedAt ?? '') !== before) return s;
-  }
+  const jobId = (await api('POST', '/bias/recompute', {})).json?.jobId;
+  await waitForJob(jobId, 80, 1500);
   return (await api('GET', '/bias/status')).json;
 }
 

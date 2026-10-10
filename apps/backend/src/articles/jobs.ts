@@ -28,11 +28,15 @@ export interface ArticleJobData {
 export interface BiasRecomputeState extends RecomputeResult {
   reason: string;
   finishedAt: string;
+  /** BullMQ id of the job that wrote this state — lets a caller wait for ITS run. */
+  jobId?: string;
 }
 
 export interface ArticleIngestState extends IngestResult {
   reason: string;
   finishedAt: string;
+  /** BullMQ id of the job that wrote this state — lets a caller wait for ITS run. */
+  jobId?: string;
 }
 
 let queue: Queue<ArticleJobData> | null = null;
@@ -43,21 +47,23 @@ export function getArticlesQueue(): Queue<ArticleJobData> {
   return queue;
 }
 
-export async function enqueueArticleIngest(data: ArticleJobData = {}): Promise<void> {
+/** Enqueue an ingest; returns the BullMQ job id (stamped into the state it writes). */
+export async function enqueueArticleIngest(data: ArticleJobData = {}): Promise<string | undefined> {
   const q = getArticlesQueue();
-  await q.add(ARTICLES_INGEST_JOB, data, {
+  const job = await q.add(ARTICLES_INGEST_JOB, data, {
     removeOnComplete: 20,
     removeOnFail: 20,
     // Retry with backoff so a transient AI/DB hiccup at boot self-heals.
     attempts: 5,
     backoff: { type: 'exponential', delay: 5000 },
   });
+  return job.id;
 }
 
 /** Enqueue a bias-only recompute (after a weight re-tune) — off the request path. */
-export async function enqueueBiasRecompute(reason = 'manual'): Promise<void> {
+export async function enqueueBiasRecompute(reason = 'manual'): Promise<string | undefined> {
   const q = getArticlesQueue();
-  await q.add(
+  const job = await q.add(
     ARTICLES_INGEST_JOB,
     { mode: 'bias', reason },
     {
@@ -67,6 +73,7 @@ export async function enqueueBiasRecompute(reason = 'manual'): Promise<void> {
       backoff: { type: 'exponential', delay: 3000 },
     },
   );
+  return job.id;
 }
 
 export function startArticlesWorker(): Worker<ArticleJobData> {
@@ -80,6 +87,7 @@ export function startArticlesWorker(): Worker<ArticleJobData> {
           ...result,
           reason: job.data.reason ?? 'manual',
           finishedAt: new Date().toISOString(),
+          jobId: job.id,
         };
         await redis.set(BIAS_STATE_KEY, JSON.stringify(state));
         return result;
@@ -95,6 +103,7 @@ export function startArticlesWorker(): Worker<ArticleJobData> {
         ...result,
         reason: job.data.reason ?? 'manual',
         finishedAt: new Date().toISOString(),
+        jobId: job.id,
       };
       await redis.set(ARTICLES_STATE_KEY, JSON.stringify(state));
       // An ingest also refreshed bias — reflect that in the bias state.
@@ -105,6 +114,7 @@ export function startArticlesWorker(): Worker<ArticleJobData> {
           topicsAggregated: result.totalTopics,
           reason: `ingest:${job.data.reason ?? 'manual'}`,
           finishedAt: new Date().toISOString(),
+          jobId: job.id,
         } satisfies BiasRecomputeState),
       );
       return result;
