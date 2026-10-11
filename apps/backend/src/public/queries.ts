@@ -1,7 +1,7 @@
 import { and, arrayOverlaps, asc, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import {
-  INFLUENCE_FLAGS,
   type BiasBreakdown,
+  type IntegritySignalKind,
   type DisconnectBand,
   type InfluenceFlag,
   type TopicBiasDistribution,
@@ -35,6 +35,28 @@ import {
 } from '../db/schema';
 import { activeGamePromotions, activePromotedGameSlugs } from '../ads/service';
 import { applyPins, listsSettings } from '../lists/settings';
+import {
+  flagsFromBreakdown,
+  publicFlags,
+  rowBiasMode,
+  shapeRowSignals,
+  emptyIntegrityTally,
+  tallyArticle,
+  topicShowsPanel,
+  type BiasMode,
+  type IntegrityTally,
+} from '../display/scope';
+import {
+  displaySettings,
+  publicDisplay,
+  type DisplaySettings,
+  type PublicDisplay,
+} from '../display/settings';
+import {
+  publicIntegrityFor,
+  publicIntegrityKinds,
+  type PublicIntegrityRow,
+} from '../articles/integrity';
 
 /**
  * Public read-side composition (SPEC I5a) — the ONLY data the public homepage and
@@ -45,6 +67,19 @@ import { applyPins, listsSettings } from '../lists/settings';
  * NEVER touch `articles.internal_assessment` (the internal-only field) — that
  * column is not referenced anywhere in this file, by design.
  */
+
+export type { BiasMode } from '../display/scope';
+
+/**
+ * The public face of a stored topic distribution: the article count, and the
+ * quality split only while `bias.showQuality` is on (null otherwise). The
+ * influence buckets are NOT public — they derive from scores that include the
+ * engine's type-based review-copy inference.
+ */
+export interface PublicTopicDistribution {
+  articleCount: number;
+  quality: { top: number; slop: number; avg: number | null } | null;
+}
 
 /** A topic shaped as a homepage card (hero spotlight + main feed). */
 export interface TopicCard {
@@ -58,11 +93,17 @@ export interface TopicCard {
   typeLabel: string | null;
   articleCount: number;
   sourceCount: number;
+  /** Review articles in the topic (drives the default display scope). */
+  reviewCount: number;
+  /** Whether the topic-level bias panel renders (display scope). */
+  showPanel: boolean;
   /** Most-linked game across the topic's articles — the cover/label subject. */
   primaryGame: { name: string; slug: string } | null;
-  distribution: TopicBiasDistribution;
-  /** Topic-level distribution of factual influence flags (counts, not a scale). */
+  distribution: PublicTopicDistribution;
+  /** Topic-level distribution of PUBLIC influence flags (counts, not a scale). */
   flags: TopicFlagTally;
+  /** Public review-integrity rows beyond review copy (embargo / sponsored event). */
+  integrityTally: IntegrityTally;
   lastActivityAt: string | null;
 }
 
@@ -76,21 +117,27 @@ export interface LatestArticle {
   excerpt: string | null;
   publishDate: string | null;
   origin: string;
-  /** Public effective bias (override ?? auto). Never the internal field. */
-  influence: number | null;
-  quality: number | null;
-  /** The factual influence flags this article carries (none ⇒ independent). */
+  articleType: string;
+  /** Compact surface: at most a Sponsored chip under the default scope. */
+  biasMode: BiasMode;
+  /** The PUBLIC influence flags shown for this row (shaped by `biasMode`). */
   flags: InfluenceFlag[];
   /** Plain-language "why" for the hover tooltip (named signal labels). */
   reasons: string[];
 }
 
-/** A one-line homepage pulse ("Today: X stories · Y articles · Z% independent"). */
+/**
+ * Today's briefing (Phase P S1): counts, never a percentage. The window is the
+ * last `windowHours` up to now — or, when nothing arrived in that span, up to the
+ * newest article (`isToday` false, `asOf` = that moment) so the label stays true.
+ */
 export interface Briefing {
-  stories: number;
-  articles: number;
-  independentPct: number | null;
-  readMinutes: number;
+  isToday: boolean;
+  asOf: string | null;
+  windowHours: number;
+  sources: number;
+  topics: number;
+  reviews: number;
 }
 
 /** A browsable genre with how many catalog games carry it. */
@@ -119,63 +166,71 @@ export interface HomepageData {
   controversial: RankedGame[];
   briefing: Briefing;
   genres: GenreCount[];
-}
-
-/**
- * Map a stored breakdown signal → its public FLAG. Only the four named factual
- * flags surface publicly; baselines and the (dormant) source-conflict signal
- * still feed the influence SCORE but are not shown as chips. Influence is mostly
- * binary facts, so the public display names the actual signals instead of a bar.
- */
-const FLAG_BY_SIGNAL: Record<string, InfluenceFlag> = {
-  sponsored: 'sponsored',
-  affiliate: 'affiliate',
-  reviewCopy: 'reviewCopy',
-  opinionFraming: 'opinion',
-};
-
-/** The factual influence flags an article carries (from its stored breakdown). */
-function flagsFromBreakdown(breakdown: BiasBreakdown | null): InfluenceFlag[] {
-  if (!breakdown) return [];
-  const present = new Set<InfluenceFlag>();
-  for (const c of breakdown.contributions) {
-    if (c.points > 0) {
-      const flag = FLAG_BY_SIGNAL[c.signal];
-      if (flag) present.add(flag);
-    }
-  }
-  // Canonical order, de-duplicated.
-  return INFLUENCE_FLAGS.filter((f) => present.has(f));
+  display: PublicDisplay;
 }
 
 function emptyFlagTally(): TopicFlagTally {
   return { total: 0, independent: 0, sponsored: 0, affiliate: 0, reviewCopy: 0, opinion: 0 };
 }
 
+/** Public integrity kinds per article id (see `publicIntegrityKinds`). */
+type IntegrityEvidence = Map<string, Set<IntegritySignalKind>>;
+
+function hasReviewCopy(evidence: IntegrityEvidence, articleId: string): boolean {
+  return evidence.get(articleId)?.has('review_copy') ?? false;
+}
+
+/** Quality values are public only while `bias.showQuality` is on. */
+function publicDistribution(
+  d: TopicBiasDistribution,
+  showQuality: boolean,
+): PublicTopicDistribution {
+  return {
+    articleCount: d.articleCount,
+    quality: showQuality ? { top: d.quality.top, slop: d.quality.slop, avg: d.quality.avg } : null,
+  };
+}
+
 /**
- * Topic-level distribution of factual influence flags across each topic's
- * articles (counts, not an averaged score). The flags are FACTS from the stored
- * breakdown, so they're read straight from the breakdown — independent of any
- * editor score override (which only moves the judgment, never the facts).
+ * Topic-level distribution of PUBLIC influence flags across each topic's articles
+ * (counts, not a score) + how many are reviews. The flags are facts from the
+ * stored breakdown (independent of score overrides), filtered by `publicFlags`,
+ * plus the public integrity rows (embargo / sponsored event). `independent` is
+ * the internal key for "no public signal found" — see `tallyArticle`.
  */
-async function flagTallyByTopic(topicIds: string[]): Promise<Map<string, TopicFlagTally>> {
+interface TopicTallyEntry {
+  tally: TopicFlagTally;
+  integrity: IntegrityTally;
+  reviews: number;
+}
+
+function emptyTopicTally(): TopicTallyEntry {
+  return { tally: emptyFlagTally(), integrity: emptyIntegrityTally(), reviews: 0 };
+}
+
+async function flagTallyByTopic(
+  topicIds: string[],
+  evidence: IntegrityEvidence,
+): Promise<Map<string, TopicTallyEntry>> {
+  const map = new Map<string, TopicTallyEntry>();
+  if (topicIds.length === 0) return map;
   const rows = await db
     .select({
       topicId: articleTopics.topicId,
+      articleId: articles.id,
+      articleType: articles.articleType,
       breakdown: articles.influenceBreakdown,
     })
     .from(articleTopics)
     .innerJoin(articles, eq(articleTopics.articleId, articles.id))
     .where(inArray(articleTopics.topicId, topicIds));
 
-  const map = new Map<string, TopicFlagTally>();
   for (const r of rows) {
-    const tally = map.get(r.topicId) ?? emptyFlagTally();
-    tally.total += 1;
-    const flags = flagsFromBreakdown(r.breakdown);
-    if (flags.length === 0) tally.independent += 1;
-    else for (const f of flags) tally[f] += 1;
-    map.set(r.topicId, tally);
+    const entry = map.get(r.topicId) ?? emptyTopicTally();
+    if (r.articleType === 'review') entry.reviews += 1;
+    const flags = publicFlags(r.breakdown, r.articleType, hasReviewCopy(evidence, r.articleId));
+    tallyArticle(entry.tally, entry.integrity, flags, evidence.get(r.articleId));
+    map.set(r.topicId, entry);
   }
   return map;
 }
@@ -225,7 +280,10 @@ async function primaryGameByTopic(
 }
 
 /** Every topic that carries a stored bias distribution, shaped as a card. */
-async function loadTopicCards(): Promise<TopicCard[]> {
+async function loadTopicCards(
+  settings: DisplaySettings,
+  evidence: IntegrityEvidence,
+): Promise<TopicCard[]> {
   const topicRows = await db
     .select({
       id: topics.id,
@@ -255,42 +313,127 @@ async function loadTopicCards(): Promise<TopicCard[]> {
   const [sourceCounts, primaryGames, flagTallies] = await Promise.all([
     sourceCountsByTopic(ids),
     primaryGameByTopic(ids),
-    flagTallyByTopic(ids),
+    flagTallyByTopic(ids, evidence),
   ]);
 
-  return withDist.map((t) => ({
-    id: t.id,
-    slug: t.slug,
-    title: t.title,
-    tldr: t.tldr,
-    aiSummary: t.aiSummary,
-    status: t.status,
-    typeLabel: t.typeLabel,
-    articleCount: t.distribution.articleCount,
-    sourceCount: sourceCounts.get(t.id) ?? 0,
-    primaryGame: primaryGames.get(t.id) ?? null,
-    distribution: t.distribution,
-    flags: flagTallies.get(t.id) ?? emptyFlagTally(),
-    lastActivityAt: t.lastActivityAt ? t.lastActivityAt.toISOString() : null,
-  }));
+  return withDist.map((t) => {
+    const entry = flagTallies.get(t.id) ?? emptyTopicTally();
+    return {
+      id: t.id,
+      slug: t.slug,
+      title: t.title,
+      tldr: t.tldr,
+      aiSummary: t.aiSummary,
+      status: t.status,
+      typeLabel: t.typeLabel,
+      articleCount: t.distribution.articleCount,
+      sourceCount: sourceCounts.get(t.id) ?? 0,
+      reviewCount: entry.reviews,
+      showPanel: topicShowsPanel(settings.displayScope, entry.tally, entry.reviews),
+      primaryGame: primaryGames.get(t.id) ?? null,
+      distribution: publicDistribution(t.distribution, settings.showQuality),
+      flags: entry.tally,
+      integrityTally: entry.integrity,
+      lastActivityAt: t.lastActivityAt ? t.lastActivityAt.toISOString() : null,
+    };
+  });
 }
 
 function activityTime(c: TopicCard): number {
   return c.lastActivityAt ? new Date(c.lastActivityAt).getTime() : 0;
 }
 
-/** Named influence signals from a stored breakdown — the public "why". */
-function influenceReasons(breakdown: BiasBreakdown | null): string[] {
+/**
+ * Named influence signals from a stored breakdown — the public "why". On a review
+ * the type-inferred review-copy contribution is dropped (see `publicFlags`).
+ */
+function influenceReasons(breakdown: BiasBreakdown | null, articleType: string): string[] {
   if (!breakdown) return [];
+  const isReview = articleType === 'review';
   return breakdown.contributions
     .filter((c) => c.points > 0 && c.signal !== 'sourceBaseline' && c.signal !== 'baselineNeutral')
+    .filter((c) => !(isReview && c.signal === 'reviewCopy'))
     .sort((a, b) => b.points - a.points)
     .slice(0, 3)
     .map((c) => c.label);
 }
 
+/** Public flags + reasons for one row, shaped for its surface and the display scope. */
+function rowSignals(
+  r: { id: string; articleType: string; influenceBreakdown: BiasBreakdown | null },
+  surface: 'detail' | 'compact',
+  scope: DisplaySettings['displayScope'],
+  evidence: IntegrityEvidence,
+): { isReview: boolean; biasMode: BiasMode; flags: InfluenceFlag[]; reasons: string[] } {
+  const isReview = r.articleType === 'review';
+  const flags = publicFlags(r.influenceBreakdown, r.articleType, hasReviewCopy(evidence, r.id));
+  const biasMode = rowBiasMode(scope, surface, isReview, flags);
+  const shaped = shapeRowSignals(
+    biasMode,
+    isReview,
+    flags,
+    influenceReasons(r.influenceBreakdown, r.articleType),
+  );
+  return { isReview, biasMode, ...shaped };
+}
+
+interface DetailRowInput {
+  id: string;
+  title: string;
+  excerpt: string | null;
+  url: string | null;
+  origin: string;
+  author: string | null;
+  articleType: string;
+  publishDate: Date | null;
+  sourceName: string | null;
+  sourceSlug: string | null;
+  qualityScore?: number | null;
+  qualityOverride?: number | null;
+  influenceBreakdown: BiasBreakdown | null;
+}
+
+/**
+ * Shape article rows for a DETAIL list (topic coverage, game Reviews / news,
+ * source coverage): public flags by display scope, quality only while shown, and
+ * the public integrity rows on every review. One place, so every surface agrees.
+ */
+async function detailRows(
+  rows: DetailRowInput[],
+  settings: DisplaySettings,
+  evidence: IntegrityEvidence,
+): Promise<TopicArticleRow[]> {
+  const reviewIds = rows.filter((r) => r.articleType === 'review').map((r) => r.id);
+  const integrity = await publicIntegrityFor(reviewIds, settings.integrityAutoPublish);
+  return rows.map((r) => {
+    const s = rowSignals(r, 'detail', settings.displayScope, evidence);
+    return {
+      id: r.id,
+      title: r.title,
+      excerpt: r.excerpt,
+      url: r.url,
+      origin: r.origin,
+      author: r.origin === 'ours' ? r.author : null,
+      articleType: r.articleType,
+      publishDate: r.publishDate ? r.publishDate.toISOString() : null,
+      sourceName: r.sourceName,
+      sourceSlug: r.sourceSlug,
+      quality: settings.showQuality ? (r.qualityOverride ?? r.qualityScore ?? null) : null,
+      isReview: s.isReview,
+      biasMode: s.biasMode,
+      flags: s.flags,
+      reasons: s.reasons,
+      integrity: s.isReview ? (integrity.get(r.id) ?? []) : null,
+    };
+  });
+}
+
 /** Newest aggregated articles for the "Latest news" column (excerpt + link only). */
-async function loadLatestArticles(limit: number): Promise<LatestArticle[]> {
+async function loadLatestArticles(
+  limit: number,
+  settings: DisplaySettings,
+  evidence: IntegrityEvidence,
+): Promise<LatestArticle[]> {
   const rows = await db
     .select({
       id: articles.id,
@@ -299,12 +442,9 @@ async function loadLatestArticles(limit: number): Promise<LatestArticle[]> {
       url: articles.url,
       excerpt: articles.excerpt,
       publishDate: articles.publishDate,
+      articleType: articles.articleType,
       sourceName: sources.name,
       sourceSlug: sources.slug,
-      influenceScore: articles.influenceScore,
-      influenceOverride: articles.influenceOverride,
-      qualityScore: articles.qualityScore,
-      qualityOverride: articles.qualityOverride,
       influenceBreakdown: articles.influenceBreakdown,
     })
     .from(articles)
@@ -313,20 +453,23 @@ async function loadLatestArticles(limit: number): Promise<LatestArticle[]> {
     .orderBy(desc(articles.publishDate))
     .limit(limit);
 
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    sourceName: r.sourceName,
-    sourceSlug: r.sourceSlug,
-    url: r.url,
-    excerpt: r.excerpt,
-    publishDate: r.publishDate ? r.publishDate.toISOString() : null,
-    origin: r.origin,
-    influence: r.influenceOverride ?? r.influenceScore ?? null,
-    quality: r.qualityOverride ?? r.qualityScore ?? null,
-    flags: flagsFromBreakdown(r.influenceBreakdown),
-    reasons: influenceReasons(r.influenceBreakdown),
-  }));
+  return rows.map((r) => {
+    const s = rowSignals(r, 'compact', settings.displayScope, evidence);
+    return {
+      id: r.id,
+      title: r.title,
+      sourceName: r.sourceName,
+      sourceSlug: r.sourceSlug,
+      url: r.url,
+      excerpt: r.excerpt,
+      publishDate: r.publishDate ? r.publishDate.toISOString() : null,
+      origin: r.origin,
+      articleType: r.articleType,
+      biasMode: s.biasMode,
+      flags: s.flags,
+      reasons: s.reasons,
+    };
+  });
 }
 
 /** Top genres across the catalog (the "browse by genre" rail). */
@@ -397,21 +540,57 @@ function topScore(g: RankedGame): number {
   return parts.reduce((a, b) => a + b, 0) / parts.length;
 }
 
-/** Aggregate "today's briefing" pulse from the stored cards. */
-function buildBriefing(cards: TopicCard[], hero: TopicCard[], feed: TopicCard[]): Briefing {
-  let independent = 0;
-  let influenced = 0;
-  let articles = 0;
-  for (const c of cards) {
-    independent += c.distribution.influence.independent;
-    influenced += c.distribution.influence.influenced;
-    articles += c.articleCount;
-  }
-  const totalBias = independent + influenced;
-  const independentPct = totalBias > 0 ? Math.round((independent / totalBias) * 100) : null;
-  // Read time scaled to the briefing surface (hero + feed), not the whole archive.
-  const readMinutes = Math.max(5, Math.min(12, Math.round((hero.length + feed.length) / 3)));
-  return { stories: cards.length, articles, independentPct, readMinutes };
+/**
+ * Today's briefing (Phase P S1): sources · topics · reviews in the window — never
+ * a percentage. The window is `windowHours` up to NOW when coverage arrived in
+ * that span; otherwise it ends at the newest article and says so (`isToday`
+ * false + `asOf`), so a quiet feed (or the fixed-date demo feed) never shows a
+ * false "today". Topics count only public ones (a stored distribution).
+ */
+async function buildBriefing(windowHours: number): Promise<Briefing> {
+  const empty: Briefing = {
+    isToday: true,
+    asOf: null,
+    windowHours,
+    sources: 0,
+    topics: 0,
+    reviews: 0,
+  };
+  const [anchorRow] = await db
+    .select({ t: sql<Date | null>`max(${articles.publishDate})` })
+    .from(articles)
+    .where(sql`${articles.publishDate} <= now()`);
+  const anchor = anchorRow?.t ? new Date(anchorRow.t) : null;
+  if (!anchor || Number.isNaN(anchor.getTime())) return empty;
+
+  const now = Date.now();
+  const windowMs = windowHours * 3_600_000;
+  const isToday = now - anchor.getTime() <= windowMs;
+  const hi = new Date(isToday ? now : anchor.getTime());
+  const lo = new Date(hi.getTime() - windowMs);
+
+  const res = await db.execute(sql`
+    SELECT
+      (SELECT count(DISTINCT a.source_id)::int FROM articles a
+        WHERE a.source_id IS NOT NULL AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS sources,
+      (SELECT count(DISTINCT at.topic_id)::int FROM article_topics at
+        JOIN articles a ON a.id = at.article_id
+        JOIN topics t ON t.id = at.topic_id
+        WHERE t.bias_distribution IS NOT NULL
+          AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS topics,
+      (SELECT count(*)::int FROM articles a
+        WHERE a.article_type = 'review' AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS reviews
+  `);
+  const raw = res as unknown as { rows?: Record<string, unknown>[] } | Record<string, unknown>[];
+  const row = (Array.isArray(raw) ? raw[0] : raw.rows?.[0]) ?? {};
+  return {
+    isToday,
+    asOf: isToday ? null : anchor.toISOString(),
+    windowHours,
+    sources: Number(row.sources ?? 0),
+    topics: Number(row.topics ?? 0),
+    reviews: Number(row.reviews ?? 0),
+  };
 }
 
 /**
@@ -419,14 +598,17 @@ function buildBriefing(cards: TopicCard[], hero: TopicCard[], feed: TopicCard[])
  * covered multi-source stories; the main feed is the rest, newest-first.
  */
 export async function getHomepageData(): Promise<HomepageData> {
+  const settings = await displaySettings();
+  const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
   // AUTO + MANUAL: rail sizes + pins come from the admin `lists` config (nothing
   // hardcoded); the automatic ordering runs underneath and pins float on top.
-  const [cards, latest, ranked, genres, cfg] = await Promise.all([
-    loadTopicCards(),
-    loadLatestArticles(10),
+  const [cards, latest, ranked, genres, cfg, briefing] = await Promise.all([
+    loadTopicCards(settings, evidence),
+    loadLatestArticles(10, settings, evidence),
     loadRankedGames(),
     loadGenres(),
     listsSettings(),
+    buildBriefing(settings.briefingWindowHours),
   ]);
   const promotedSlugs = cfg.pinPromotedGames ? await activePromotedGameSlugs() : [];
 
@@ -473,7 +655,8 @@ export async function getHomepageData(): Promise<HomepageData> {
     topRated,
     controversial,
     genres,
-    briefing: buildBriefing(cards, hero, feed),
+    briefing,
+    display: publicDisplay(settings),
   };
 }
 
@@ -492,14 +675,17 @@ export interface TopicArticleRow {
   publishDate: string | null;
   sourceName: string | null;
   sourceSlug: string | null;
-  /** Effective public scores (override ?? auto) — for sort/filter only. */
-  influence: number | null;
+  /** Effective quality (override ?? auto) — null while `bias.showQuality` is off. */
   quality: number | null;
-  /** Per-article factual influence flags (none ⇒ independent). */
+  isReview: boolean;
+  /** How this row shows its signals (display scope; decided server-side). */
+  biasMode: BiasMode;
+  /** PUBLIC influence flags, shaped by `biasMode` (none ⇒ "No signals found"). */
   flags: InfluenceFlag[];
   /** Named signal labels for the hover "why". */
   reasons: string[];
-  isPrimary: boolean;
+  /** Review rows only: the public integrity rows (empty ⇒ "No signals found"). */
+  integrity: PublicIntegrityRow[] | null;
 }
 
 export interface TopicTimelineEntry {
@@ -537,14 +723,19 @@ export interface TopicDetail {
   lastActivityAt: string | null;
   articleCount: number;
   sourceCount: number;
-  distribution: TopicBiasDistribution;
+  reviewCount: number;
+  /** Whether the topic-level bias panel renders (display scope). */
+  showPanel: boolean;
+  distribution: PublicTopicDistribution;
   flags: TopicFlagTally;
+  integrityTally: IntegrityTally;
   games: { name: string; slug: string }[];
   primaryGame: { name: string; slug: string } | null;
   gameRating: TopicGameRating | null;
   articles: TopicArticleRow[];
   timeline: TopicTimelineEntry[];
   related: RelatedTopic[];
+  display: PublicDisplay;
 }
 
 /** Every game subject linked across a topic's articles, most-linked first. */
@@ -677,6 +868,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
     .limit(1);
   if (!topic || !topic.distribution) return null;
 
+  const settings = await displaySettings();
+  const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
   const [artRows, gameList, flagTallies, sourceCounts, timelineRows] = await Promise.all([
     db
       .select({
@@ -688,11 +881,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
         author: articles.author,
         articleType: articles.articleType,
         publishDate: articles.publishDate,
-        isPrimary: articleTopics.isPrimary,
         sourceName: sources.name,
         sourceSlug: sources.slug,
-        influenceScore: articles.influenceScore,
-        influenceOverride: articles.influenceOverride,
         qualityScore: articles.qualityScore,
         qualityOverride: articles.qualityOverride,
         influenceBreakdown: articles.influenceBreakdown,
@@ -703,7 +893,7 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       .where(eq(articleTopics.topicId, topic.id))
       .orderBy(desc(articles.publishDate)),
     linkedGamesForTopic(topic.id),
-    flagTallyByTopic([topic.id]),
+    flagTallyByTopic([topic.id], evidence),
     sourceCountsByTopic([topic.id]),
     db
       .select({
@@ -726,23 +916,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
     primary ? relatedTopicsForGame(primary.subjectId, topic.id) : Promise.resolve([]),
   ]);
 
-  const articleRows: TopicArticleRow[] = artRows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    excerpt: r.excerpt,
-    url: r.url,
-    origin: r.origin,
-    author: r.origin === 'ours' ? r.author : null,
-    articleType: r.articleType,
-    publishDate: r.publishDate ? r.publishDate.toISOString() : null,
-    sourceName: r.sourceName,
-    sourceSlug: r.sourceSlug,
-    influence: r.influenceOverride ?? r.influenceScore ?? null,
-    quality: r.qualityOverride ?? r.qualityScore ?? null,
-    flags: flagsFromBreakdown(r.influenceBreakdown),
-    reasons: influenceReasons(r.influenceBreakdown),
-    isPrimary: r.isPrimary,
-  }));
+  const articleRows = await detailRows(artRows, settings, evidence);
+  const entry = flagTallies.get(topic.id) ?? emptyTopicTally();
 
   return {
     id: topic.id,
@@ -756,8 +931,12 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
     lastActivityAt: topic.lastActivityAt ? topic.lastActivityAt.toISOString() : null,
     articleCount: topic.distribution.articleCount,
     sourceCount: sourceCounts.get(topic.id) ?? 0,
-    distribution: topic.distribution,
-    flags: flagTallies.get(topic.id) ?? emptyFlagTally(),
+    reviewCount: entry.reviews,
+    showPanel: topicShowsPanel(settings.displayScope, entry.tally, entry.reviews),
+    distribution: publicDistribution(topic.distribution, settings.showQuality),
+    flags: entry.tally,
+    integrityTally: entry.integrity,
+    display: publicDisplay(settings),
     games: gameList.map((g) => ({ name: g.name, slug: g.slug })),
     primaryGame: primary ? { name: primary.name, slug: primary.slug } : null,
     gameRating,
@@ -855,20 +1034,7 @@ export interface PublicReview {
 }
 
 /** An article that mentions the game (excerpt + link only — I1 copyright). */
-export interface GameArticleRow {
-  id: string;
-  title: string;
-  excerpt: string | null;
-  url: string | null;
-  origin: string;
-  author: string | null;
-  articleType: string;
-  publishDate: string | null;
-  sourceName: string | null;
-  sourceSlug: string | null;
-  flags: InfluenceFlag[];
-  reasons: string[];
-}
+export type GameArticleRow = TopicArticleRow;
 
 export interface GameVideoEntry {
   provider: string;
@@ -959,7 +1125,11 @@ export interface GameDetail {
   contentFlags: PublicContentFlags | null;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
+  /** Outlet review articles — their own block, pinned above the news (Phase P S1). */
+  reviews: GameArticleRow[];
+  /** Other coverage that mentions the game (reviews excluded). */
   articles: GameArticleRow[];
+  display: PublicDisplay;
   videos: GameVideoEntry[];
   prices: GamePriceEntry[];
   sysReqs: GameSysReqEntry[];
@@ -1092,42 +1262,51 @@ async function ourReviewFor(gameId: string): Promise<PublicReview | null> {
   };
 }
 
-/** Articles that mention this game (excerpt + link only; per-article flags). */
-async function articlesForGame(subjectId: string, limit = 12): Promise<GameArticleRow[]> {
-  const rows = await db
-    .select({
-      id: articles.id,
-      title: articles.title,
-      excerpt: articles.excerpt,
-      url: articles.url,
-      origin: articles.origin,
-      author: articles.author,
-      articleType: articles.articleType,
-      publishDate: articles.publishDate,
-      sourceName: sources.name,
-      sourceSlug: sources.slug,
-      influenceBreakdown: articles.influenceBreakdown,
-    })
-    .from(articleSubjects)
-    .innerJoin(articles, eq(articleSubjects.articleId, articles.id))
-    .leftJoin(sources, eq(articles.sourceId, sources.id))
-    .where(eq(articleSubjects.subjectId, subjectId))
-    .orderBy(desc(articles.publishDate))
-    .limit(limit);
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    excerpt: r.excerpt,
-    url: r.url,
-    origin: r.origin,
-    author: r.origin === 'ours' ? r.author : null,
-    articleType: r.articleType,
-    publishDate: r.publishDate ? r.publishDate.toISOString() : null,
-    sourceName: r.sourceName,
-    sourceSlug: r.sourceSlug,
-    flags: flagsFromBreakdown(r.influenceBreakdown),
-    reasons: influenceReasons(r.influenceBreakdown),
-  }));
+/**
+ * Articles that mention this game (excerpt + link only), split for the page:
+ * `reviews` (review articles — their own block, pinned above the news) and
+ * `news` (everything else). Each list is capped separately.
+ */
+async function articlesForGame(
+  subjectId: string,
+  settings: DisplaySettings,
+  evidence: IntegrityEvidence,
+  limit = 12,
+): Promise<{ reviews: GameArticleRow[]; news: GameArticleRow[] }> {
+  const query = (reviewsOnly: boolean) =>
+    db
+      .select({
+        id: articles.id,
+        title: articles.title,
+        excerpt: articles.excerpt,
+        url: articles.url,
+        origin: articles.origin,
+        author: articles.author,
+        articleType: articles.articleType,
+        publishDate: articles.publishDate,
+        sourceName: sources.name,
+        sourceSlug: sources.slug,
+        qualityScore: articles.qualityScore,
+        qualityOverride: articles.qualityOverride,
+        influenceBreakdown: articles.influenceBreakdown,
+      })
+      .from(articleSubjects)
+      .innerJoin(articles, eq(articleSubjects.articleId, articles.id))
+      .leftJoin(sources, eq(articles.sourceId, sources.id))
+      .where(
+        and(
+          eq(articleSubjects.subjectId, subjectId),
+          reviewsOnly ? eq(articles.articleType, 'review') : ne(articles.articleType, 'review'),
+        ),
+      )
+      .orderBy(desc(articles.publishDate))
+      .limit(limit);
+  const [reviewRows, newsRows] = await Promise.all([query(true), query(false)]);
+  const [reviews, news] = await Promise.all([
+    detailRows(reviewRows, settings, evidence),
+    detailRows(newsRows, settings, evidence),
+  ]);
+  return { reviews, news };
 }
 
 /** Topics that mention this game — the news↔ratings bridge (graceful: []). */
@@ -1266,6 +1445,8 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     .limit(1);
   if (!g) return null;
 
+  const settings = await displaySettings();
+  const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
   const [summary] = await db
     .select()
     .from(gameRatingSummaries)
@@ -1292,7 +1473,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     contentFlagsFor(g.gameId),
     ourReviewFor(g.gameId),
     relatedTopicsForGameSubject(g.subjectId),
-    articlesForGame(g.subjectId),
+    articlesForGame(g.subjectId, settings, evidence),
     relatedGamesFor(g.gameId, g.series, g.genres),
     db
       .select({
@@ -1435,7 +1616,9 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     contentFlags,
     review,
     relatedTopics,
-    articles: gameArticles,
+    reviews: gameArticles.reviews,
+    articles: gameArticles.news,
+    display: publicDisplay(settings),
     videos: videoRows.map((v) => ({
       provider: v.provider,
       url: v.url,
@@ -2074,7 +2257,10 @@ export interface SourceCard {
   articleCount: number;
   /** Share of this outlet's coverage carrying affiliate/sponsored signals (0..100). */
   affiliatePct: number | null;
-  /** Reputation 0..100 — editor baseline where set, else avg measured quality. */
+  /**
+   * Reputation 0..100 — editor baseline where set, else avg measured quality.
+   * Null while `bias.showQuality` is off (it IS the quality axis, per outlet).
+   */
   reputation: number | null;
   /** How many OTHER indexed outlets share this outlet's parent (conflict signal). */
   ownerSiblingCount: number;
@@ -2137,7 +2323,7 @@ function reputationOf(agg: SourceAgg | undefined, baseline: number | null): numb
 
 /** The sources index — every active outlet with ownership, reputation + stats. */
 export async function getSourcesData(): Promise<SourcesData> {
-  const [srcRows, agg] = await Promise.all([
+  const [srcRows, agg, settings] = await Promise.all([
     db
       .select({
         id: sources.id,
@@ -2155,6 +2341,7 @@ export async function getSourcesData(): Promise<SourcesData> {
       .where(eq(sources.status, 'active'))
       .orderBy(asc(sources.name)),
     aggregateSourceStats(),
+    displaySettings(),
   ]);
 
   // Shared-ownership map: how many indexed outlets each parent company owns.
@@ -2176,8 +2363,11 @@ export async function getSourcesData(): Promise<SourcesData> {
         : a
           ? affiliateShare(a.tally)
           : null;
-    const reputation =
-      s.statAvgTrust != null ? Math.round(s.statAvgTrust) : reputationOf(a, s.reputationBaseline);
+    const reputation = !settings.showQuality
+      ? null
+      : s.statAvgTrust != null
+        ? Math.round(s.statAvgTrust)
+        : reputationOf(a, s.reputationBaseline);
     return {
       slug: s.slug,
       name: s.name,
@@ -2207,9 +2397,12 @@ export interface SourceDetail {
   description: string | null;
   articleCount: number;
   affiliatePct: number | null;
+  /** Null while `bias.showQuality` is off (see SourceCard.reputation). */
   reputation: number | null;
-  /** Factual flag distribution across this outlet's coverage (counts). */
+  /** PUBLIC flag distribution across this outlet's coverage (counts). */
   flags: TopicFlagTally;
+  integrityTally: IntegrityTally;
+  display: PublicDisplay;
   /** Conflict: other indexed outlets under the same parent company. */
   owner: { name: string; siblings: { slug: string; name: string }[] } | null;
   /** Recent coverage — excerpt + link only (I1 copyright). */
@@ -2241,9 +2434,13 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
     .limit(1);
   if (!s) return null;
 
-  // Per-source flag tally + quality (reusing the same model as the news side).
+  const settings = await displaySettings();
+  const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
+  // Per-source PUBLIC flag tally + quality (the same model as the news side).
   const aggRows = await db
     .select({
+      id: articles.id,
+      articleType: articles.articleType,
       breakdown: articles.influenceBreakdown,
       qualityScore: articles.qualityScore,
       qualityOverride: articles.qualityOverride,
@@ -2251,11 +2448,10 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
     .from(articles)
     .where(eq(articles.sourceId, s.id));
   const agg: SourceAgg = { tally: emptyFlagTally(), qualitySum: 0, qualityN: 0 };
+  const integrity = emptyIntegrityTally();
   for (const r of aggRows) {
-    agg.tally.total += 1;
-    const flags = flagsFromBreakdown(r.breakdown);
-    if (flags.length === 0) agg.tally.independent += 1;
-    else for (const f of flags) agg.tally[f] += 1;
+    const flags = publicFlags(r.breakdown, r.articleType, hasReviewCopy(evidence, r.id));
+    tallyArticle(agg.tally, integrity, flags, evidence.get(r.id));
     const quality = r.qualityOverride ?? r.qualityScore ?? null;
     if (quality != null) {
       agg.qualitySum += quality;
@@ -2274,6 +2470,8 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
         author: articles.author,
         articleType: articles.articleType,
         publishDate: articles.publishDate,
+        qualityScore: articles.qualityScore,
+        qualityOverride: articles.qualityOverride,
         influenceBreakdown: articles.influenceBreakdown,
       })
       .from(articles)
@@ -2311,20 +2509,11 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
       : Promise.resolve([] as { slug: string; name: string }[]),
   ]);
 
-  const recentArticles: GameArticleRow[] = recentRows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    excerpt: r.excerpt,
-    url: r.url,
-    origin: r.origin,
-    author: r.origin === 'ours' ? r.author : null,
-    articleType: r.articleType,
-    publishDate: r.publishDate ? r.publishDate.toISOString() : null,
-    sourceName: s.name,
-    sourceSlug: s.slug,
-    flags: flagsFromBreakdown(r.influenceBreakdown),
-    reasons: influenceReasons(r.influenceBreakdown),
-  }));
+  const recentArticles = await detailRows(
+    recentRows.map((r) => ({ ...r, sourceName: s.name, sourceSlug: s.slug })),
+    settings,
+    evidence,
+  );
 
   return {
     slug: s.slug,
@@ -2336,9 +2525,14 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
     articleCount: s.statArticleCount ?? agg.tally.total,
     affiliatePct:
       s.statAffiliatePct != null ? Math.round(s.statAffiliatePct) : affiliateShare(agg.tally),
-    reputation:
-      s.statAvgTrust != null ? Math.round(s.statAvgTrust) : reputationOf(agg, s.reputationBaseline),
+    reputation: !settings.showQuality
+      ? null
+      : s.statAvgTrust != null
+        ? Math.round(s.statAvgTrust)
+        : reputationOf(agg, s.reputationBaseline),
     flags: agg.tally,
+    integrityTally: integrity,
+    display: publicDisplay(settings),
     owner:
       s.parentCompany && siblingRows.length > 0
         ? { name: s.parentCompany, siblings: siblingRows }

@@ -1,26 +1,32 @@
 import type { Briefing } from '@/lib/public-api';
 
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime())
+    ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'Latest';
+}
+
 /**
- * "Today's briefing" pulse (BLUEPRINT-adjacent, Ground-News "Daily Briefing"
- * equivalent) — a one-line summary built entirely from data we already have. It
- * frames the front page with substance and reinforces the bias-lens promise.
+ * "Today's briefing" pulse (Phase P S1) — counts only: sources · topics · reviews
+ * in the window. Never a percentage. When nothing arrived in the window the
+ * server anchors it to the newest coverage and we label that day instead of
+ * claiming "Today".
  */
 export function BriefingStrip({ briefing }: { briefing: Briefing }): React.JSX.Element | null {
-  if (briefing.stories === 0) return null;
+  if (briefing.sources === 0 && briefing.topics === 0 && briefing.reviews === 0) return null;
   const items: { value: string; label: string }[] = [
-    { value: String(briefing.stories), label: briefing.stories === 1 ? 'story' : 'stories' },
-    { value: String(briefing.articles), label: 'articles' },
+    { value: String(briefing.sources), label: briefing.sources === 1 ? 'source' : 'sources' },
+    { value: String(briefing.topics), label: briefing.topics === 1 ? 'topic' : 'topics' },
+    { value: String(briefing.reviews), label: briefing.reviews === 1 ? 'review' : 'reviews' },
   ];
-  if (briefing.independentPct != null) {
-    items.push({ value: `${briefing.independentPct}%`, label: 'independent coverage' });
-  }
-  items.push({ value: `${briefing.readMinutes} min`, label: 'read' });
+  const tag = briefing.isToday || !briefing.asOf ? 'Today' : dayLabel(briefing.asOf);
 
   return (
     <div className="gk-briefing" aria-label="Today's briefing">
       <span className="gk-briefing-tag">
         <span className="gk-pulse" aria-hidden />
-        Today
+        {tag}
       </span>
       <div className="gk-briefing-items">
         {items.map((it, i) => (

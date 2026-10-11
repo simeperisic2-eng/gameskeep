@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { getSources } from '@/lib/public-api';
+import { getDisplay, getSources } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
 import { breadcrumbLd } from '@/lib/schema';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
@@ -13,20 +13,23 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 export const metadata: Metadata = {
   title: 'Sources',
   description:
-    'Every outlet GamesKeep aggregates — who owns them, where ownership is shared, their reputation, and the bias signals in their coverage. Transparency on who is telling the story.',
+    'Every outlet GamesKeep aggregates — who owns them, where ownership is shared, and the signals we found in their coverage. Transparency on who is telling the story.',
   alternates: { canonical: `${siteUrl}/sources` },
   openGraph: {
     type: 'website',
     url: `${siteUrl}/sources`,
     title: 'Sources — who covers games, and who owns them',
     description:
-      'Ownership, shared-ownership conflicts, reputation and coverage stats for every outlet we aggregate.',
+      'Ownership, shared-ownership conflicts and coverage signals for every outlet we aggregate.',
   },
   twitter: { card: 'summary_large_image', title: 'Sources' },
 };
 
 export default async function SourcesPage(): Promise<React.JSX.Element> {
-  const { sources, owners, articleTotal } = await getSources();
+  const [{ sources, owners, articleTotal }, display] = await Promise.all([
+    getSources(),
+    getDisplay(),
+  ]);
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -49,8 +52,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
             <h1 className="gk-catalog-title">Sources</h1>
             <p className="gk-section-sub">
               Who tells the story matters as much as the story. Every outlet we aggregate — its
-              ownership, where that ownership is shared, its reputation, and the bias signals in its
-              coverage.
+              ownership, where that ownership is shared, and the signals we found in its coverage.
             </p>
           </div>
           <span className="gk-catalog-count">
@@ -87,7 +89,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
         {sources.length > 0 ? (
           <div className="gk-srccard-grid">
             {sources.map((s) => (
-              <SourceCardItem key={s.slug} source={s} />
+              <SourceCardItem key={s.slug} source={s} showReputation={display.showQuality} />
             ))}
           </div>
         ) : (

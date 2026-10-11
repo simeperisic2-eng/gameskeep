@@ -206,6 +206,55 @@ export async function getListsSlots(): Promise<SlotPlacementRow[]> {
   return (await adminGet<{ data: SlotPlacementRow[] }>('/lists/slots')).data;
 }
 
+// ── Phase P S1: display switches + review integrity ──────────────────────────
+export interface IntegrityLexicon {
+  reviewCopy: string[];
+  embargo: string[];
+  sponsoredEvent: string[];
+  negations: string[];
+}
+export interface DisplayConfig {
+  displayScope: 'reviews_and_sponsored' | 'all';
+  showQuality: boolean;
+  topicBiasVotes: boolean;
+  briefingWindowHours: number;
+  integrityAutoPublish: boolean;
+  integrityLexicon: IntegrityLexicon;
+}
+export async function getDisplayConfig(): Promise<DisplayConfig> {
+  return (await adminGet<{ data: DisplayConfig }>('/display/config')).data;
+}
+
+export interface IntegritySignalRow {
+  id: string;
+  kind: 'review_copy' | 'embargo' | 'sponsored_event';
+  origin: 'auto' | 'editor';
+  status: 'detected' | 'confirmed' | 'dismissed';
+  evidenceSnippet: string | null;
+  editorNote: string | null;
+  evidenceDate: string | null;
+  decidedByLabel: string | null;
+  decidedAt: string | null;
+}
+export interface IntegrityReviewRow {
+  articleId: string;
+  title: string;
+  sourceName: string | null;
+  url: string | null;
+  publishDate: string | null;
+  signals: IntegritySignalRow[];
+}
+export async function getIntegrityReviews(): Promise<{
+  reviews: IntegrityReviewRow[];
+  autoPublish: boolean;
+}> {
+  return (
+    await adminGet<{ data: { reviews: IntegrityReviewRow[]; autoPublish: boolean } }>(
+      '/integrity/reviews',
+    )
+  ).data;
+}
+
 export async function listResource(name: string): Promise<Row[]> {
   const res = await adminGet<{ data: Row[] }>(`/${name}`);
   return res.data;

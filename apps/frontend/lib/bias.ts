@@ -1,11 +1,22 @@
 /**
- * Plain-language bias readouts (SPEC I5a, Ground-News pattern). A bias bar pairs
- * a compact visual with a sentence a first-time visitor can actually read — no
- * raw "avg 0.0/10". Pure + unit-testable; no rendering here.
+ * Plain-language bias readouts (SPEC I5a, Ground-News pattern; Phase P S1). A
+ * bias display pairs a compact visual with a sentence a first-time visitor can
+ * actually read. Pure + unit-testable; no rendering here.
+ *
+ * Phase P S1 posture: prove presence, never absence. Where no signal was found
+ * the label is "No signals found" — never "independent"/"clean". What renders
+ * where is the display scope (decided server-side per row; topic-level here).
  */
-import type { InfluenceFlag, TopicFlagTally } from './public-api';
+import type { BiasDisplayScope } from '@gameskeep/shared/constants';
+import type { InfluenceFlag, IntegrityTally, TopicFlagTally } from './public-api';
 
 export type BiasTone = 'good' | 'mixed' | 'warn';
+
+/** The public empty state for signals. We can show what we found, not prove absence. */
+export const NO_SIGNALS_LABEL = 'No signals found';
+
+/** One-line explainer used in tooltips and the Methodology page. */
+export const NO_SIGNALS_EXPLAINER = 'We can show what we found; we cannot prove what isn’t there.';
 
 // ── influence FLAGS (factual labels, not a scale) ────────────────────────────
 // The influence axis is mostly binary facts, so the public UI names the actual
@@ -22,45 +33,61 @@ export const FLAG_LABEL: Record<InfluenceFlag, string> = {
 /** Canonical render order for the four flags. */
 const FLAG_ORDER: InfluenceFlag[] = ['sponsored', 'affiliate', 'reviewCopy', 'opinion'];
 
-/** One part of a topic-level flag distribution, e.g. "5 independent" / "1 sponsored". */
+/** One part of a topic-level flag distribution, e.g. "1 sponsored". */
 export interface FlagPart {
   key: string;
   label: string;
-  kind: 'independent' | 'signal';
+  kind: 'nosignal' | 'signal';
 }
 
 /**
- * Topic-level flag distribution → render parts ("5 independent · 1 sponsored").
- * Independent first, then any present signal flags, lower-cased into the count
- * phrase. Counts come straight from the stored breakdowns (facts, not a score).
+ * Topic-level flag distribution → render parts ("2 sponsored · 4 with no signals
+ * found"). Present signals first, then the neutral no-signal count. Counts come
+ * straight from the stored public breakdowns (facts, not a score).
  */
-export function flagParts(tally: TopicFlagTally): FlagPart[] {
+export function flagParts(tally: TopicFlagTally, integrity?: IntegrityTally): FlagPart[] {
   const parts: FlagPart[] = [];
-  if (tally.independent > 0) {
-    parts.push({
-      key: 'independent',
-      label: `${tally.independent} independent`,
-      kind: 'independent',
-    });
-  }
   for (const f of FLAG_ORDER) {
     const n = tally[f];
     if (n > 0) parts.push({ key: f, label: `${n} ${FLAG_LABEL[f].toLowerCase()}`, kind: 'signal' });
+  }
+  // Review-integrity rows found on the story's reviews (review copy is a flag above).
+  if (integrity?.embargo) {
+    parts.push({ key: 'embargo', label: `${integrity.embargo} embargo`, kind: 'signal' });
+  }
+  if (integrity?.sponsoredEvent) {
+    parts.push({
+      key: 'sponsoredEvent',
+      label: `${integrity.sponsoredEvent} sponsored event / press trip`,
+      kind: 'signal',
+    });
+  }
+  if (tally.independent > 0) {
+    parts.push({
+      key: 'nosignal',
+      label: `${tally.independent} with ${NO_SIGNALS_LABEL.toLowerCase()}`,
+      kind: 'nosignal',
+    });
   }
   return parts;
 }
 
 /**
- * A compact single-token summary of a topic's flags for dense spots (the trending
- * list): "Independent" when nothing fires, else the leading signal + "+N" extra.
+ * The compact topic token for dense spots (trending list, cards). Default scope:
+ * a Sponsored token only when a sponsored article is present, otherwise nothing.
+ * Scope `all`: the leading signal (+N) or the neutral no-signal label.
  */
-export function topicFlagSummary(tally: TopicFlagTally): {
-  kind: 'independent' | 'signal';
-  label: string;
-} {
-  const present = FLAG_ORDER.filter((f) => tally[f] > 0);
-  if (present.length === 0) return { kind: 'independent', label: 'Independent' };
-  const first = FLAG_LABEL[present[0]!];
+export function compactTopicToken(
+  tally: TopicFlagTally,
+  scope: BiasDisplayScope,
+  integrity?: IntegrityTally,
+): { kind: 'nosignal' | 'signal'; label: string } | null {
+  if (scope !== 'all') return tally.sponsored > 0 ? { kind: 'signal', label: 'Sponsored' } : null;
+  const present: string[] = FLAG_ORDER.filter((f) => tally[f] > 0).map((f) => FLAG_LABEL[f]);
+  if (integrity?.embargo) present.push('Embargo');
+  if (integrity?.sponsoredEvent) present.push('Press trip');
+  if (present.length === 0) return { kind: 'nosignal', label: NO_SIGNALS_LABEL };
+  const first = present[0]!;
   return {
     kind: 'signal',
     label: present.length === 1 ? first : `${first} +${present.length - 1}`,
@@ -68,12 +95,12 @@ export function topicFlagSummary(tally: TopicFlagTally): {
 }
 
 export interface BiasReadout {
-  /** Short label, e.g. "Mostly independent" or "5 of 5 independent". */
+  /** Short label, e.g. "Mostly quality". */
   phrase: string;
   tone: BiasTone;
 }
 
-/** Quality axis (Low-effort / AI ↔ Quality) → words. */
+/** Quality axis (Low-effort / AI ↔ Quality) → words (only rendered while shown). */
 export function qualityReadout(top: number, slop: number): BiasReadout {
   const total = top + slop;
   if (total === 0) return { phrase: 'No quality data', tone: 'mixed' };

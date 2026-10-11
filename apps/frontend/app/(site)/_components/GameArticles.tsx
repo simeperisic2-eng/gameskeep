@@ -1,14 +1,17 @@
 import type { GameArticleRow } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { ArticleFlags } from './BiasBar';
+import { ReviewSignals } from './IntegrityBlock';
 import { SourceIcon } from './SourceIcon';
 
 /**
- * Articles that mention this game (BLUEPRINT 2.3) — excerpt + link only, the same
+ * Coverage that mentions this game (BLUEPRINT 2.3) — excerpt + link only, the same
  * copyright posture as the story page (we never reproduce full text, we link OUT
- * with clear attribution). Each row carries the per-article factual influence
- * flags so the bias lens follows the game, not just the story. Author shows only
- * on our own articles (the backend nulls it for aggregated coverage).
+ * with clear attribution). Author shows only on our own articles.
+ *
+ * Phase P S1: outlet REVIEWS sit in their own block pinned above the news, each
+ * with its signals panel + the review-integrity block; the news list below shows
+ * signals only where the display scope allows (decided server-side per row).
  */
 function Row({ a }: { a: GameArticleRow }): React.JSX.Element {
   const source = a.sourceName ?? (a.origin === 'ours' ? 'GamesKeep' : 'Source');
@@ -39,8 +42,11 @@ function Row({ a }: { a: GameArticleRow }): React.JSX.Element {
           )}
         </h3>
         {excerpt ? <p className="gk-srcrow-excerpt">{excerpt}</p> : null}
+        {a.isReview && a.biasMode === 'panel' ? <ReviewSignals row={a} /> : null}
         <div className="gk-srcrow-foot">
-          <ArticleFlags flags={a.flags} reasons={a.reasons} />
+          {a.isReview ? null : (
+            <ArticleFlags flags={a.flags} reasons={a.reasons} mode={a.biasMode} />
+          )}
           <span className="gk-srcrow-meta">
             {a.author ? `By ${a.author} · ` : ''}
             {time ?? ''}
@@ -63,18 +69,27 @@ function Row({ a }: { a: GameArticleRow }): React.JSX.Element {
 
 export function GameArticles({
   articles,
+  variant = 'news',
 }: {
   articles: GameArticleRow[];
+  variant?: 'news' | 'reviews';
 }): React.JSX.Element | null {
   if (articles.length === 0) return null;
+  const reviews = variant === 'reviews';
   return (
-    <section className="gk-coverage" aria-label="In the news">
+    <section
+      className={`gk-coverage${reviews ? ' gk-coverage-reviews' : ''}`}
+      aria-label={reviews ? 'Reviews' : 'In the news'}
+    >
       <div className="gk-coverage-head">
         <h2 className="gk-section-title">
-          In the news <span className="gk-coverage-count">{articles.length}</span>
+          {reviews ? 'Reviews' : 'In the news'}{' '}
+          <span className="gk-coverage-count">{articles.length}</span>
         </h2>
         <p className="gk-section-sub" style={{ margin: 0 }}>
-          Coverage that mentions this game — with its influence flags.
+          {reviews
+            ? 'Outlet reviews of this game — with how each review was produced, where we found it.'
+            : 'Other coverage that mentions this game.'}
         </p>
       </div>
       <div className="gk-srcrows">

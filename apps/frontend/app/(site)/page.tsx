@@ -25,14 +25,14 @@ export const metadata: Metadata = {
     absolute: 'GamesKeep — Gaming News with a Bias Lens & Honest Game Ratings',
   },
   description:
-    'GamesKeep clusters gaming news from many outlets into stories, shows how influenced and how high-quality the coverage is, and pairs every game with separated critic and community ratings.',
+    'GamesKeep clusters gaming news from many outlets into stories, shows the signals we found in the coverage (sponsorship, affiliate links, review copies), and pairs every game with separated critic and community ratings.',
   alternates: { canonical: siteUrl },
   openGraph: {
     type: 'website',
     url: siteUrl,
     title: 'GamesKeep — Gaming News with a Bias Lens & Honest Game Ratings',
     description:
-      'See the same gaming event across every outlet at once, with an influence + quality bias bar, alongside separated critic/community scores.',
+      'See the same gaming event across every outlet at once, with the coverage signals we found, alongside separated critic/community scores.',
   },
 };
 
@@ -60,7 +60,8 @@ function RankCard({ game, rank }: { game: RankedGame; rank: number }): React.JSX
 }
 
 export default async function HomePage(): Promise<React.JSX.Element> {
-  const { hero, feed, latest, topRated, controversial, briefing, genres } = await getHomepage();
+  const { hero, feed, latest, topRated, controversial, briefing, genres, display } =
+    await getHomepage();
   const heroTopics = rotate(hero);
   const secondary = heroTopics.slice(1, 4);
 
@@ -87,12 +88,12 @@ export default async function HomePage(): Promise<React.JSX.Element> {
           <span className="gk-eyebrow">The story, and how it&apos;s being told</span>
           <BriefingStrip briefing={briefing} />
         </div>
-        <Hero topics={heroTopics} initial={0} />
+        <Hero topics={heroTopics} display={display} initial={0} />
 
         {secondary.length > 0 && (
           <div className="gk-hero-secondary">
             {secondary.map((t) => (
-              <TopicCard key={t.id} topic={t} />
+              <TopicCard key={t.id} topic={t} display={display} />
             ))}
           </div>
         )}
@@ -111,7 +112,7 @@ export default async function HomePage(): Promise<React.JSX.Element> {
         </div>
 
         <div className="gk-portal">
-          <MainFeed topics={feed} />
+          <MainFeed topics={feed} display={display} />
           <aside className="gk-side">
             <LatestNews articles={latest} />
             <AdSlot slotKey="home" />

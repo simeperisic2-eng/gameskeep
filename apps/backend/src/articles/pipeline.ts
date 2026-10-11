@@ -17,6 +17,8 @@ import { clusterArticle, markStaleTopicsResolved, refreshTopicSummary } from './
 import { getClusterSettings } from './settings';
 import { classifyEventKind, normalizeGameRef } from './event-kind';
 import { recomputeBias } from './bias-engine';
+import { scanIntegrity } from './integrity';
+import { displaySettings } from '../display/settings';
 
 /**
  * The article pipeline (SPEC I3 §6): pull → normalize → embed → cluster →
@@ -43,6 +45,8 @@ export interface IngestResult {
   gateResisted: number;
   /** Articles scored by the bias engine on this run (SPEC I4a). */
   biasArticlesScored: number;
+  /** New review-integrity signals filed as `detected` on this run (Phase P S1). */
+  integritySignalsFiled: number;
   totalArticles: number;
   totalTopics: number;
 }
@@ -118,6 +122,7 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
         gamesQueued: 0,
         gateResisted: 0,
         biasArticlesScored: 0,
+        integritySignalsFiled: 0,
         totalArticles: await countArticles(),
         totalTopics: await countTopics(),
       };
@@ -258,6 +263,27 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
     /* bias recompute hiccup — scores can be rebuilt from admin */
   }
 
+  // Review integrity (Phase P S1): scan EVERY pulled item (new or already
+  // ingested, so older articles get backfilled) for disclosure evidence and file
+  // new auto signals as `detected`. Never overwrites a moderator's decision; a
+  // failure here must not fail the ingest.
+  let integritySignalsFiled = 0;
+  try {
+    const { integrityLexicon } = await displaySettings();
+    const scan = await scanIntegrity(
+      clean.map((c) => ({
+        guid: c.guid,
+        title: c.title,
+        excerpt: c.excerpt,
+        disclosure: c.disclosure,
+      })),
+      integrityLexicon,
+    );
+    integritySignalsFiled = scan.signalsFiled;
+  } catch {
+    /* integrity scan hiccup — the next ingest re-scans idempotently */
+  }
+
   return {
     provider: provider.name,
     pulled: raw.length,
@@ -270,6 +296,7 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
     gamesQueued,
     gateResisted,
     biasArticlesScored,
+    integritySignalsFiled,
     totalArticles: await countArticles(),
     totalTopics: await countTopics(),
   };

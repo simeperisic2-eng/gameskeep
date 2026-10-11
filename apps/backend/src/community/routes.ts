@@ -16,6 +16,7 @@ import { sendError } from '../admin/http';
 import { allowWrite } from './rate-limit';
 import * as svc from './service';
 import { followEntity, getFeed, isFollowing, resolveFollowTarget, unfollowEntity } from './feed';
+import { displaySettings } from '../display/settings';
 
 /**
  * Community write API (SPEC I6, Slice 4). A cookie-authed scope reached via the
@@ -149,8 +150,18 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       });
 
       // ── topic bias votes (per axis) ─────────────────────────────────────────
+      // Phase P S1: `community.topicBiasVotes` (default OFF). When off the write
+      // is rejected (before auth — the switch, not the caller, decides) and the
+      // aggregate isn't served. Existing votes are kept, just not shown.
       c.post<{ Params: { topicId: string } }>('/topics/:topicId/bias-vote', async (req, reply) => {
         try {
+          if (!(await displaySettings()).topicBiasVotes) {
+            reply.code(403).send({
+              error: 'feature_disabled',
+              message: 'Topic bias votes are turned off.',
+            });
+            return;
+          }
           const actor = await writer(req, reply);
           if (!actor) return;
           const { axis, value } = communityBiasVoteInput.parse(req.body);
@@ -162,6 +173,10 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
       });
       c.get<{ Params: { topicId: string } }>('/topics/:topicId/bias', async (req, reply) => {
         try {
+          if (!(await displaySettings()).topicBiasVotes) {
+            reply.send({ data: null, enabled: false });
+            return;
+          }
           reply.send({
             data: await svc.topicBiasAggregate(req.params.topicId, await optionalUserId(req)),
           });

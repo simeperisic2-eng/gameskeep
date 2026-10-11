@@ -136,8 +136,8 @@ export async function buildDigest(
       200,
     ),
     body: [
-      'The stories our readers are following right now — with the bias and',
-      'quality signal baked in. Read the full analysis on each.',
+      'The stories our readers are following right now — with the coverage',
+      'signals we found on each. Read the full story on GamesKeep.',
       '',
       items.join('\n\n'),
     ].join('\n'),

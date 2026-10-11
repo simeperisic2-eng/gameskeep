@@ -34,6 +34,8 @@ interface EventArticle {
   sponsored?: boolean;
   reviewCopy?: boolean;
   paywall?: boolean;
+  /** Outlet disclosure line (Phase P S1 integrity scan; never embedded). */
+  disclosure?: string;
 }
 
 interface FeedEvent {
@@ -251,6 +253,7 @@ const EVENTS: FeedEvent[] = [
         title: 'Elden Ring: Shadow of the Erdtree Review – A Towering Expansion',
         excerpt:
           'FromSoftware’s Elden Ring expansion delivers brutal bosses and a dense new region that rivals the base game.',
+        disclosure: 'Review copy provided by Bandai Namco.',
         reviewCopy: true,
       },
       {
@@ -265,6 +268,8 @@ const EVENTS: FeedEvent[] = [
         title: 'Elden Ring DLC Review: Shadow of the Erdtree',
         excerpt:
           'Shadow of the Erdtree expands Elden Ring with new weapons, bosses and a sprawling region to explore.',
+        disclosure:
+          'GameSpot attended a preview event hosted by Bandai Namco; travel and accommodation were covered by the publisher.',
         reviewCopy: true,
       },
       {
@@ -372,6 +377,7 @@ const EVENTS: FeedEvent[] = [
         title: 'Hades 2 Review: Supergiant Sticks the Landing',
         excerpt:
           'Hades II leaves early access as a polished, generous sequel that deepens the original’s combat and story.',
+        disclosure: 'Review code was provided by the publisher, Supergiant Games.',
         reviewCopy: true,
       },
       {
@@ -386,6 +392,7 @@ const EVENTS: FeedEvent[] = [
         title: 'Hades 2 review: a worthy successor',
         excerpt:
           'The full release of Hades II refines everything that made the first game a hit, from the combat to the cast.',
+        disclosure: 'This review was published when the embargo lifted on May 19.',
         reviewCopy: true,
       },
       {
@@ -393,6 +400,7 @@ const EVENTS: FeedEvent[] = [
         title: 'Hades 2’s 1.0 launch is everything fans hoped for',
         excerpt:
           'After a long early access, Hades II launches in full with a satisfying ending and more to do than ever.',
+        disclosure: 'We bought our own copy; no review code was provided.',
         reviewCopy: true,
       },
       {
@@ -556,6 +564,7 @@ const EVENTS: FeedEvent[] = [
         title: 'Death Stranding 2 is a stranger, grander sequel',
         excerpt:
           'On the Beach expands Death Stranding with new tools and set-pieces, anchored by a typically Kojima plot.',
+        disclosure: 'Polygon was not under embargo for this review; we purchased our own copy.',
         reviewCopy: true,
       },
       {
@@ -563,6 +572,8 @@ const EVENTS: FeedEvent[] = [
         title: 'Death Stranding 2: On the Beach review',
         excerpt:
           'Death Stranding 2 is a more confident game than the first, with improved combat and a haunting world.',
+        disclosure:
+          'Reviewed on PS5 with code provided by the publisher, under embargo until 8am UK time.',
         reviewCopy: true,
       },
       {
@@ -1362,6 +1373,8 @@ interface StandaloneArticle {
   sponsored?: boolean;
   reviewCopy?: boolean;
   paywall?: boolean;
+  /** Outlet disclosure line (Phase P S1 integrity scan; never embedded). */
+  disclosure?: string;
 }
 
 const STANDALONE: StandaloneArticle[] = [
@@ -2703,6 +2716,7 @@ function buildFeed(): RawFeedItem[] {
         isSponsored: article.sponsored ?? false,
         basedOnReviewCopy: article.reviewCopy ?? false,
         isPaywalled: article.paywall ?? false,
+        disclosure: article.disclosure,
       });
     });
   }
@@ -2720,6 +2734,7 @@ function buildFeed(): RawFeedItem[] {
       isSponsored: article.sponsored ?? false,
       basedOnReviewCopy: article.reviewCopy ?? false,
       isPaywalled: article.paywall ?? false,
+      disclosure: article.disclosure,
     });
   });
 

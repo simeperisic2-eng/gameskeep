@@ -19,6 +19,7 @@ import { unsubscribe } from '../awards/subscribe';
 import { allowSuggest, suggestGame } from '../catalog/suggest';
 import { csrfOk, CSRF_HEADER } from '../auth/session';
 import { sendError } from '../admin/http';
+import { displaySettings, publicDisplay } from '../display/settings';
 
 /**
  * PUBLIC read API (SPEC I5a) — the un-authenticated surface the SSR frontend
@@ -227,6 +228,16 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
           if (token) await unsubscribe(token);
           reply.header('cache-control', 'no-store');
           reply.send({ ok: true });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // Public display switches (Phase P S1) — what the site shows (scope, quality
+      // axis, topic votes). Never the integrity lexicon. Methodology reads this.
+      pub.get('/display', async (_req, reply) => {
+        try {
+          reply.send({ data: publicDisplay(await displaySettings()) });
         } catch (err) {
           sendError(reply, err);
         }

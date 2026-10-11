@@ -534,3 +534,15 @@
   border-radius: 999px;
   padding: 1px 7px;
 }
+
+/* Phase P S1 — review-integrity moderation rows */
+.gk-integrity-admin-row {
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+}
+.gk-integrity-admin-row:last-child {
+  border-bottom: 0;
+}
+.gk-integrity-admin-row .gk-nl-actions {
+  margin-top: 4px;
+}

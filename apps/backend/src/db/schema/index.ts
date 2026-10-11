@@ -29,6 +29,7 @@ export * from './auth';
 export * from './email';
 export * from './topics';
 export * from './articles';
+export * from './integrity';
 export * from './games';
 export * from './awards';
 export * from './community';

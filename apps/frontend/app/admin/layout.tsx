@@ -33,6 +33,7 @@ const NAV: {
       { label: 'Articles', href: '/admin/articles', minRank: 30 },
       { label: 'Topics & clustering', href: '/admin/clustering', minRank: 30 },
       { label: 'Relations', href: '/admin/relations', minRank: 30 },
+      { label: 'Review integrity', href: '/admin/integrity', minRank: 30 },
     ],
   },
   {
@@ -91,6 +92,7 @@ const NAV: {
     minRank: 40,
     items: [
       { label: 'Lists & slots', href: '/admin/lists', minRank: 40 },
+      { label: 'Display & bias', href: '/admin/display', minRank: 40 },
       { label: 'User levels', href: '/admin/user-levels', minRank: 40 },
       { label: 'Badges', href: '/admin/badges', minRank: 40 },
       { label: 'Topic types', href: '/admin/topic-types', minRank: 40 },

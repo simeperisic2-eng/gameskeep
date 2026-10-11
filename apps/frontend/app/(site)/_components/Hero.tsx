@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import type { TopicCard } from '@/lib/public-api';
+import type { PublicDisplay, TopicCard } from '@/lib/public-api';
 import { truncateWords } from '@/lib/format';
-import { topicFlagSummary } from '@/lib/bias';
+import { compactTopicToken } from '@/lib/bias';
 import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
 
@@ -34,22 +34,28 @@ function ArrowRight(): React.JSX.Element {
   );
 }
 
-/** A compact factual-flag token for the dense trending list (no fake scale). */
-function miniInfluence(t: TopicCard): React.JSX.Element {
-  const summary = topicFlagSummary(t.flags);
+/**
+ * A compact factual-flag token for the dense trending list (no fake scale). The
+ * default scope shows only a Sponsored token where one exists — otherwise nothing.
+ */
+function miniInfluence(t: TopicCard, display: PublicDisplay): React.JSX.Element | null {
+  const token = compactTopicToken(t.flags, display.scope, t.integrityTally);
+  if (!token) return null;
   return (
-    <span className={`gk-trend-flag ${summary.kind}`}>
+    <span className={`gk-trend-flag ${token.kind}`}>
       <i className="gk-trend-dot" aria-hidden />
-      {summary.label}
+      {token.label}
     </span>
   );
 }
 
 export function Hero({
   topics,
+  display,
   initial = 0,
 }: {
   topics: TopicCard[];
+  display: PublicDisplay;
   initial?: number;
 }): React.JSX.Element {
   const [active, setActive] = useState(Math.min(initial, Math.max(0, topics.length - 1)));
@@ -88,7 +94,7 @@ export function Hero({
                 <span style={{ minWidth: 0 }}>
                   <span className="gk-trend-title">{t.title}</span>
                   <span className="gk-trend-meta">
-                    {miniInfluence(t)}
+                    {miniInfluence(t, display)}
                     <span>{t.sourceCount > 0 ? `${t.sourceCount} sources` : 'single source'}</span>
                     <span aria-hidden>·</span>
                     <span>
@@ -144,11 +150,14 @@ export function Hero({
                   </div>
                 ) : null}
 
-                <BiasBar
-                  flags={t.flags}
-                  distribution={t.distribution}
-                  sourceCount={t.sourceCount}
-                />
+                {t.showPanel ? (
+                  <BiasBar
+                    flags={t.flags}
+                    integrity={t.integrityTally}
+                    distribution={t.distribution}
+                    sourceCount={t.sourceCount}
+                  />
+                ) : null}
 
                 <div className="gk-spot-foot">
                   <span className="gk-section-sub" style={{ margin: 0, fontSize: 13 }}>

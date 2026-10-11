@@ -42,7 +42,7 @@ export async function generateMetadata({
   const description =
     topic.tldr ??
     truncateWords(topic.aiSummary, 180) ??
-    `How ${topic.sourceCount} outlets are covering this story — with an influence + quality bias lens.`;
+    `How ${topic.sourceCount} outlets are covering this story — and the coverage signals we found.`;
 
   return {
     title: topic.title,
@@ -156,29 +156,36 @@ export default async function TopicPage({
               </section>
             ) : null}
 
-            {/* BIAS DISPLAY — influence flags + quality scale, with hover "why". */}
-            <section className="gk-panel">
-              <div className="gk-panel-head">
-                <h2 className="gk-panel-title">How it&apos;s being told</h2>
-              </div>
-              <BiasBar
-                flags={topic.flags}
-                distribution={topic.distribution}
-                sourceCount={topic.sourceCount}
-              />
-            </section>
+            {/* BIAS DISPLAY (Phase P S1 display scope): only for a story with
+                reviews or a sponsored article under the default scope. */}
+            {topic.showPanel ? (
+              <section className="gk-panel">
+                <div className="gk-panel-head">
+                  <h2 className="gk-panel-title">How it&apos;s being told</h2>
+                </div>
+                <BiasBar
+                  flags={topic.flags}
+                  integrity={topic.integrityTally}
+                  distribution={topic.distribution}
+                  sourceCount={topic.sourceCount}
+                />
+              </section>
+            ) : null}
 
-            <TopicArticles articles={topic.articles} />
+            <TopicArticles articles={topic.articles} display={topic.display} />
 
             {topic.status === 'developing' ? <StoryTimeline entries={topic.timeline} /> : null}
 
-            {/* COMMUNITY (I6) — reader trust/bias votes + discussion. */}
-            <section className="gk-panel" aria-label="Community">
-              <div className="gk-panel-head">
-                <h2 className="gk-panel-title">Reader read</h2>
-              </div>
-              <BiasVotes topicId={topic.id} />
-            </section>
+            {/* COMMUNITY (I6) — reader trust/bias votes, only while the admin
+                switch `community.topicBiasVotes` is on (Phase P S1). */}
+            {topic.display.topicBiasVotes ? (
+              <section className="gk-panel" aria-label="Community">
+                <div className="gk-panel-head">
+                  <h2 className="gk-panel-title">Reader read</h2>
+                </div>
+                <BiasVotes topicId={topic.id} showQuality={topic.display.showQuality} />
+              </section>
+            ) : null}
             <section className="gk-panel" aria-label="Discussion">
               <Comments
                 entityType="topic"

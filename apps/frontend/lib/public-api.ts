@@ -5,17 +5,53 @@
  * leak-proof DTOs from the backend during SSR (never the DB directly, never the
  * admin token). These types mirror `apps/backend/src/public/queries.ts`.
  */
-import type { InfluenceFlag, TopicFlagTally } from '@gameskeep/shared/constants';
+import type {
+  BiasDisplayScope,
+  InfluenceFlag,
+  IntegritySignalKind,
+  TopicFlagTally,
+} from '@gameskeep/shared/constants';
 
 const backendUrl = process.env.BACKEND_INTERNAL_URL ?? 'http://localhost:4000';
 
 export type { InfluenceFlag, TopicFlagTally } from '@gameskeep/shared/constants';
 
+/** The public display switches every page payload carries (Phase P S1). */
+export interface PublicDisplay {
+  scope: BiasDisplayScope;
+  showQuality: boolean;
+  topicBiasVotes: boolean;
+}
+
+export const DEFAULT_DISPLAY: PublicDisplay = {
+  scope: 'reviews_and_sponsored',
+  showQuality: false,
+  topicBiasVotes: false,
+};
+
+/** Public review-integrity rows beyond review copy (counted per article). */
+export interface IntegrityTally {
+  embargo: number;
+  sponsoredEvent: number;
+}
+
+/** How a row shows its signals — decided server-side (display scope). */
+export type BiasMode = 'panel' | 'chip' | 'none';
+
+/** Public topic distribution: the quality split only while it is shown. */
 export interface TopicBiasDistribution {
   articleCount: number;
-  influence: { independent: number; influenced: number; avg: number | null };
-  quality: { top: number; slop: number; avg: number | null };
-  computedAt: string;
+  quality: { top: number; slop: number; avg: number | null } | null;
+}
+
+/** One public review-integrity row (Phase P S1) — always with its evidence. */
+export interface PublicIntegrityRow {
+  kind: IntegritySignalKind;
+  label: string;
+  evidenceType: 'snippet' | 'note';
+  evidence: string;
+  date: string | null;
+  confirmed: boolean;
 }
 
 export interface TopicCard {
@@ -28,9 +64,12 @@ export interface TopicCard {
   typeLabel: string | null;
   articleCount: number;
   sourceCount: number;
+  reviewCount: number;
+  showPanel: boolean;
   primaryGame: { name: string; slug: string } | null;
   distribution: TopicBiasDistribution;
   flags: TopicFlagTally;
+  integrityTally: IntegrityTally;
   lastActivityAt: string | null;
 }
 
@@ -43,17 +82,20 @@ export interface LatestArticle {
   excerpt: string | null;
   publishDate: string | null;
   origin: string;
-  influence: number | null;
-  quality: number | null;
+  articleType: string;
+  biasMode: BiasMode;
   flags: InfluenceFlag[];
   reasons: string[];
 }
 
+/** Counts only (never a percentage); `isToday` false ⇒ window ends at `asOf`. */
 export interface Briefing {
-  stories: number;
-  articles: number;
-  independentPct: number | null;
-  readMinutes: number;
+  isToday: boolean;
+  asOf: string | null;
+  windowHours: number;
+  sources: number;
+  topics: number;
+  reviews: number;
 }
 
 export interface GenreCount {
@@ -80,6 +122,7 @@ export interface HomepageData {
   controversial: RankedGame[];
   briefing: Briefing;
   genres: GenreCount[];
+  display: PublicDisplay;
 }
 
 const EMPTY_HOMEPAGE: HomepageData = {
@@ -88,8 +131,9 @@ const EMPTY_HOMEPAGE: HomepageData = {
   latest: [],
   topRated: [],
   controversial: [],
-  briefing: { stories: 0, articles: 0, independentPct: null, readMinutes: 5 },
+  briefing: { isToday: true, asOf: null, windowHours: 24, sources: 0, topics: 0, reviews: 0 },
   genres: [],
+  display: DEFAULT_DISPLAY,
 };
 
 /**
@@ -120,11 +164,14 @@ export interface TopicArticleRow {
   publishDate: string | null;
   sourceName: string | null;
   sourceSlug: string | null;
-  influence: number | null;
+  /** Null while the quality axis is hidden. */
   quality: number | null;
+  isReview: boolean;
+  biasMode: BiasMode;
   flags: InfluenceFlag[];
   reasons: string[];
-  isPrimary: boolean;
+  /** Review rows only (empty ⇒ "No signals found"). */
+  integrity: PublicIntegrityRow[] | null;
 }
 
 export interface TopicTimelineEntry {
@@ -161,14 +208,18 @@ export interface TopicDetail {
   lastActivityAt: string | null;
   articleCount: number;
   sourceCount: number;
+  reviewCount: number;
+  showPanel: boolean;
   distribution: TopicBiasDistribution;
   flags: TopicFlagTally;
+  integrityTally: IntegrityTally;
   games: { name: string; slug: string }[];
   primaryGame: { name: string; slug: string } | null;
   gameRating: TopicGameRating | null;
   articles: TopicArticleRow[];
   timeline: TopicTimelineEntry[];
   related: RelatedTopic[];
+  display: PublicDisplay;
 }
 
 /** Fetch one story page payload for SSR. Returns null on 404/error (route 404s). */
@@ -247,20 +298,7 @@ export interface PublicReview {
   author: string | null;
   publishedAt: string | null;
 }
-export interface GameArticleRow {
-  id: string;
-  title: string;
-  excerpt: string | null;
-  url: string | null;
-  origin: string;
-  author: string | null;
-  articleType: string;
-  publishDate: string | null;
-  sourceName: string | null;
-  sourceSlug: string | null;
-  flags: InfluenceFlag[];
-  reasons: string[];
-}
+export type GameArticleRow = TopicArticleRow;
 export interface GameVideoEntry {
   provider: string;
   url: string;
@@ -344,7 +382,11 @@ export interface GameDetail {
   contentFlags: PublicContentFlags | null;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
+  /** Outlet review articles — own block, pinned above the news (Phase P S1). */
+  reviews: GameArticleRow[];
+  /** Other coverage (reviews excluded). */
   articles: GameArticleRow[];
+  display: PublicDisplay;
   videos: GameVideoEntry[];
   prices: GamePriceEntry[];
   sysReqs: GameSysReqEntry[];
@@ -587,8 +629,11 @@ export interface SourceDetail {
   description: string | null;
   articleCount: number;
   affiliatePct: number | null;
+  /** Null while the quality axis is hidden. */
   reputation: number | null;
   flags: TopicFlagTally;
+  integrityTally: IntegrityTally;
+  display: PublicDisplay;
   owner: { name: string; siblings: { slug: string; name: string }[] } | null;
   recentArticles: GameArticleRow[];
   topGames: { slug: string; name: string; count: number }[];
@@ -658,6 +703,18 @@ export async function getComments(
     return body.data ?? [];
   } catch {
     return [];
+  }
+}
+
+/** The public display switches (Phase P S1). Never throws — the hidden defaults on error. */
+export async function getDisplay(): Promise<PublicDisplay> {
+  try {
+    const res = await fetch(`${backendUrl}/public/display`, { cache: 'no-store' });
+    if (!res.ok) return DEFAULT_DISPLAY;
+    const body = (await res.json()) as { data?: PublicDisplay };
+    return body.data ?? DEFAULT_DISPLAY;
+  } catch {
+    return DEFAULT_DISPLAY;
   }
 }
 

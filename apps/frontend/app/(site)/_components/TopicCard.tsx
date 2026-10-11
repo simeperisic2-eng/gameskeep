@@ -1,4 +1,4 @@
-import type { TopicCard as TopicCardData } from '@/lib/public-api';
+import type { PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
 import { relativeTime } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { BiasMini } from './BiasBar';
@@ -14,7 +14,13 @@ import { BiasMini } from './BiasBar';
  * links (topic) and the game chip is a SIBLING link (game page). Never an <a>
  * inside an <a> (invalid HTML, broken clicks); max anchor depth = 1.
  */
-export function TopicCard({ topic }: { topic: TopicCardData }): React.JSX.Element {
+export function TopicCard({
+  topic,
+  display,
+}: {
+  topic: TopicCardData;
+  display: PublicDisplay;
+}): React.JSX.Element {
   const time = relativeTime(topic.lastActivityAt);
   const hasCover = topic.primaryGame != null;
   return (
@@ -36,8 +42,9 @@ export function TopicCard({ topic }: { topic: TopicCardData }): React.JSX.Elemen
         {topic.tldr ? <p className="gk-topiccard-tldr">{topic.tldr}</p> : null}
         <BiasMini
           flags={topic.flags}
-          distribution={topic.distribution}
+          integrity={topic.integrityTally}
           sourceCount={topic.sourceCount}
+          display={display}
         />
         <div className="gk-topiccard-foot">
           <span className="gk-meta">

@@ -13,6 +13,8 @@ import { registerAwardAdminRoutes } from './award-routes';
 import { registerAdAdminRoutes } from './ad-routes';
 import { registerNewsletterAdminRoutes } from './newsletter-routes';
 import { registerListAdminRoutes } from './list-routes';
+import { registerDisplayAdminRoutes } from './display-routes';
+import { registerIntegrityAdminRoutes } from './integrity-routes';
 import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
@@ -371,6 +373,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── list / slot configuration (before generic so it wins) ────────────────
       await registerListAdminRoutes(admin);
+
+      // ── Phase P S1: public display switches + review integrity ───────────────
+      await registerDisplayAdminRoutes(admin);
+      await registerIntegrityAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

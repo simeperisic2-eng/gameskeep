@@ -45,9 +45,10 @@ export default function AboutPage(): React.JSX.Element {
       <h2>What GamesKeep does</h2>
       <p>
         We aggregate games news from across the industry and lay a <strong>bias lens</strong> over
-        it — an influence signal (are there factual or conduct flags on the coverage?) and a quality
-        read — so you can see the shape of the reporting, not just the headline. Alongside the news
-        sits a <strong>rating system</strong> that keeps three perspectives{' '}
+        it — the signals we find on the coverage (sponsorship, affiliate links, publisher review
+        copies, embargoes, press trips), each shown with its evidence — so you can see the shape of
+        the reporting, not just the headline. Alongside the news sits a{' '}
+        <strong>rating system</strong> that keeps three perspectives{' '}
         <strong>separate on purpose</strong>: professional critics, our own editorial take, and the
         player community. When they disagree, we show the disagreement instead of blending it into a
         single misleading average.

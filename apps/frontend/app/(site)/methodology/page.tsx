@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { getDisplay } from '@/lib/public-api';
+import { NO_SIGNALS_LABEL } from '@/lib/bias';
 import { DocPage } from '../_components/DocPage';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
@@ -16,12 +18,15 @@ export const metadata: Metadata = {
     url: `${siteUrl}/methodology`,
     title: 'Methodology — how GamesKeep measures bias and ratings',
     description:
-      'Two bias axes, three separate rating layers kept apart on purpose, the disconnect shown with context, and manipulation-aware community weighting — the approach, in plain language.',
+      'Influence signals shown with their evidence, three separate rating layers kept apart on purpose, the disconnect shown with context, and manipulation-aware community weighting — the approach, in plain language.',
   },
   twitter: { card: 'summary_large_image', title: 'GamesKeep Methodology' },
 };
 
-export default function MethodologyPage(): React.JSX.Element {
+export default async function MethodologyPage(): Promise<React.JSX.Element> {
+  // What the site currently SHOWS (Phase P S1 admin switches) — the copy below
+  // never describes a display the reader can't see.
+  const display = await getDisplay();
   return (
     <DocPage
       eyebrow="How it works"
@@ -40,38 +45,53 @@ export default function MethodologyPage(): React.JSX.Element {
         The dials are not.
       </p>
 
-      <h2>Reading the news: two bias axes</h2>
+      <h2>Reading the news: what the coverage carries</h2>
       <p>
-        We never reduce a piece of coverage to a single &ldquo;bias score.&rdquo; Bias is not one
-        thing, so we measure it on two independent axes and show them side by side.
+        We never reduce a piece of coverage to a single &ldquo;bias score.&rdquo; We look for
+        concrete, checkable <strong>signals</strong> and show the ones we find — on reviews and on
+        coverage carrying a sponsored signal, where they matter most.
       </p>
       <div className="gk-doc-cards">
         <div className="gk-doc-card">
-          <span className="gk-doc-card-kicker">Axis one</span>
-          <h3>Influence</h3>
+          <span className="gk-doc-card-kicker">Influence signals</span>
+          <h3>What we look for</h3>
           <p>
-            A signal built from concrete, checkable <strong>flags</strong> on the coverage — factual
-            corrections, undisclosed relationships, conduct issues, sourcing problems. It is
-            grounded in things that did or did not happen, not in tone or opinion. Fewer, cleaner
-            flags read differently from a pile of them.
+            Self-disclosed <strong>sponsored</strong> content, <strong>affiliate</strong> links,
+            publisher-provided <strong>review copies</strong>, and an outlet&rsquo;s own{' '}
+            <strong>opinion</strong> framing. On reviews we also look for an{' '}
+            <strong>embargo</strong> and a <strong>sponsored event or press trip</strong>. Each is a
+            fact about how the piece was produced — a label, not a verdict on its quality.
           </p>
         </div>
         <div className="gk-doc-card">
-          <span className="gk-doc-card-kicker">Axis two</span>
-          <h3>Quality</h3>
+          <span className="gk-doc-card-kicker">Evidence</span>
+          <h3>Shown with its source</h3>
           <p>
-            A read of the craft of the reporting placed on a <strong>scale</strong> — depth,
-            sourcing, transparency, care — separate from whether we agree with its conclusions.
-            High-quality coverage can still carry influence flags; low-quality coverage can be
-            flag-free. Two axes, because they answer two different questions.
+            A review-integrity signal appears only with its evidence: a short quote from the source
+            article (linked) or an editor&rsquo;s note, with a date. Editors confirm what the
+            automation finds before it is shown, and can add what it missed.
           </p>
         </div>
       </div>
       <p>
-        Keeping them apart is the point. Collapsing &ldquo;is this well made?&rdquo; and &ldquo;what
-        is shaping it?&rdquo; into one figure is exactly the kind of false certainty we are trying
-        to remove.
+        Where we find none of these signals we say exactly that:{' '}
+        <strong>&ldquo;{NO_SIGNALS_LABEL}.&rdquo;</strong>{' '}
+        <span>
+          We can show what we found; we cannot prove what isn&rsquo;t there — so we never label
+          coverage as clean.
+        </span>
       </p>
+      {display.showQuality ? (
+        <>
+          <h3>Quality, separately</h3>
+          <p>
+            A read of the craft of the reporting placed on a <strong>scale</strong> — depth,
+            sourcing, transparency, care — separate from whether we agree with its conclusions. It
+            is kept apart from the influence signals on purpose: &ldquo;is this well made?&rdquo;
+            and &ldquo;what is shaping it?&rdquo; are different questions.
+          </p>
+        </>
+      ) : null}
 
       <h2>Rating games: three layers, never merged</h2>
       <p>
@@ -143,10 +163,12 @@ export default function MethodologyPage(): React.JSX.Element {
       <div className="gk-doc-note is-warn">
         <span className="gk-doc-note-label">Why we hold the numbers back</span>
         Transparency about the <strong>approach</strong> earns trust. Transparency about the exact{' '}
-        <strong>weights and thresholds</strong> would hand a playbook to anyone wanting to game
-        coverage or scores — the opposite of what this platform is for. Where we draw that line is
-        itself part of the method: we frame how we measure, we do not publish the ruler&rsquo;s
-        markings.
+        <strong>weights and thresholds</strong>{' '}
+        <span>
+          would hand a playbook to anyone wanting to game coverage or scores — the opposite of what
+          this platform is for. Where we draw that line is itself part of the method: we frame how
+          we measure, we do not publish the ruler&rsquo;s markings.
+        </span>
       </div>
 
       <h2>Automated, always correctable</h2>

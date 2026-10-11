@@ -8,6 +8,8 @@ import { breadcrumbLd, sourceOrganizationLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { SourceIcon } from '../../_components/SourceIcon';
 import { ArticleFlags } from '../../_components/BiasBar';
+import { ReviewSignals } from '../../_components/IntegrityBlock';
+import { NO_SIGNALS_EXPLAINER, NO_SIGNALS_LABEL } from '@/lib/bias';
 import { AdSlot } from '../../_components/AdSlot';
 
 export const dynamic = 'force-dynamic';
@@ -28,7 +30,7 @@ export async function generateMetadata({
   const owner = source.parentCompany ? ` Owned by ${source.parentCompany}.` : '';
   const description =
     source.description ??
-    `${source.name} — ownership, reputation and the bias signals in its games coverage on GamesKeep.${owner}`;
+    `${source.name} — ownership and the signals we found in its games coverage on GamesKeep.${owner}`;
   return {
     title: source.name,
     description,
@@ -36,20 +38,6 @@ export async function generateMetadata({
     openGraph: { type: 'website', url, title: source.name, description },
     twitter: { card: 'summary', title: source.name, description },
   };
-}
-
-/** Independent vs influenced share for the coverage-profile bar. */
-function profile(flags: SourceDetail['flags']): {
-  total: number;
-  independent: number;
-  influenced: number;
-  independentPct: number;
-} {
-  const total = flags.total;
-  const independent = flags.independent;
-  const influenced = Math.max(0, total - independent);
-  const independentPct = total > 0 ? Math.round((independent / total) * 100) : 0;
-  return { total, independent, influenced, independentPct };
 }
 
 const SIGNAL_LABELS: { key: keyof SourceDetail['flags']; label: string }[] = [
@@ -69,7 +57,7 @@ export default async function SourcePage({
   if (!source) notFound();
 
   const reputation = scoreToTen(source.reputation);
-  const prof = profile(source.flags);
+  const showReputation = source.display.showQuality;
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -106,8 +94,8 @@ export default async function SourcePage({
                 <p className="gk-source-desc">{source.description}</p>
               ) : (
                 <p className="gk-source-desc gk-source-desc-dim">
-                  A games outlet GamesKeep aggregates. Reputation and signals below are measured
-                  from its coverage in our index.
+                  A games outlet GamesKeep aggregates. The signals below are measured from its
+                  coverage in our index.
                 </p>
               )}
               {source.websiteUrl ? (
@@ -124,11 +112,14 @@ export default async function SourcePage({
           </div>
 
           <dl className="gk-source-stats">
-            <div className="gk-source-stat">
-              <dt>Reputation</dt>
-              <dd className="amber">{reputation ?? '—'}</dd>
-              <span className="gk-source-stat-sub">avg coverage quality</span>
-            </div>
+            {/* Reputation is the quality axis per outlet — shown only while it is. */}
+            {showReputation ? (
+              <div className="gk-source-stat">
+                <dt>Reputation</dt>
+                <dd className="amber">{reputation ?? '—'}</dd>
+                <span className="gk-source-stat-sub">avg coverage quality</span>
+              </div>
+            ) : null}
             <div className="gk-source-stat">
               <dt>Commercial</dt>
               <dd>{source.affiliatePct != null ? `${source.affiliatePct}%` : '—'}</dd>
@@ -179,7 +170,7 @@ export default async function SourcePage({
                   )}
                 </>
               ) : (
-                <p className="gk-own-clean">Independently owned — no parent company on record.</p>
+                <p className="gk-own-clean">No parent company on record.</p>
               )}
             </section>
 
@@ -211,32 +202,17 @@ export default async function SourcePage({
             <div className="gk-panel-head">
               <h2 className="gk-panel-title">Coverage profile</h2>
             </div>
-            {prof.total > 0 ? (
+            {source.flags.total > 0 ? (
               <>
                 <div className="gk-bias-axis">
                   <div className="gk-bias-axis-head">
                     <span className="gk-bias-axis-name">
-                      Influence <small>across {prof.total} stories</small>
+                      Influence <small>across {source.flags.total} articles</small>
                     </span>
-                    <span
-                      className={`gk-bias-phrase ${prof.independentPct >= 60 ? 'tone-good' : 'tone-mixed'}`}
-                    >
-                      {prof.independentPct}% independent
-                    </span>
-                  </div>
-                  <div className="gk-bias-track">
-                    <span
-                      className="gk-bias-seg good"
-                      style={{ width: `${prof.independentPct}%` }}
-                    />
-                    <span
-                      className="gk-bias-seg warn"
-                      style={{ width: `${100 - prof.independentPct}%` }}
-                    />
                   </div>
                 </div>
+                {/* Counts of what we FOUND — never a "% clean" score for an outlet. */}
                 <div className="gk-source-flags">
-                  <span className="gk-flag independent">Independent {prof.independent}</span>
                   {SIGNAL_LABELS.map(({ key, label }) => {
                     const n = source.flags[key];
                     if (!n) return null;
@@ -246,10 +222,24 @@ export default async function SourcePage({
                       </span>
                     );
                   })}
+                  {source.integrityTally.embargo > 0 ? (
+                    <span className="gk-flag signal">Embargo {source.integrityTally.embargo}</span>
+                  ) : null}
+                  {source.integrityTally.sponsoredEvent > 0 ? (
+                    <span className="gk-flag signal">
+                      Sponsored event / press trip {source.integrityTally.sponsoredEvent}
+                    </span>
+                  ) : null}
+                  {source.flags.independent > 0 ? (
+                    <span className="gk-flag nosignal">
+                      {NO_SIGNALS_LABEL} {source.flags.independent}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="gk-source-profile-note">
-                  Signals are factual (affiliate links, sponsorship, review copies, opinion framing)
-                  — what the coverage carries, not a verdict on it.
+                  Signals are factual (affiliate links, sponsorship, evidenced review copies,
+                  opinion framing) — what the coverage carries, not a verdict on it.{' '}
+                  {NO_SIGNALS_EXPLAINER}
                 </p>
               </>
             ) : (
@@ -294,8 +284,11 @@ export default async function SourcePage({
                           )}
                         </h3>
                         {excerpt ? <p className="gk-srcrow-excerpt">{excerpt}</p> : null}
+                        {a.isReview && a.biasMode === 'panel' ? <ReviewSignals row={a} /> : null}
                         <div className="gk-srcrow-foot">
-                          <ArticleFlags flags={a.flags} reasons={a.reasons} />
+                          {a.isReview ? null : (
+                            <ArticleFlags flags={a.flags} reasons={a.reasons} mode={a.biasMode} />
+                          )}
                           <span className="gk-srcrow-meta">{time ?? ''}</span>
                           {a.url ? (
                             <a

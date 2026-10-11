@@ -495,11 +495,12 @@ h4 {
   height: 6px;
   border-radius: 50%;
 }
-.gk-trend-flag.independent {
-  color: #7fd29a;
+/* Phase P S1: "No signals found" is NEUTRAL — never green (no claim of clean). */
+.gk-trend-flag.nosignal {
+  color: var(--gk-text-dim);
 }
-.gk-trend-flag.independent .gk-trend-dot {
-  background: #5bd07f;
+.gk-trend-flag.nosignal .gk-trend-dot {
+  background: var(--gk-text-dim);
 }
 .gk-trend-flag.signal {
   color: #ecb45c;
@@ -791,7 +792,8 @@ h4 {
 }
 
 /* INFLUENCE FLAGS — factual labels (what the coverage carries), never a verdict.
- * NEUTRAL/amber "attention" for present signals; calm green for independent.
+ * Amber "attention" for present signals; NEUTRAL for "No signals found" (Phase P
+ * S1: we prove presence, never absence — an empty result is not dressed as clean).
  * Red is deliberately NOT used here — it's reserved for the disconnect indicator
  * (the one signal that flags a genuine problem). */
 .gk-flags {
@@ -812,10 +814,10 @@ h4 {
   border: 1px solid var(--gk-card-border);
   color: var(--gk-text-dim);
 }
-.gk-flag.independent {
-  color: #7fd29a;
-  border-color: rgba(67, 183, 104, 0.32);
-  background: rgba(67, 183, 104, 0.07);
+.gk-flag.nosignal {
+  color: var(--gk-text-dim);
+  border-color: var(--gk-card-border);
+  background: transparent;
 }
 .gk-flag.signal {
   color: #ecb45c;
@@ -1929,9 +1931,6 @@ h4 {
 }
 .gk-srcrow:hover {
   border-color: var(--gk-card-border-hi);
-}
-.gk-srcrow.is-primary {
-  border-color: rgba(var(--gk-amber), 0.28);
 }
 .gk-srcrow-ad {
   border-style: dashed;
@@ -6168,4 +6167,74 @@ a.gk-tile-cover {
     align-items: flex-start;
     gap: var(--s2);
   }
+}
+
+/* ── Phase P S1: review-integrity block (evidence-backed rows on reviews) ──── */
+.gk-review-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.gk-integrity {
+  border: 1px solid var(--gk-card-border);
+  border-radius: var(--r-md, 10px);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.gk-integrity-head {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+  margin-bottom: 6px;
+}
+.gk-integrity-none {
+  margin: 0;
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-integrity-hint {
+  opacity: 0.8;
+}
+.gk-integrity-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gk-integrity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.gk-integrity-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ecb45c;
+}
+.gk-integrity-evidence {
+  font-size: 13px;
+  color: var(--gk-text);
+  overflow-wrap: anywhere;
+}
+.gk-integrity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--gk-text-dim);
+}
+.gk-integrity-meta a {
+  color: rgba(var(--gk-amber), 0.95);
+  text-decoration: none;
+}
+.gk-integrity-meta a:hover,
+.gk-integrity-meta a:focus-visible {
+  text-decoration: underline;
 }

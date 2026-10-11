@@ -291,6 +291,8 @@ export default async function GamePage({
             gameName={game.name}
           />
 
+          {/* Phase P S1: outlet reviews pinned above the rest of the coverage. */}
+          <GameArticles articles={game.reviews} variant="reviews" />
           <GameArticles articles={game.articles} />
 
           {game.description ? (

@@ -372,6 +372,77 @@ export interface CommunityBurstInfo {
   dampedVoteCount: number;
 }
 
+/**
+ * Phase P S1 — where the public bias display renders. `reviews_and_sponsored`
+ * (default): the full panel only on review articles and articles carrying a
+ * sponsored signal; compact surfaces show at most a Sponsored chip. `all`: the
+ * panel everywhere. The engine computes on every article either way.
+ */
+export const BIAS_DISPLAY_SCOPES = ['reviews_and_sponsored', 'all'] as const;
+export type BiasDisplayScope = (typeof BIAS_DISPLAY_SCOPES)[number];
+
+/**
+ * Review-integrity signals (Phase P S1) — evidence-backed rows on review
+ * articles: publisher review copy, embargo, sponsored event / press trip. A row is
+ * public only with evidence (source snippet or editor note + date). `auto` rows
+ * come from the lexicon scan; `editor` rows are added by a moderator+.
+ */
+export const INTEGRITY_SIGNAL_KINDS = ['review_copy', 'embargo', 'sponsored_event'] as const;
+export type IntegritySignalKind = (typeof INTEGRITY_SIGNAL_KINDS)[number];
+export const INTEGRITY_SIGNAL_ORIGINS = ['auto', 'editor'] as const;
+export type IntegritySignalOrigin = (typeof INTEGRITY_SIGNAL_ORIGINS)[number];
+/** `detected` = auto-found, awaiting a moderator (public only when autoPublish is on). */
+export const INTEGRITY_SIGNAL_STATUSES = ['detected', 'confirmed', 'dismissed'] as const;
+export type IntegritySignalStatus = (typeof INTEGRITY_SIGNAL_STATUSES)[number];
+
+/** Evidence snippets stay short (Phase P S1 owner rule). */
+export const INTEGRITY_SNIPPET_MAX = 200;
+
+/**
+ * Seed lexicon for the integrity scan (admin-editable in `app_settings.integrity`).
+ * Case-insensitive substring match per CLAUSE; a clause that also contains a
+ * negation phrase is not a signal ("no review code was provided").
+ */
+export const INTEGRITY_LEXICON_DEFAULTS = {
+  reviewCopy: [
+    'review code',
+    'review copy',
+    'code provided by',
+    'copy provided by',
+    'provided by the publisher',
+    'early access code',
+  ],
+  embargo: ['embargo'],
+  sponsoredEvent: [
+    'press trip',
+    'travel and accommodation',
+    'travel and lodging',
+    'flights and accommodation',
+    'covered our travel',
+    'paid for our travel',
+    'preview event hosted by',
+    'flown out by',
+  ],
+  negations: [
+    'not provided',
+    'no review code',
+    'no review copy',
+    'did not receive',
+    "didn't receive",
+    'bought it ourselves',
+    'bought our own',
+    'purchased our own',
+    'paid for it ourselves',
+    'no embargo',
+    'not under embargo',
+    'not embargoed',
+    'at our own expense',
+    'paid our own way',
+    'without a review code',
+    'no press trip',
+  ],
+} as const;
+
 export const SUBJECT_TYPES = ['game', 'studio', 'publisher', 'platform'] as const;
 export type SubjectType = (typeof SUBJECT_TYPES)[number];
 

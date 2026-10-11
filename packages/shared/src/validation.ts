@@ -8,7 +8,9 @@ import {
   AWARD_CATEGORY_KINDS,
   AWARD_OUTCOME_TYPES,
   AWARD_PHASES,
+  BIAS_DISPLAY_SCOPES,
   CONSENT_TYPES,
+  INTEGRITY_SIGNAL_KINDS,
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
   LAUNCH_STATE_FLAGS,
@@ -680,6 +682,67 @@ export const listsConfigInput = z.object({
   pinPromotedGames: z.boolean().optional(),
   // Upcoming enrichment: "New" (recently-released) window, in days.
   newWindowDays: z.number().int().min(1).max(365).optional(),
+});
+
+// ── Phase P S1: public display switches + review integrity ───────────────────
+const lexiconList = z.array(z.string().trim().min(2).max(80)).max(60);
+
+/**
+ * Admin edits the public display switches (bias scope, quality axis, topic bias
+ * votes, briefing window, integrity auto-publish + scan lexicon). Every field
+ * optional (PATCH-merge); the backend clamps + audits each app_settings key.
+ */
+export const displaySettingsInput = z
+  .object({
+    displayScope: z.enum(BIAS_DISPLAY_SCOPES).optional(),
+    showQuality: z.boolean().optional(),
+    topicBiasVotes: z.boolean().optional(),
+    briefingWindowHours: z.number().int().min(1).max(168).optional(),
+    integrityAutoPublish: z.boolean().optional(),
+    integrityLexicon: z
+      .object({
+        reviewCopy: lexiconList.optional(),
+        embargo: lexiconList.optional(),
+        sponsoredEvent: lexiconList.optional(),
+        negations: lexiconList.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((o) => Object.keys(o).length > 0, { message: 'Provide at least one setting' });
+
+/**
+ * A real calendar date (YYYY-MM-DD) that is not in the future — the regex alone
+ * lets "2026-13-45" (Invalid Date → 500) or "2026-02-30" (silently March 2) in.
+ * One day of slack covers time zones.
+ */
+const pastCalendarDate = isoDate.refine(
+  (d) => {
+    const t = Date.parse(`${d}T00:00:00Z`);
+    return (
+      Number.isFinite(t) &&
+      new Date(t).toISOString().slice(0, 10) === d &&
+      t >= Date.parse('1990-01-01T00:00:00Z') &&
+      t <= Date.now() + 86_400_000
+    );
+  },
+  { message: 'must be a real calendar date, not in the future' },
+);
+
+/**
+ * A moderator adds a signal (or confirms an existing one) on a review article.
+ * The note + evidence date ARE the public evidence for an editor-added row.
+ */
+export const integritySignalInput = z.object({
+  kind: z.enum(INTEGRITY_SIGNAL_KINDS),
+  note: z.string().trim().min(3).max(500),
+  evidenceDate: pastCalendarDate,
+});
+
+/** Confirm / dismiss an existing signal; an optional note is kept with it. */
+export const integrityDecisionInput = z.object({
+  note: z.string().trim().min(3).max(500).optional(),
 });
 
 /** Editing a DRAFT campaign — every field optional; the route guards the status. */

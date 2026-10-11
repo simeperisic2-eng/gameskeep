@@ -101,19 +101,23 @@ export default function TermsPage(): React.JSX.Element {
 
       <h2>Aggregation &amp; intellectual property</h2>
       <p>
-        GamesKeep aggregates news by showing <strong>excerpts and summaries</strong> that always
-        link back to the original source. Full articles remain with their publishers; we send
-        readers to them, we do not replace them. The GamesKeep name, design and original content are
-        ours or our licensors&rsquo;. Trademarks and game assets belong to their respective owners
-        and are shown for identification and commentary.
+        GamesKeep aggregates news by showing <strong>excerpts and summaries</strong>{' '}
+        <span>
+          that always link back to the original source. Full articles remain with their publishers;
+          we send readers to them, we do not replace them. The GamesKeep name, design and original
+          content are ours or our licensors&rsquo;. Trademarks and game assets belong to their
+          respective owners and are shown for identification and commentary.
+        </span>
       </p>
 
       <h2>Disclaimers</h2>
       <p>
-        GamesKeep is currently a <strong>demo build</strong> and is provided &ldquo;as is,&rdquo;
-        without warranties of any kind. We do not guarantee that scores, signals or aggregated data
-        are complete, accurate or uninterrupted. You use the platform, and rely on its measurements,
-        at your own discretion.
+        GamesKeep is currently a <strong>demo build</strong>{' '}
+        <span>
+          and is provided &ldquo;as is,&rdquo; without warranties of any kind. We do not guarantee
+          that scores, signals or aggregated data are complete, accurate or uninterrupted. You use
+          the platform, and rely on its measurements, at your own discretion.
+        </span>
       </p>
 
       <h2>Limitation of liability</h2>

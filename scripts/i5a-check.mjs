@@ -146,13 +146,19 @@ async function main() {
   const topicUrl = `${FRONT}/topics/${slug}`;
   const topicHtml = (await getText(topicUrl)).text;
   const rows = count(topicHtml, 'gk-srcrow');
+  // Phase P S1 (rewritten — was "…+ bias flags"): bias chips/panel render only
+  // where the display scope allows (a story with reviews or a sponsored article
+  // at the default scope); otherwise the story shows none — hidden, not removed.
+  const chips = count(topicHtml, 'gk-flag ');
+  const panels = count(topicHtml, 'gk-biasbar');
   check(
-    '7. Topic SSR has full content (title + per-source rows + bias flags + AI summary)',
+    '7. Topic SSR has full content (title + per-source rows + AI summary); bias display follows the display scope (panel + chips iff showPanel)',
     topicHtml.includes(td.title.slice(0, 24)) &&
       rows >= 1 &&
-      count(topicHtml, 'gk-flag ') > 0 &&
-      topicHtml.includes('AI summary'),
-    `${rows} source rows, ${count(topicHtml, 'gk-flag ')} flag chips`,
+      topicHtml.includes('AI summary') &&
+      typeof td.showPanel === 'boolean' &&
+      (td.showPanel ? chips > 0 && panels > 0 : chips === 0 && panels === 0),
+    `${rows} source rows, showPanel=${td.showPanel}, ${chips} flag chips, ${panels} panels`,
   );
   check(
     '8. Topic SSR is leak-proof (0 internal_assessment in served HTML)',

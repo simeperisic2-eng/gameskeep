@@ -31,6 +31,8 @@ export interface CleanArticle {
   gameRefs: string[];
   /** The text the embedding is computed from (title + excerpt). */
   embedText: string;
+  /** Outlet disclosure line (integrity scan only; never embedded). */
+  disclosure?: string;
 }
 
 const ARTICLE_TYPE_SET = new Set<string>(ARTICLE_TYPES);
@@ -113,5 +115,6 @@ export function sanitizeFeedItem(
     basedOnReviewCopy: input.basedOnReviewCopy === true,
     gameRefs: gameRefs(input.gameRefs),
     embedText: excerpt ? `${title}. ${excerpt}` : title,
+    disclosure: str(input.disclosure, 500),
   };
 }

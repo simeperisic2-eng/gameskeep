@@ -58,6 +58,26 @@ async function ensure(table: PgTable, values: Row, where: SQL): Promise<Row> {
   return row as Row;
 }
 
+/**
+ * Rename a SEEDED lookup label on an existing demo volume (Phase P S1: source type
+ * 'Independent' → 'Standalone'). Demo only; only while the row still carries the
+ * old seeded label and no staff edit exists on it (an admin relabel always wins).
+ */
+async function relabelSeededSourceType(key: string, from: string, to: string): Promise<void> {
+  if (!isDemo()) return;
+  const [row] = await db
+    .select({ id: sourceTypes.id, label: sourceTypes.label })
+    .from(sourceTypes)
+    .where(eq(sourceTypes.key, key))
+    .limit(1);
+  if (!row || row.label !== from) return;
+  if (await hasStaffAudit('source-types', row.id)) return;
+  await db
+    .update(sourceTypes)
+    .set({ label: to })
+    .where(and(eq(sourceTypes.id, row.id), eq(sourceTypes.label, from)));
+}
+
 /** A stored `games.demo_seed` value, or null when absent/malformed (untrusted JSON). */
 function parseDemoSeed(raw: unknown): DemoSeedMarker | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -222,12 +242,15 @@ export async function seedDemo(): Promise<void> {
 
   const sourceTypeDefs: [string, string][] = [
     ['mainstream', 'Mainstream'],
-    ['independent', 'Independent'],
+    // Phase P S1: the public label is 'Standalone' — 'Independent' reads as a bias
+    // verdict on the outlet. The key stays 'independent' (internal); admins can relabel.
+    ['independent', 'Standalone'],
     ['industry', 'Industry'],
     ['blog', 'Blog'],
   ];
   for (const [key, label] of sourceTypeDefs)
     await ensure(sourceTypes, { key, label }, eq(sourceTypes.key, key));
+  await relabelSeededSourceType('independent', 'Independent', 'Standalone');
 
   const badgeDefs: [string, string][] = [
     ['verified', 'Verified'],
@@ -609,7 +632,7 @@ export async function seedDemo(): Promise<void> {
   );
   const independent = await ensure(
     sourceTypes,
-    { key: 'independent', label: 'Independent' },
+    { key: 'independent', label: 'Standalone' },
     eq(sourceTypes.key, 'independent'),
   );
   const ign = await ensure(

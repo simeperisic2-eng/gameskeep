@@ -8,7 +8,7 @@ export default function TopicsIndexPage(): React.JSX.Element {
     <ComingSoon
       eyebrow="News, clustered"
       title="The topics index is on its way"
-      body="Browse every story — clustered from across the industry, each with its influence + quality bias bar. For now, open a story straight from the homepage hero."
+      body="Browse every story — clustered from across the industry, each with the coverage signals we found. For now, open a story straight from the homepage hero."
     />
   );
 }

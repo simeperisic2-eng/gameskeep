@@ -10,8 +10,8 @@ export function Newsletter(): React.JSX.Element {
       <span className="gk-eyebrow">Daily briefing</span>
       <h3>Gaming news, with a bias lens — in your inbox.</h3>
       <p>
-        One short daily email: the day&apos;s biggest stories, our AI summaries, and the influence
-        and quality read on the coverage. No hype, no spam.
+        One short daily email: the day&apos;s biggest stories, our AI summaries, and the coverage
+        signals we found. No hype, no spam.
       </p>
       {/* [[OWNER-TODO: wire to the real newsletter provider in I8 — this is inert]] */}
       <div className="gk-news-form">

@@ -10,12 +10,20 @@ import { apiPost, fetchMe } from '@/lib/client';
  */
 type AxisAgg = { weightedMean: number | null; count: number; myVote: number | null };
 const AXES: { key: string; label: string; neg: string; pos: string }[] = [
-  { key: 'influence', label: 'Influence', neg: 'Independent', pos: 'Influenced' },
+  // Phase P S1: never "Independent" — a reader can report what they saw, not prove absence.
+  { key: 'influence', label: 'Influence', neg: 'No signals seen', pos: 'Influenced' },
   { key: 'quality', label: 'Quality', neg: 'Low-effort', pos: 'Top' },
   { key: 'trust', label: 'Trust', neg: 'Skeptical', pos: 'Trusted' },
 ];
 
-export function BiasVotes({ topicId }: { topicId: string }): React.JSX.Element {
+export function BiasVotes({
+  topicId,
+  showQuality,
+}: {
+  topicId: string;
+  /** Phase P S1: no reader vote on an axis the site hides (`bias.showQuality`). */
+  showQuality: boolean;
+}): React.JSX.Element {
   const [agg, setAgg] = useState<Record<string, AxisAgg>>({});
   const [gate, setGate] = useState<'loading' | 'guest' | 'unverified' | 'ok'>('loading');
   const base = `/api/community/topics/${topicId}`;
@@ -25,7 +33,8 @@ export function BiasVotes({ topicId }: { topicId: string }): React.JSX.Element {
     setGate(!me ? 'guest' : me.isEmailVerified ? 'ok' : 'unverified');
     const r = await fetch(`${base}/bias`, { cache: 'no-store' });
     if (r.ok) {
-      const b = (await r.json()) as { data?: Record<string, AxisAgg> };
+      // `data: null` when the admin switch is off (the server stops serving it).
+      const b = (await r.json()) as { data?: Record<string, AxisAgg> | null };
       setAgg(b.data ?? {});
     }
   }, [base]);
@@ -44,7 +53,7 @@ export function BiasVotes({ topicId }: { topicId: string }): React.JSX.Element {
 
   return (
     <div className="gk-biasvotes">
-      {AXES.map((a) => {
+      {AXES.filter((a) => showQuality || a.key !== 'quality').map((a) => {
         const row = agg[a.key];
         const mine = row?.myVote ?? 0;
         const pct =

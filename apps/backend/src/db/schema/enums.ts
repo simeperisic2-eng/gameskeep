@@ -11,6 +11,9 @@ import {
   AWARD_PHASES,
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
+  INTEGRITY_SIGNAL_KINDS,
+  INTEGRITY_SIGNAL_ORIGINS,
+  INTEGRITY_SIGNAL_STATUSES,
   LAUNCH_STATE_FLAGS,
   NEWSLETTER_CAMPAIGN_KINDS,
   NEWSLETTER_CAMPAIGN_STATUSES,
@@ -58,3 +61,12 @@ export const externalRatingKindEnum = pgEnum('external_rating_kind', EXTERNAL_RA
 export const sysReqKindEnum = pgEnum('sys_req_kind', ['minimum', 'recommended']);
 export const unmatchedStatusEnum = pgEnum('unmatched_status', UNMATCHED_STATUSES);
 export const upcomingOverrideEnum = pgEnum('upcoming_override', UPCOMING_OVERRIDES);
+export const integritySignalKindEnum = pgEnum('integrity_signal_kind', INTEGRITY_SIGNAL_KINDS);
+export const integritySignalOriginEnum = pgEnum(
+  'integrity_signal_origin',
+  INTEGRITY_SIGNAL_ORIGINS,
+);
+export const integritySignalStatusEnum = pgEnum(
+  'integrity_signal_status',
+  INTEGRITY_SIGNAL_STATUSES,
+);

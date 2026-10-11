@@ -31,6 +31,13 @@ export interface RawFeedItem {
 
   /** Raw game names this article references (resolved via I2's resolveOrQueue). */
   gameRefs?: string[];
+
+  /**
+   * The outlet's own disclosure line where it publishes one ("Review code
+   * provided by the publisher."), Phase P S1. Read by the review-integrity scan
+   * only — NOT embedded, so it never moves clustering. Short text, not full body.
+   */
+  disclosure?: string;
 }
 
 export interface ArticlePullOptions {

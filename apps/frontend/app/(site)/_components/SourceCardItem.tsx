@@ -26,7 +26,14 @@ function Stat({
   );
 }
 
-export function SourceCardItem({ source }: { source: SourceCard }): React.JSX.Element {
+export function SourceCardItem({
+  source,
+  showReputation,
+}: {
+  source: SourceCard;
+  /** Reputation is the quality axis per outlet — shown only while that axis is. */
+  showReputation: boolean;
+}): React.JSX.Element {
   const reputation = scoreToTen(source.reputation);
   return (
     <a className="gk-srccard" href={`/sources/${source.slug}`}>
@@ -51,12 +58,16 @@ export function SourceCardItem({ source }: { source: SourceCard }): React.JSX.El
             ) : null}
           </>
         ) : (
-          <span className="gk-srccard-owner-name gk-srccard-owner-indie">Independent owner</span>
+          <span className="gk-srccard-owner-name gk-srccard-owner-indie">
+            No parent company on record
+          </span>
         )}
       </div>
 
       <div className="gk-srccard-stats">
-        <Stat label="Reputation" value={reputation ? `${reputation}` : '—'} amber />
+        {showReputation ? (
+          <Stat label="Reputation" value={reputation ? `${reputation}` : '—'} amber />
+        ) : null}
         <Stat
           label="Commercial"
           value={source.affiliatePct != null ? `${source.affiliatePct}%` : '—'}

@@ -1,28 +1,35 @@
 import type {
+  BiasMode,
   InfluenceFlag,
+  IntegrityTally,
   LatestArticle,
+  PublicDisplay,
   TopicBiasDistribution,
   TopicFlagTally,
 } from '@/lib/public-api';
-import { FLAG_LABEL, flagParts, qualityReadout, type BiasTone, type FlagPart } from '@/lib/bias';
+import {
+  FLAG_LABEL,
+  NO_SIGNALS_EXPLAINER,
+  NO_SIGNALS_LABEL,
+  compactTopicToken,
+  flagParts,
+  qualityReadout,
+  type BiasTone,
+  type FlagPart,
+} from '@/lib/bias';
 
 /**
- * The BIAS DISPLAY — GamesKeep's signature transparency surface. The two axes have
- * different natures, so they read differently (deliberate, SPEC I5a):
+ * The BIAS DISPLAY — GamesKeep's transparency surface (SPEC I5a; Phase P S1).
  *
- *  - INFLUENCE is mostly binary FACTS (sponsored or not, affiliate or not, review
- *    copy or not, opinion frame or not). A bar would imply a smooth "62%
- *    influenced" scale that doesn't exist — so we show the actual signals present
- *    as small chips ("Sponsored", "Affiliate"), or a single "Independent" chip
- *    when none fire. At the TOPIC level it's a distribution of those flags across
- *    the cluster's articles ("5 independent · 1 sponsored"). These are LABELS,
- *    never a verdict — neutral/amber in the UI, never red.
- *  - QUALITY is a genuine GRADIENT (low-effort/AI → in-depth), so it keeps the
- *    bar/scale plus a plain-language readout.
+ *  - INFLUENCE is mostly binary FACTS (sponsored or not, affiliate or not, opinion
+ *    frame or not), shown as small chips. Where nothing was found the chip reads
+ *    "No signals found" in a NEUTRAL style — we prove presence, never absence, so
+ *    an empty result is never dressed up as "clean".
+ *  - QUALITY is a gradient bar — rendered only while the admin shows it (the
+ *    payload carries no quality values otherwise).
  *
- * Both keep the hover "why" (the I4a breakdown). Leak-proof: consumes only the
- * public flags/distribution — the internal-only assessment is not in these types
- * and is never referenced.
+ * WHERE it renders is the display scope, decided server-side (rows) / by the
+ * topic's `showPanel`. Leak-proof: consumes only public flags and distributions.
  */
 function pct(part: number, total: number): number {
   return total <= 0 ? 0 : Math.round((part / total) * 100);
@@ -32,7 +39,7 @@ function toneClass(t: BiasTone): string {
   return `tone-${t}`;
 }
 
-/** The kept QUALITY scale (genuinely a gradient). */
+/** The quality scale (genuinely a gradient) — only while shown. */
 function QualityTrack({ top, slop }: { top: number; slop: number }): React.JSX.Element {
   const total = top + slop;
   const topPct = pct(top, total);
@@ -44,7 +51,7 @@ function QualityTrack({ top, slop }: { top: number; slop: number }): React.JSX.E
   );
 }
 
-/** A row of influence flag chips (topic-level distribution, or a lone Independent). */
+/** A row of topic-level flag chips. */
 function FlagChips({ parts }: { parts: FlagPart[] }): React.JSX.Element {
   if (parts.length === 0) {
     return <span className="gk-bias-empty">Coverage signals pending</span>;
@@ -60,46 +67,60 @@ function FlagChips({ parts }: { parts: FlagPart[] }): React.JSX.Element {
   );
 }
 
-function whyText(flags: TopicFlagTally, distribution: TopicBiasDistribution): React.JSX.Element {
-  const parts = flagParts(flags);
-  const signal = parts.filter((p) => p.kind === 'signal');
+function whyText(
+  flags: TopicFlagTally,
+  distribution: TopicBiasDistribution,
+  integrity?: IntegrityTally,
+): React.JSX.Element {
+  const signals = flagParts(flags, integrity).filter((p) => p.kind === 'signal');
   return (
     <>
       Across <b>{flags.total}</b> {flags.total === 1 ? 'article' : 'articles'},{' '}
-      {signal.length > 0 ? (
+      {signals.length > 0 ? (
         <>
-          {parts.map((p, i) => (
+          {signals.map((p, i) => (
             <span key={p.key}>
               {i > 0 ? ', ' : ''}
               <b>{p.label}</b>
             </span>
           ))}{' '}
-          — these are factual labels (what the coverage carries), not a judgment of quality.
+          — factual labels (what the coverage carries), not a judgment of quality.
         </>
       ) : (
         <>
-          all <b>independent</b> — no sponsored, affiliate, review-copy or opinion signals detected.
+          <b>{NO_SIGNALS_LABEL.toLowerCase()}</b> (sponsored, affiliate, review copy, opinion).{' '}
+          {NO_SIGNALS_EXPLAINER}
         </>
-      )}{' '}
-      Separately, quality reads <b>{distribution.quality.top}</b> higher-effort and{' '}
-      <b>{distribution.quality.slop}</b> low-effort. Open the story for each source&apos;s reasons.
+      )}
+      {distribution.quality ? (
+        <>
+          {' '}
+          Separately, quality reads <b>{distribution.quality.top}</b> higher-effort and{' '}
+          <b>{distribution.quality.slop}</b> low-effort.
+        </>
+      ) : null}{' '}
+      Open the story for each source&apos;s signals.
     </>
   );
 }
 
-/** Full bias display — flag distribution + the quality scale (hero spotlight + story page). */
+/** Topic-level panel — flag distribution (+ quality while shown). Hero + story page. */
 export function BiasBar({
   flags,
   distribution,
+  integrity,
   sourceCount = 0,
   showWhy = true,
 }: {
   flags: TopicFlagTally;
   distribution: TopicBiasDistribution;
+  /** Public integrity rows found on the story's reviews (embargo / press trip). */
+  integrity?: IntegrityTally;
   sourceCount?: number;
   showWhy?: boolean;
 }): React.JSX.Element {
-  const qual = qualityReadout(distribution.quality.top, distribution.quality.slop);
+  const quality = distribution.quality;
+  const qual = quality ? qualityReadout(quality.top, quality.slop) : null;
   return (
     <div className="gk-biasbar">
       <div className="gk-bias-axis">
@@ -113,71 +134,81 @@ export function BiasBar({
             </span>
           )}
         </div>
-        <FlagChips parts={flagParts(flags)} />
+        <FlagChips parts={flagParts(flags, integrity)} />
       </div>
-      <div className="gk-bias-axis">
-        <div className="gk-bias-axis-head">
-          <span className="gk-bias-axis-name">
-            Quality <small>· Low-effort / AI ↔ Quality</small>
-          </span>
-          <span className={`gk-bias-phrase ${toneClass(qual.tone)}`}>{qual.phrase}</span>
+      {quality && qual ? (
+        <div className="gk-bias-axis">
+          <div className="gk-bias-axis-head">
+            <span className="gk-bias-axis-name">
+              Quality <small>· Low-effort / AI ↔ Quality</small>
+            </span>
+            <span className={`gk-bias-phrase ${toneClass(qual.tone)}`}>{qual.phrase}</span>
+          </div>
+          <QualityTrack top={quality.top} slop={quality.slop} />
         </div>
-        <QualityTrack top={distribution.quality.top} slop={distribution.quality.slop} />
-      </div>
+      ) : null}
       {showWhy && (
         <details className="gk-bias-why">
           <summary className="gk-chip">Why these signals?</summary>
-          <div className="gk-bias-whycard">{whyText(flags, distribution)}</div>
+          <div className="gk-bias-whycard">{whyText(flags, distribution, integrity)}</div>
         </details>
       )}
     </div>
   );
 }
 
-/** Mini influence — the flag distribution as compact chips + hover "why" (feed cards). */
+/**
+ * Compact topic signal for cards: default scope → a Sponsored chip only when a
+ * sponsored article is present (else just the source count); scope `all` → the
+ * leading signal or the neutral no-signal chip.
+ */
 export function BiasMini({
   flags,
+  integrity,
   sourceCount = 0,
-  distribution,
+  display,
 }: {
   flags: TopicFlagTally;
+  integrity?: IntegrityTally;
   sourceCount?: number;
-  distribution: TopicBiasDistribution;
-}): React.JSX.Element {
-  const parts = flagParts(flags);
+  display: PublicDisplay;
+}): React.JSX.Element | null {
+  const token = compactTopicToken(flags, display.scope, integrity);
+  if (!token && sourceCount <= 0) return null;
   return (
-    <span className="gk-tip gk-biasmini">
-      <span className="gk-flags" tabIndex={0}>
-        {parts.length > 0 ? (
-          parts.map((p) => (
-            <span key={p.key} className={`gk-flag ${p.kind}`}>
-              {p.label}
-            </span>
-          ))
-        ) : (
-          <span className="gk-flag independent">Independent</span>
-        )}
-      </span>
+    <span className="gk-biasmini">
+      {token ? <span className={`gk-flag ${token.kind}`}>{token.label}</span> : null}
       {sourceCount > 0 && (
         <span className="gk-bias-srcs">
           {sourceCount} {sourceCount === 1 ? 'source' : 'sources'}
         </span>
       )}
-      <span className="gk-tip-card" role="tooltip">
-        {whyText(flags, distribution)}
-      </span>
     </span>
   );
 }
 
-/** A single article's factual flag chips + hover "why" (latest column + story rows). */
+/**
+ * A single article's signal chips + hover "why", shaped server-side by `mode`:
+ * `none` renders nothing, `chip` a lone Sponsored chip, `panel` every public flag
+ * or the neutral "No signals found" chip.
+ */
 export function ArticleFlags({
   flags,
   reasons,
+  mode,
 }: {
   flags: InfluenceFlag[];
   reasons: string[];
-}): React.JSX.Element {
+  mode: BiasMode;
+}): React.JSX.Element | null {
+  if (mode === 'none') return null;
+  if (mode === 'chip') {
+    return flags.includes('sponsored') ? (
+      <span className="gk-flags">
+        <span className="gk-flag signal">{FLAG_LABEL.sponsored}</span>
+      </span>
+    ) : null;
+  }
   return (
     <span className="gk-tip">
       <span className="gk-flags" tabIndex={0}>
@@ -188,12 +219,14 @@ export function ArticleFlags({
             </span>
           ))
         ) : (
-          <span className="gk-flag independent">Independent</span>
+          <span className="gk-flag nosignal">{NO_SIGNALS_LABEL}</span>
         )}
       </span>
       <span className="gk-tip-card" role="tooltip">
         {flags.length === 0 ? (
-          <>Independent — no sponsored, affiliate, review-copy or opinion signals detected.</>
+          <>
+            {NO_SIGNALS_LABEL} for sponsored, affiliate or opinion signals. {NO_SIGNALS_EXPLAINER}
+          </>
         ) : (
           <>
             Carries: <b>{flags.map((f) => FLAG_LABEL[f]).join(', ')}</b>. These are factual labels
@@ -206,7 +239,7 @@ export function ArticleFlags({
   );
 }
 
-/** The "Latest news" column variant — reads its flags off a LatestArticle. */
-export function ArticleBiasTag({ article }: { article: LatestArticle }): React.JSX.Element {
-  return <ArticleFlags flags={article.flags} reasons={article.reasons} />;
+/** The "Latest news" column variant — reads its (server-shaped) flags off a LatestArticle. */
+export function ArticleBiasTag({ article }: { article: LatestArticle }): React.JSX.Element | null {
+  return <ArticleFlags flags={article.flags} reasons={article.reasons} mode={article.biasMode} />;
 }

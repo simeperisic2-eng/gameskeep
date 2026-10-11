@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { TopicCard as TopicCardData } from '@/lib/public-api';
+import type { PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
 import { TopicCard } from './TopicCard';
 
 /**
@@ -12,7 +12,13 @@ import { TopicCard } from './TopicCard';
  */
 const INITIAL = 9;
 
-export function MainFeed({ topics }: { topics: TopicCardData[] }): React.JSX.Element {
+export function MainFeed({
+  topics,
+  display,
+}: {
+  topics: TopicCardData[];
+  display: PublicDisplay;
+}): React.JSX.Element {
   const [shown, setShown] = useState(INITIAL);
 
   if (topics.length === 0) {
@@ -23,7 +29,7 @@ export function MainFeed({ topics }: { topics: TopicCardData[] }): React.JSX.Ele
     <div className="gk-feed">
       {topics.map((t, i) => (
         <div key={t.id} style={i < shown ? undefined : { display: 'none' }}>
-          <TopicCard topic={t} />
+          <TopicCard topic={t} display={display} />
         </div>
       ))}
       {shown < topics.length && (

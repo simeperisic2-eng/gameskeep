@@ -123,11 +123,34 @@ async function main() {
     `trendchips ${mods.trend}, genre ${mods.genre}, briefing ${mods.brief}, community ${mods.community}, secondary ${mods.secondary}`,
   );
 
-  // ── 3. bias = influence FLAG chips + quality BAR ────────────────────────────
+  // ── 3. bias = influence FLAG chips; quality BAR behind its switch ───────────
+  // Phase P S1 (rewritten — was "chips + quality bar both present"): the quality
+  // axis is hidden by default (`bias.show_quality` = false). Prove it is HIDDEN at
+  // the default, and comes back when the admin switch is on — not removed.
+  const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
+  const displayCfg = async (patch) => {
+    const res = await fetch(`${BACK}/admin/api/display/config`, {
+      method: patch ? 'PATCH' : 'GET',
+      headers: {
+        'x-admin-token': TOKEN,
+        ...(patch ? { 'content-type': 'application/json' } : {}),
+      },
+      body: patch ? JSON.stringify(patch) : undefined,
+    });
+    return (await res.json().catch(() => ({})))?.data ?? null;
+  };
+  const originalQuality = (await displayCfg())?.showQuality ?? false;
+  await displayCfg({ showQuality: false });
+  const defaultHtml = (await getText(`${FRONT}/`)).text;
+  await displayCfg({ showQuality: true });
+  const onHtml = (await getText(`${FRONT}/`)).text;
+  await displayCfg({ showQuality: originalQuality });
   check(
-    '3. Bias display: influence FLAG chips + quality BAR both present in SSR (not a fake "% influenced" scale)',
-    count(homeHtml, 'gk-flag ') > 0 && count(homeHtml, 'gk-bias-track') > 0,
-    `${count(homeHtml, 'gk-flag ')} flag chips, ${count(homeHtml, 'gk-bias-track')} quality bars`,
+    '3. Bias display: influence FLAG chips in SSR; the quality BAR is hidden at the default and renders when bias.show_quality is on',
+    count(defaultHtml, 'gk-flag ') > 0 &&
+      count(defaultHtml, 'gk-bias-track') === 0 &&
+      count(onHtml, 'gk-bias-track') > 0,
+    `${count(defaultHtml, 'gk-flag ')} flag chips, quality bars default=${count(defaultHtml, 'gk-bias-track')} on=${count(onHtml, 'gk-bias-track')}`,
   );
 
   // ── 4. Top-rated vs Games-in-focus render DISTINCT games (de-dup) ────────────
@@ -222,21 +245,26 @@ async function main() {
     `trendbar-sticky ${/position:\s*sticky/.test(trendRule)}, header-sticky ${/position:\s*sticky/.test(headerRule)}`,
   );
 
-  const indepRule = cssRule(css, '.gk-flag.independent');
+  // Phase P S1 (rewritten — was "independent #7fd29a"): the empty state reads
+  // "No signals found" and is NEUTRAL — green would claim the coverage is clean.
+  const noSignalRule = cssRule(css, '.gk-flag.nosignal');
   const signalRule = cssRule(css, '.gk-flag.signal');
+  const greenish = /#7fd29a|#5bd07f|rgba\(67,\s*183,\s*104/i;
   check(
-    '11. Locked flag palette: independent #7fd29a, signal #ecb45c',
-    /#7fd29a/i.test(indepRule) && /#ecb45c/i.test(signalRule),
-    `independent ${/#7fd29a/i.test(indepRule)}, signal ${/#ecb45c/i.test(signalRule)}`,
+    '11. Locked flag palette: signal #ecb45c; "No signals found" chip NEUTRAL (no green)',
+    noSignalRule.length > 0 && !greenish.test(noSignalRule) && /#ecb45c/i.test(signalRule),
+    `nosignal-green ${greenish.test(noSignalRule)}, signal ${/#ecb45c/i.test(signalRule)}`,
   );
 
   const discRule = cssRule(css, '.gk-disc-large');
   const qualBadRule = cssRule(css, '.gk-bias-seg.bad');
+  // Phase P S1: points at the no-signal chip (the old `.gk-flag.independent` rule
+  // no longer exists — reading it would pass vacuously).
   const redLeaked =
-    /#e5594a/i.test(indepRule) || /#e5594a/i.test(signalRule) || /#e5594a/i.test(qualBadRule);
+    /#e5594a/i.test(noSignalRule) || /#e5594a/i.test(signalRule) || /#e5594a/i.test(qualBadRule);
   check(
-    '12. RED (#e5594a) reserved for the disconnect ONLY (never flags, never quality low-effort)',
-    /#e5594a/i.test(discRule) && !redLeaked,
+    '12. RED (#e5594a) reserved for the disconnect ONLY (never flags incl. the no-signal chip, never quality low-effort)',
+    /#e5594a/i.test(discRule) && noSignalRule.length > 0 && !redLeaked,
     `disconnect-red ${/#e5594a/i.test(discRule)}, red-leaked-into-bias ${redLeaked}`,
   );
 

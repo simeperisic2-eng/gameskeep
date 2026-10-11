@@ -1086,7 +1086,9 @@ async function main() {
     `weighted=${trustAgg?.weightedMean} naive=${trustAgg?.naiveMean} count=${trustAgg?.count}`,
   );
 
-  // ── 33. topic bias vote: one-per-user-per-axis, change + clear ──────────────
+  // ── 33. topic bias vote: OFF by default (Phase P S1); ON → one-per-user-per-axis
+  // Rewritten in Phase P S1: `community.topic_bias_votes` defaults OFF — prove the
+  // write is rejected (no row) while off, then the original semantics with it on.
   const biasTopic = sqlOne(`SELECT id FROM topics ORDER BY created_at DESC LIMIT 1`);
   const biasVote = (value) =>
     api(BACK, `/community/topics/${biasTopic}/bias-vote`, {
@@ -1095,6 +1097,19 @@ async function main() {
       csrf: alice.csrf,
       body: { axis: 'influence', value },
     });
+  const displayPatch = (patch) =>
+    api(BACK, '/admin/api/display/config', { method: 'PATCH', headers: SVC, body: patch });
+  const votesWereOn =
+    (await api(BACK, '/admin/api/display/config', { headers: SVC })).json?.data?.topicBiasVotes ??
+    false;
+  await displayPatch({ topicBiasVotes: false });
+  const offVote = await biasVote(1);
+  const offRows = Number(
+    sqlOne(
+      `SELECT count(*)::int FROM topic_bias_votes WHERE topic_id='${biasTopic}' AND user_id='${alice.id}' AND axis='influence'`,
+    ),
+  );
+  await displayPatch({ topicBiasVotes: true });
   await biasVote(1);
   await biasVote(-1); // same axis → UPDATE, not a second row
   const biasRows1 = Number(
@@ -1113,10 +1128,16 @@ async function main() {
       `SELECT count(*)::int FROM topic_bias_votes WHERE topic_id='${biasTopic}' AND user_id='${alice.id}' AND axis='influence'`,
     ),
   );
+  await displayPatch({ topicBiasVotes: votesWereOn });
   check(
-    '33. Bias vote: one row per (user, axis) — re-voting UPDATES (value −1), value 0 CLEARS (row deleted)',
-    biasRows1 === 1 && biasVal === -1 && biasRows2 === 0,
-    `afterChange rows=${biasRows1} val=${biasVal}, afterClear rows=${biasRows2}`,
+    '33. Bias vote: switch OFF (default) → POST 403 feature_disabled, no row; ON → one row per (user, axis), re-voting UPDATES (−1), 0 CLEARS',
+    offVote.status === 403 &&
+      offVote.json?.error === 'feature_disabled' &&
+      offRows === 0 &&
+      biasRows1 === 1 &&
+      biasVal === -1 &&
+      biasRows2 === 0,
+    `off=${offVote.status}/${offRows} afterChange rows=${biasRows1} val=${biasVal}, afterClear rows=${biasRows2}`,
   );
 
   // ── 34. upcoming hype: one-per-user toggle, credibility-weighted count ───────
