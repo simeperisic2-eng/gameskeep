@@ -782,7 +782,7 @@ export const HOMEPAGE_SECTIONS = {
     kind: 'block',
     items: 'none',
     delta: false,
-    title: 'Daily briefing',
+    title: 'The briefing, by email',
     defaults: {
       position: 13,
       enabled: true,

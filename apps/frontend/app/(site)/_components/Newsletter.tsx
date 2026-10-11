@@ -1,28 +1,90 @@
+'use client';
+
+import { useState } from 'react';
+import { apiPost } from '@/lib/client';
+
 /**
- * Newsletter subscribe block (BLUEPRINT 2.8 / 3.1) — PLACEHOLDER capture only.
- * The real compose/schedule/segment/send system (and GDPR consent + double
- * opt-in) is I8; here we reserve the layout slot so I8 doesn't reflow the page.
- * The form intentionally does nothing yet.
+ * Newsletter sign-up (Phase P S2): the SAME explicit-opt-in path as the Awards
+ * sign-up (I8) — the consent box is unticked by default and the submit is blocked
+ * until it's ticked; the backend also rejects a consent-less subscribe and
+ * records the consent version + a coarsened IP. Double opt-in arrives in S8 for
+ * both forms. Title is the section's (admin-editable).
  */
-export function Newsletter(): React.JSX.Element {
+export function Newsletter({
+  title = 'The briefing, by email',
+}: {
+  title?: string;
+}): React.JSX.Element {
+  const [email, setEmail] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+  const [msg, setMsg] = useState('');
+
+  async function submit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    if (!consent) {
+      setState('error');
+      setMsg('Please tick the box to opt in.');
+      return;
+    }
+    setState('sending');
+    const r = await apiPost('/api/awards/subscribe', { email, consent, source: 'homepage' });
+    if (r.ok) {
+      setState('done');
+      setMsg('You’re subscribed — you can unsubscribe from any email.');
+    } else {
+      setState('error');
+      setMsg(r.message ?? 'Something went wrong — please retry.');
+    }
+  }
+
   return (
     <section className="gk-newsletter" aria-label="Newsletter signup">
-      <span className="gk-eyebrow">Daily briefing</span>
-      <h3>Gaming news, with a bias lens — in your inbox.</h3>
+      <span className="gk-eyebrow">Newsletter</span>
+      <h3>{title}</h3>
       <p>
-        One short daily email: the day&apos;s biggest stories, our AI summaries, and the coverage
+        A short briefing in your inbox: the biggest stories, our AI summaries, and the coverage
         signals we found. No hype, no spam.
       </p>
-      {/* [[OWNER-TODO: wire to the real newsletter provider in I8 — this is inert]] */}
-      <div className="gk-news-form">
-        <input type="email" name="email" placeholder="you@example.com" aria-label="Email address" />
-        <button className="gk-btn-amber" type="button">
-          Subscribe
-        </button>
-      </div>
-      <p className="gk-news-note">
-        Subscriptions go live with accounts &amp; email (I8). GDPR-compliant.
-      </p>
+      {state === 'done' ? (
+        <p className="gk-news-done" role="status">
+          ✓ {msg}
+        </p>
+      ) : (
+        <form className="gk-news-form-wrap" onSubmit={submit} noValidate>
+          <div className="gk-news-form">
+            <input
+              type="email"
+              name="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              aria-label="Email address"
+              autoComplete="email"
+            />
+            <button className="gk-btn-amber" type="submit" disabled={state === 'sending'}>
+              {state === 'sending' ? 'Subscribing…' : 'Subscribe'}
+            </button>
+          </div>
+          <label className="gk-news-consent">
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+            />
+            <span>
+              Email me the GamesKeep briefing. This is marketing consent, separate from any account
+              — I can unsubscribe anytime (see our <a href="/privacy">Privacy notice</a>).
+            </span>
+          </label>
+          {state === 'error' ? (
+            <p className="gk-news-err" role="alert">
+              {msg}
+            </p>
+          ) : null}
+        </form>
+      )}
     </section>
   );
 }

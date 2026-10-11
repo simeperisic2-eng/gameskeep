@@ -6247,3 +6247,249 @@ a.gk-tile-cover {
 .gk-integrity-meta a:focus-visible {
   text-decoration: underline;
 }
+
+/* =====================  PHASE P S2 — HOMEPAGE SECTIONS  ===================== */
+/* Each configured section is wrapped (data-section) so the admin order drives the
+ * page; sections keep their own spacing. */
+.gk-home-brief {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding-top: var(--s6);
+}
+.gk-home-brief + * {
+  margin-top: 0;
+}
+.gk-home-section > .gk-hero {
+  padding-top: var(--s4);
+}
+
+/* Δ vs the previous window — NEUTRAL (green/red stay reserved for bias + the
+ * disconnect). "New" gets the accent, "—" stays dim. */
+.gk-delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  color: var(--gk-text);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.gk-delta b {
+  font-weight: 700;
+}
+.gk-delta.is-new {
+  border-color: rgba(var(--gk-amber), 0.45);
+  color: var(--gk-accent);
+}
+.gk-delta.is-none {
+  color: var(--gk-text-dim);
+}
+.gk-delta-win {
+  color: var(--gk-text-dim);
+  font-size: 10.5px;
+}
+
+/* Spotlight: how the story is being covered (fills the band the bias bar left). */
+.gk-spot-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.gk-spot-cov-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gk-spot-cov-row {
+  display: grid;
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+  gap: var(--s3);
+  align-items: baseline;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--gk-card-border);
+  font-size: var(--fs-sm);
+}
+.gk-spot-cov-src {
+  color: var(--gk-text-dim);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gk-spot-cov-title {
+  color: var(--gk-text);
+  text-decoration: none;
+  line-height: var(--lh-snug);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+a.gk-spot-cov-title:hover,
+a.gk-spot-cov-title:focus-visible {
+  color: var(--gk-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--gk-accent);
+  text-underline-offset: 3px;
+}
+
+/* Stacked topic card (3-across grids): cover on top, the title gets the full
+ * width (no cramped two-line truncation beside a side cover). */
+.gk-topiccard.is-stacked,
+.gk-topiccard.is-stacked.has-cover {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+  align-content: start;
+}
+.gk-topiccard.is-stacked .gk-topiccard-cover {
+  order: -1;
+  aspect-ratio: 16 / 7;
+}
+.gk-topiccard.is-stacked .gk-topiccard-title {
+  -webkit-line-clamp: 3;
+}
+.gk-topiccard.is-stacked .gk-chips .gk-chip {
+  white-space: nowrap;
+}
+.gk-topiccard.is-stacked .gk-topiccard-foot .gk-meta {
+  white-space: nowrap;
+}
+
+/* Card grids: Featured / By players / New / Our picks / Upcoming. */
+.gk-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--s4);
+}
+.gk-hgcard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gk-card-border);
+  border-radius: var(--r-md);
+  background: var(--gk-card-bg);
+  box-shadow: var(--gk-shadow);
+  overflow: hidden;
+}
+.gk-hgcard.is-promoted {
+  border-color: rgba(var(--gk-amber), 0.45);
+}
+.gk-hgcard-flag,
+.gk-hgcard-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  font-size: 11.5px;
+  color: var(--gk-text-dim);
+  border-bottom: 1px solid var(--gk-card-border);
+}
+.gk-hgcard-pick {
+  color: var(--gk-text);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.gk-hgcard-flag-by {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gk-hgcard-cover {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.gk-hgcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s4);
+}
+.gk-hgcard-name {
+  margin: 0;
+  font-family: var(--gk-font-head);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: var(--lh-snug);
+}
+.gk-hgcard-meta,
+.gk-hgcard-scores,
+.gk-hgcard-metric {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  color: var(--gk-text-dim);
+  font-size: var(--fs-xs);
+}
+.gk-hgcard-scores b {
+  color: var(--gk-text);
+}
+
+/* Community CTA + a solo CTA row (when Community / Newsletter aren't adjacent). */
+.gk-community-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+.gk-community-cta .gk-btn-amber {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.gk-cta-solo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s5);
+}
+.gk-news-form-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.gk-news-consent {
+  display: flex;
+  gap: var(--s2);
+  align-items: flex-start;
+  color: var(--gk-text-dim);
+  font-size: 12px;
+  line-height: var(--lh-snug);
+}
+.gk-news-consent input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.gk-news-consent a {
+  color: var(--gk-accent);
+}
+.gk-news-err {
+  margin: 0;
+  color: var(--gk-text);
+  font-size: 12.5px;
+}
+.gk-news-done {
+  margin: 0;
+  color: var(--gk-text);
+  font-size: var(--fs-sm);
+}
+
+@media (max-width: 760px) {
+  .gk-spot-cov-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .gk-home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

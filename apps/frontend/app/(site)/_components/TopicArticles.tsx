@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { PublicDisplay, TopicArticleRow } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { NO_SIGNALS_LABEL } from '@/lib/bias';
@@ -128,27 +128,6 @@ function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
   );
 }
 
-/** A native-format promoted slot (BLUEPRINT global rule), clearly labeled "AD". */
-function PromotedRow(): React.JSX.Element {
-  return (
-    <article className="gk-srcrow gk-srcrow-ad" aria-label="Promoted">
-      <span className="gk-srcicon gk-srcicon-ad" aria-hidden>
-        AD
-      </span>
-      <div className="gk-srcrow-body">
-        <div className="gk-srcrow-top">
-          <span className="gk-srcrow-source">Promoted</span>
-          <span className="gk-slot-tag">AD</span>
-        </div>
-        <h3 className="gk-srcrow-title">Promoted slot — unsold</h3>
-        <p className="gk-srcrow-excerpt">
-          A sold promotion renders here in the same format as a coverage row, always labeled.
-        </p>
-      </div>
-    </article>
-  );
-}
-
 export function TopicArticles({
   articles,
   display,
@@ -167,8 +146,8 @@ export function TopicArticles({
     [articles, filter],
   );
 
-  // Inject the promoted row after the 3rd item (or at the end for short lists).
-  const adAt = Math.min(3, ordered.length);
+  // Phase P S2: paid placements never sit between outlet articles — they appear
+  // only in discovery sections and sidebar slots.
 
   return (
     <section className="gk-coverage" aria-label="All coverage">
@@ -208,15 +187,11 @@ export function TopicArticles({
       ) : null}
 
       <div className="gk-srcrows">
-        {ordered.map((a, i) => (
-          <Fragment key={a.id}>
-            {i === adAt ? <PromotedRow /> : null}
-            <div hidden={!matches(a, filter)}>
-              <ArticleRow a={a} />
-            </div>
-          </Fragment>
+        {ordered.map((a) => (
+          <div key={a.id} hidden={!matches(a, filter)}>
+            <ArticleRow a={a} />
+          </div>
         ))}
-        {adAt >= ordered.length ? <PromotedRow /> : null}
       </div>
       <NoSignalsNote rows={articles} />
     </section>

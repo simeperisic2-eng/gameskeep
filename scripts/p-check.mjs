@@ -64,6 +64,17 @@
  *   S2.10 player counts sampled daily; the game chart stays weekly
  *   S2.11 the Standalone rule keys on the type’s stable role (rename-proof)
  *   S2.12 ads.showUnsoldPlaceholder default false, admin-set + audited
+ *  S2 — commit 2 (homepage layout + copy, SSR)
+ *   S2.13 (acc. 1) the rendered page follows the saved section order
+ *   S2.14 (acc. 3) the Promoted label is render-forced under every switch; no data
+ *         section renders a paid item
+ *   S2.15 Δ on cards with its window (48h / 7d), New / — / ±%, neutral colours
+ *   S2.16 (acc. 5) the Trending list keeps the section order — a pin holds its row
+ *   S2.17 no Promoted row between outlet articles on story pages
+ *   S2.18 unsold slots render nothing at default; the switch brings the box back
+ *   S2.19 no stale copy; Community CTA; the newsletter form uses the consented path
+ *   S2.20 spotlight band filled; no echoed headline; stacked 3-across cards
+ *   S2.21 Our picks hidden while empty; neutral "Our pick" label when pinned
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -1643,6 +1654,239 @@ async function s2a() {
   );
 }
 
+// ── S2 commit 2: homepage layout + copy (SSR) ─────────────────────────────────
+/** Split the homepage SSR into its configured sections (data-section wrappers). */
+function ssrSections(h) {
+  const out = new Map();
+  const re = /data-section="([a-z_]+)"/g;
+  const marks = [...h.matchAll(re)].map((m) => ({ key: m[1], at: m.index }));
+  marks.forEach((m, i) => out.set(m.key, h.slice(m.at, marks[i + 1]?.at ?? h.length)));
+  return { order: marks.map((m) => m.key), byKey: out };
+}
+
+async function s2b() {
+  const cfg = await sectionsConfig();
+  s2Restore.pins.set('our_picks', pinsOf(cfg, 'our_picks'));
+  if (!s2Restore.pins.has('trending')) s2Restore.pins.set('trending', pinsOf(cfg, 'trending'));
+
+  // ── S2.13 (acc.1, SSR) the page renders the sections in the saved order ────
+  const order = cfg.map((x) => x.key);
+  const moved = [...order];
+  moved.splice(moved.indexOf('upcoming'), 1);
+  moved.splice(1, 0, 'upcoming');
+  await waitHomepage(await adminApi('/homepage/order', 'PUT', { keys: moved }));
+  const apiOrder = (await homeSections()).map((x) => x.key);
+  const ssr1 = ssrSections(await html('/'));
+  const nonEmpty = apiOrder.filter((k) => ssr1.order.includes(k));
+  check(
+    'S2.13 (acc.1, SSR) the rendered homepage follows the saved section order (no deploy)',
+    ssr1.order.join(',') === nonEmpty.join(',') && ssr1.order[1] === 'upcoming',
+    `ssr=${ssr1.order.slice(0, 5).join('>')}…`,
+  );
+
+  // ── S2.14 (acc.3, SSR) the Promoted label is render-forced; data sections never paid
+  const labelIn = (h) =>
+    (h ?? '').includes('Paid promotion · ') && (h ?? '').includes('>Promoted<');
+  let lastHtml = await html('/');
+  const featuredHas = () => labelIn(ssrSections(lastHtml).byKey.get('featured'));
+  const states = [];
+  states.push(featuredHas());
+  const toggles = [
+    () => adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: true }),
+    () => setDisplay({ displayScope: 'all', showQuality: true }),
+    () => adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: false }),
+    () => setDisplay({ displayScope: 'reviews_and_sponsored', showQuality: false }),
+  ];
+  for (const t of toggles) {
+    const r = await t();
+    if (r?.json?.jobId) await waitHomepage(r);
+    lastHtml = await html('/');
+    states.push(featuredHas());
+  }
+  const ssrNow = ssrSections(lastHtml);
+  const dataPaid = cfg
+    .filter((x) => x.kind === 'data')
+    .some((x) => /is-promoted|Paid promotion/.test(ssrNow.byKey.get(x.key) ?? ''));
+  check(
+    'S2.14 (acc.3) a discovery section with a Promoted item shows the label in SSR under every switch combination; no data section renders a paid item',
+    states.every(Boolean) && !dataPaid,
+    `label across ${states.length} states: ${states.join(',')} dataPaid=${dataPaid}`,
+  );
+
+  // ── S2.15 Δ on the cards with its window; neutral colours ─────────────────
+  const chips = (h) =>
+    [
+      ...(h ?? '').matchAll(
+        /class="gk-delta is-([a-z]+)"[^>]*><b>([^<]*)<\/b><span class="gk-delta-win">([^<]*)<\/span>/g,
+      ),
+    ].map((m) => ({ kind: m[1], text: m[2], win: m[3] }));
+  const trendChips = chips(ssrNow.byKey.get('trending'));
+  const playerChips = chips(ssrNow.byKey.get('by_players'));
+  const textOk = (c) =>
+    (c.kind === 'new' && c.text === 'New') ||
+    (c.kind === 'none' && c.text === '—') ||
+    (c.kind === 'pct' && /^(\+|−|±)\d+%$/.test(c.text));
+  const css = readFileSync(CSS_PATH, 'utf8');
+  const deltaRules = ['.gk-delta', '.gk-delta.is-new', '.gk-delta.is-none', '.gk-delta-win']
+    .map((sel) => cssRule(css, sel))
+    .join(' ');
+  check(
+    'S2.15 Δ shows on the cards with its window ("48h" Trending, "7d" By players), as New / — / ±%; neutral colours (no green/red)',
+    trendChips.length >= 1 &&
+      trendChips.every((c) => c.win === '48h' && textOk(c)) &&
+      playerChips.length >= 1 &&
+      playerChips.every((c) => c.win === '7d' && textOk(c)) &&
+      !/#(7fd29a|e06c5f|ef4444|22c55e)|--gk-(green|red)/i.test(deltaRules),
+    `trending ${trendChips.length} [${[...new Set(trendChips.map((c) => c.text))].slice(0, 4).join(' ')}] · players ${playerChips.length} [${playerChips
+      .map((c) => c.text)
+      .slice(0, 4)
+      .join(' ')}]`,
+  );
+
+  // ── S2.16 (acc.5, SSR) the list order is the section's: a pin holds row 3 ──
+  const trendApi = ((await homeSections()).find((x) => x.key === 'trending')?.items ?? []).map(
+    itemSlug,
+  );
+  const pinStory = trendApi[trendApi.length - 1];
+  await waitHomepage(
+    await adminApi('/homepage/sections/trending/pins', 'PUT', {
+      pins: [{ position: 3, topicSlug: pinStory }],
+    }),
+  );
+  const rowsOf = (h) =>
+    [
+      ...(ssrSections(h).byKey.get('trending') ?? '').matchAll(
+        /class="gk-trend-item[^"]*"\s+href="\/topics\/([^"]+)"/g,
+      ),
+    ].map((m) => m[1]);
+  const rowsA = rowsOf(await html('/'));
+  await recomputeHomepage();
+  const rowsB = rowsOf(await html('/'));
+  const apiAfter = ((await homeSections()).find((x) => x.key === 'trending')?.items ?? []).map(
+    itemSlug,
+  );
+  check(
+    'S2.16 (acc.5, SSR) the Trending list renders in the section order — a pinned story stays on row 3 across refreshes (the order never rotates)',
+    rowsA[2] === pinStory && rowsB[2] === pinStory && rowsA.join(',') === apiAfter.join(','),
+    `row3=${rowsA[2]} after refresh=${rowsB[2]} ssr=api ${rowsA.join(',') === apiAfter.join(',')}`,
+  );
+
+  // ── S2.17 no Promoted row between outlet articles ─────────────────────────
+  const topicSlugs = psql(
+    "SELECT string_agg(slug, ',') FROM (SELECT slug FROM topics WHERE bias_distribution IS NOT NULL ORDER BY last_activity_at DESC LIMIT 6) x;",
+  ).split(',');
+  const adRows = [];
+  for (const slug of topicSlugs) {
+    const h = await html(`/topics/${slug}`);
+    if (/gk-srcrow-ad|Promoted slot/.test(h)) adRows.push(slug);
+  }
+  check(
+    'S2.17 topic coverage lists carry no Promoted row — paid items only in discovery sections + sidebar slots',
+    topicSlugs.length >= 3 && adRows.length === 0,
+    `${topicSlugs.length} story pages, ad rows on: ${adRows.join(',') || 'none'}`,
+  );
+
+  // ── S2.18 an unsold slot renders NOTHING at default; the switch brings the box back
+  const slotPages = [
+    '/',
+    '/games',
+    '/games/browse',
+    '/games/cyberpunk-2077',
+    '/upcoming',
+    '/sources',
+    '/sources/ign',
+    '/awards',
+  ];
+  const boxes = [];
+  for (const path of slotPages) {
+    const h = await html(path);
+    if (/Promoted slot — unsold|aria-label="Advertisement slot"/.test(h)) boxes.push(path);
+  }
+  await adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: true });
+  const homeOn = await html('/');
+  await adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: false });
+  check(
+    'S2.18 unsold ad slots render nothing publicly at default (8 pages); ads.showUnsoldPlaceholder on → the "AD" box returns',
+    boxes.length === 0 && /aria-label="Advertisement slot"/.test(homeOn),
+    `boxes at default: ${boxes.join(',') || 'none'} · switch on → box ${/aria-label="Advertisement slot"/.test(homeOn)}`,
+  );
+
+  // ── S2.19 stale copy gone; Community is a live CTA; the newsletter form works
+  const home = await html('/');
+  const community = ssrSections(home).byKey.get('community') ?? '';
+  const subEmail = `p_news_${RUN}@example.test`;
+  const anon = await withCsrf();
+  const noConsent = await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: anon.jar,
+    csrf: anon.csrf,
+    body: { email: subEmail, consent: false, source: 'homepage' },
+  });
+  const yes = await api(BACK, '/awards/subscribe', {
+    method: 'POST',
+    jar: anon.jar,
+    csrf: anon.csrf,
+    body: { email: subEmail, consent: true, source: 'homepage' },
+  });
+  const row = psql(
+    `SELECT source || '|' || active::text || '|' || coalesce(consent_version, '') FROM newsletter_subscriptions WHERE email = ${lit(subEmail)};`,
+  ).split('|');
+  psql(`DELETE FROM newsletter_subscriptions WHERE email = ${lit(subEmail)};`);
+  check(
+    'S2.19 no stale copy ("Coming soon", "(I8)"); Community links to sign-up + sign-in; the newsletter form (explicit consent box) posts through the consented path — refused without consent, recorded as "homepage" with it',
+    !/Coming soon/i.test(community) &&
+      !home.includes('(I8)') &&
+      community.includes('href="/register"') &&
+      community.includes('href="/login"') &&
+      /gk-news-consent[\s\S]{0,200}type="checkbox"/.test(home) &&
+      noConsent.status === 400 &&
+      yes.status === 200 &&
+      row[0] === 'homepage' &&
+      row[1] === 'true' &&
+      row[2].length > 0,
+    `comingSoon=${/Coming soon/i.test(community)} I8=${home.includes('(I8)')} cta=${community.includes('href="/register"')} noConsent=${noConsent.status} consented=${yes.status} row=${row.join('/')}`,
+  );
+
+  // ── S2.20 layout: the spotlight band is filled; no echoed headline; stacked cards
+  const trendHtml = ssrSections(home).byKey.get('trending') ?? '';
+  const panels = count(trendHtml, 'class="gk-spot-panel');
+  const covered = count(trendHtml, 'class="gk-spot-coverage"');
+  const titles = ((await homeSections()).find((x) => x.key === 'trending')?.items ?? []).map(
+    (i) => i.topic?.title ?? '',
+  );
+  const summaries = [...trendHtml.matchAll(/<p class="gk-spot-summary">([^<]*)<\/p>/g)].map(
+    (m) => m[1],
+  );
+  const keyOf = (t) => t.toLowerCase().replace(/&#x27;|&amp;|[^a-z0-9]/g, '');
+  const echoes = summaries.filter((sum, i) => titles[i] && keyOf(sum).startsWith(keyOf(titles[i])));
+  const stackedRule = cssRule(css, '.gk-topiccard.is-stacked .gk-topiccard-title');
+  check(
+    'S2.20 layout: every spotlight panel shows how the story is covered (no empty band); no summary opens by repeating its headline; the 3-across cards are stacked (full-width titles, 3 lines)',
+    panels >= 3 &&
+      covered === panels &&
+      echoes.length === 0 &&
+      count(trendHtml, 'gk-topiccard is-stacked') +
+        count(trendHtml, 'gk-topiccard has-cover is-stacked') >=
+        1 &&
+      /-webkit-line-clamp:\s*3/.test(stackedRule),
+    `panels=${panels} withCoverage=${covered} echoes=${echoes.length} stacked=${count(trendHtml, 'is-stacked')}`,
+  );
+
+  // ── S2.21 Our picks: hidden while empty; a pick shows the neutral label ────
+  const emptyHidden = !ssrSections(home).order.includes('our_picks');
+  await waitHomepage(
+    await adminApi('/homepage/sections/our_picks/pins', 'PUT', {
+      pins: [{ position: 1, gameSlug: 'hades-ii' }],
+    }),
+  );
+  const picks = ssrSections(await html('/')).byKey.get('our_picks') ?? '';
+  check(
+    'S2.21 Our picks is hidden while empty; a team pick renders with the neutral "Our pick" label, never "Promoted"',
+    emptyHidden && picks.includes('Our pick') && !/Promoted|Paid promotion/.test(picks),
+    `hiddenWhenEmpty=${emptyHidden} label=${picks.includes('Our pick')} paid=${/Promoted|Paid promotion/.test(picks)}`,
+  );
+}
+
 async function restoreS2() {
   for (const id of s2Restore.placements) {
     await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
@@ -1670,6 +1914,7 @@ async function main() {
     await s1();
     await h3();
     await s2a();
+    await s2b();
   } finally {
     await restoreS2();
     restoreH3();

@@ -5,14 +5,20 @@ import type { GenreCount } from '@/lib/public-api';
  * catalog's existing genre data. Each chip deep-links into the filtered,
  * paginated catalog at /games/browse (A1) — a real crawlable URL, no client JS.
  */
-export function GenreRail({ genres }: { genres: GenreCount[] }): React.JSX.Element | null {
+export function GenreRail({
+  genres,
+  title = 'Browse by genre',
+}: {
+  genres: GenreCount[];
+  title?: string;
+}): React.JSX.Element | null {
   if (genres.length === 0) return null;
   return (
     <section className="gk-container gk-section-tight" aria-label="Browse by genre">
       <div className="gk-section-head">
         <div>
           <span className="gk-eyebrow">Find your lane</span>
-          <h2 className="gk-section-title">Browse by genre</h2>
+          <h2 className="gk-section-title">{title}</h2>
         </div>
       </div>
       <div className="gk-genre-rail">

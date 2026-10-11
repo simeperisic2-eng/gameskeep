@@ -1,8 +1,8 @@
 /**
- * Community teaser (honest anticipation, NOT a real CTA). Accounts, rating,
- * voting and profiles arrive in I6 — clicking a "rate it" button now would hit a
- * wall, so this block builds anticipation truthfully instead of lying. It pairs
- * with the newsletter capture (the one thing that DOES work today).
+ * Community block (Phase P S2 — accounts are live): what an account gets you and
+ * a real call to action. Weighting is described honestly: credibility-weighted,
+ * so real players are heard over bots and bombs. Title is the section's
+ * (admin-editable).
  */
 const PERKS: { title: string; body: string }[] = [
   { title: 'Rate every game', body: 'Add your score to the community line — weighted, not gamed.' },
@@ -13,16 +13,28 @@ const PERKS: { title: string; body: string }[] = [
   },
 ];
 
-export function CommunityTeaser(): React.JSX.Element {
+export function CommunityTeaser({
+  title = 'Your voice, with weight',
+}: {
+  title?: string;
+}): React.JSX.Element {
   return (
-    <section className="gk-community" aria-label="Community — coming soon">
+    <section className="gk-community" aria-label="Community">
       <div className="gk-community-head">
-        <span className="gk-eyebrow">Coming soon</span>
-        <h2 className="gk-section-title">Your voice, with weight</h2>
+        <span className="gk-eyebrow">Community</span>
+        <h2 className="gk-section-title">{title}</h2>
         <p className="gk-section-sub">
-          Accounts arrive soon. When they do, your ratings and votes count — with anti-manipulation
-          weighting so real players are heard over bots and bombs.
+          Rate games, vote in the Awards and follow the stories you care about. Every vote is
+          weighted for credibility, so real players are heard over bots and bombs.
         </p>
+        <div className="gk-community-cta">
+          <a className="gk-btn-amber" href="/register">
+            Create a free account
+          </a>
+          <a className="gk-readlink" href="/login">
+            Sign in
+          </a>
+        </div>
       </div>
       <div className="gk-community-perks">
         {PERKS.map((p) => (

@@ -185,6 +185,48 @@ export interface HomepageSectionItem {
   metric: number | null;
   topic: TopicCard | null;
   game: HomepageGameCard | null;
+  /** Trending only: up to three outlets' headlines (excerpt + link posture). */
+  coverage: HomepageCoverageRow[] | null;
+}
+
+/** One outlet's headline on a story — links OUT to the original. */
+export interface HomepageCoverageRow {
+  source: string;
+  title: string;
+  url: string | null;
+}
+
+/**
+ * Up to three newest coverage rows per story, one per outlet. Our own articles
+ * count too (labelled GamesKeep, no outbound link — they have no external URL);
+ * outlet rows link OUT to the original (excerpt + link posture).
+ */
+async function coverageRowsFor(topicIds: string[]): Promise<Map<string, HomepageCoverageRow[]>> {
+  const out = new Map<string, HomepageCoverageRow[]>();
+  if (topicIds.length === 0) return out;
+  const rows = await db
+    .select({
+      topicId: articleTopics.topicId,
+      title: articles.title,
+      url: articles.url,
+      origin: articles.origin,
+      source: sources.name,
+    })
+    .from(articleTopics)
+    .innerJoin(articles, eq(articles.id, articleTopics.articleId))
+    .leftJoin(sources, eq(sources.id, articles.sourceId))
+    .where(inArray(articleTopics.topicId, topicIds))
+    .orderBy(desc(articles.publishDate));
+  for (const r of rows) {
+    const ours = r.origin === 'ours';
+    const source = r.source ?? (ours ? 'GamesKeep' : null);
+    if (!source) continue;
+    const list = out.get(r.topicId) ?? [];
+    if (list.length >= 3 || list.some((x) => x.source === source)) continue;
+    list.push({ source, title: r.title, url: ours ? null : (r.url ?? null) });
+    out.set(r.topicId, list);
+  }
+  return out;
 }
 
 /** One enabled homepage section, in the admin's page order. */
@@ -689,6 +731,10 @@ export async function getHomepageData(): Promise<HomepageData> {
     for (const it of snap.payload.items ?? []) if (it.type === 'game') gameSlugs.add(it.slug);
   }
   const gameCards = await loadHomepageGameCards([...gameSlugs]);
+  const trendingIds = (snapshots.get('trending')?.payload.items ?? [])
+    .map((it) => cardBySlug.get(it.slug)?.id)
+    .filter((id): id is string => Boolean(id));
+  const coverage = await coverageRowsFor(trendingIds);
 
   let computedAt: string | null = null;
   const out: HomepageSection[] = [];
@@ -714,6 +760,7 @@ export async function getHomepageData(): Promise<HomepageData> {
         metric: typeof it.metric === 'number' ? it.metric : null,
         topic,
         game,
+        coverage: sec.key === 'trending' && topic ? (coverage.get(topic.id) ?? []) : null,
       });
     }
     out.push({

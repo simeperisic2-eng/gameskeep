@@ -42,14 +42,20 @@ function ScoreCol({
   );
 }
 
-export function GamesInFocus({ games }: { games: RankedGame[] }): React.JSX.Element | null {
+export function GamesInFocus({
+  games,
+  title = 'Games in focus',
+}: {
+  games: RankedGame[];
+  title?: string;
+}): React.JSX.Element | null {
   if (games.length === 0) return null;
   return (
     <section className="gk-container gk-section" aria-label="Games in focus">
       <div className="gk-section-head">
         <div>
           <span className="gk-eyebrow">The disconnect</span>
-          <h2 className="gk-section-title">Games in focus</h2>
+          <h2 className="gk-section-title">{title}</h2>
           <p className="gk-section-sub">
             Where critics and players don&apos;t agree — the gap, with context.
           </p>

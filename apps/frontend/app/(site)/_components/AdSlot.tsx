@@ -7,8 +7,9 @@ import { isHttpUrl } from '@/lib/url';
  * advertiser's creative WITH a mandatory, prominent "Promoted" label (the
  * transparency rule is not relaxed for our own revenue). The creative is UGC, so
  * it is rendered ESCAPED (React children/attributes — never dangerouslySetInnerHTML)
- * and the CTA is `rel="nofollow sponsored noopener"`. When unsold, the slot shows
- * its fallback: the demo "AD" box, or nothing (`hide`) — never an empty ad box.
+ * and the CTA is `rel="nofollow sponsored noopener"`. UNSOLD (Phase P S2): the slot
+ * renders NOTHING unless `ads.showUnsoldPlaceholder` is on (default off) — then
+ * its fallback: the "AD" box, or nothing (`hide`). Never an empty ad box.
  */
 export async function AdSlot({ slotKey }: { slotKey: string }): Promise<React.JSX.Element | null> {
   const view = await getAdSlot(slotKey);
@@ -39,7 +40,7 @@ export async function AdSlot({ slotKey }: { slotKey: string }): Promise<React.JS
     );
   }
 
-  if (view?.fallback === 'hide') return null;
+  if (!view?.showPlaceholder || view.fallback === 'hide') return null;
   // 'ad' (demo default) or 'organic' (page renders its own content elsewhere).
   return (
     <div className="gk-slot" role="complementary" aria-label="Advertisement slot">

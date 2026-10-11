@@ -1,8 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import type { PublicDisplay, TopicCard } from '@/lib/public-api';
-import { distinctSubtitle, publicTopicStatus, truncateWords } from '@/lib/format';
+import type { HomepageSectionItem, PublicDisplay, TopicCard } from '@/lib/public-api';
+import {
+  distinctSubtitle,
+  publicTopicStatus,
+  stripLeadingTitle,
+  truncateWords,
+} from '@/lib/format';
+import { isHttpUrl } from '@/lib/url';
+import { DeltaChip } from './DeltaChip';
 import { compactTopicToken } from '@/lib/bias';
 import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
@@ -12,8 +19,11 @@ import { BiasBar } from './BiasBar';
  *
  * A list of trending stories on the left; the selected one enlarges on the
  * right with its cover, an AI summary and the signature BIAS BAR (both axes).
- * Selection is USER-DRIVEN (hover/click) — no auto-timer carousel. Ordering +
- * initial highlight are decided at SERVER render (refresh-rotation, see page).
+ * Selection is USER-DRIVEN (hover/click) — no auto-timer carousel. Phase P S2:
+ * the list ORDER is the Trending section's (pins hold their position — it never
+ * rotates); only the initially highlighted story rotates at server render. Each
+ * row carries its Δ with the window; the spotlight shows how the story is being
+ * covered (up to three outlets' headlines, linking out).
  *
  * All trending rows show at once (the list fills the column to the spotlight's
  * height); every spotlight panel is rendered into the DOM at SSR (toggled by
@@ -50,14 +60,22 @@ function miniInfluence(t: TopicCard, display: PublicDisplay): React.JSX.Element 
 }
 
 export function Hero({
-  topics,
+  items,
+  windowHours,
+  title = 'Trending now',
   display,
   initial = 0,
 }: {
-  topics: TopicCard[];
+  items: HomepageSectionItem[];
+  windowHours: number | null;
+  title?: string;
   display: PublicDisplay;
   initial?: number;
 }): React.JSX.Element {
+  const rows = items.filter(
+    (i): i is HomepageSectionItem & { topic: TopicCard } => i.topic !== null,
+  );
+  const topics = rows.map((r) => r.topic);
   const [active, setActive] = useState(Math.min(initial, Math.max(0, topics.length - 1)));
 
   if (topics.length === 0) {
@@ -75,7 +93,7 @@ export function Hero({
       <div className="gk-trending">
         <div className="gk-trending-cap">
           <span className="gk-pulse" aria-hidden />
-          Trending now
+          {title}
         </div>
         <ul className="gk-trend-list">
           {topics.map((t, i) => (
@@ -95,11 +113,12 @@ export function Hero({
                   <span className="gk-trend-title">{t.title}</span>
                   <span className="gk-trend-meta">
                     {miniInfluence(t, display)}
-                    <span>{t.sourceCount > 0 ? `${t.sourceCount} sources` : 'single source'}</span>
+                    <span>{t.sourceCount > 1 ? `${t.sourceCount} sources` : 'single source'}</span>
                     <span aria-hidden>·</span>
                     <span>
                       {t.articleCount} {t.articleCount === 1 ? 'article' : 'articles'}
                     </span>
+                    <DeltaChip delta={rows[i]!.delta} windowHours={windowHours} />
                   </span>
                 </span>
               </a>
@@ -110,7 +129,11 @@ export function Hero({
 
       <div className="gk-spotlight">
         {topics.map((t, i) => {
-          const summary = truncateWords(t.aiSummary ?? distinctSubtitle(t.title, t.tldr), 220);
+          const summary = truncateWords(
+            stripLeadingTitle(t.aiSummary, t.title) ?? distinctSubtitle(t.title, t.tldr),
+            220,
+          );
+          const coverage = (rows[i]!.coverage ?? []).filter((c) => c.title);
           const status = publicTopicStatus(t.status);
           return (
             <article
@@ -153,6 +176,32 @@ export function Hero({
                   </div>
                 ) : null}
 
+                {coverage.length > 0 ? (
+                  <div className="gk-spot-coverage">
+                    <span className="gk-ai-label">How it’s being covered</span>
+                    <ul className="gk-spot-cov-list">
+                      {coverage.map((c) => (
+                        <li key={c.source} className="gk-spot-cov-row">
+                          <span className="gk-spot-cov-src">{c.source}</span>
+                          {isHttpUrl(c.url) ? (
+                            <a
+                              className="gk-spot-cov-title"
+                              href={c.url}
+                              target="_blank"
+                              rel="noopener noreferrer nofollow"
+                              tabIndex={i === active ? undefined : -1}
+                            >
+                              {c.title}
+                            </a>
+                          ) : (
+                            <span className="gk-spot-cov-title">{c.title}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
                 {t.showPanel ? (
                   <BiasBar
                     flags={t.flags}
@@ -165,8 +214,8 @@ export function Hero({
                 <div className="gk-spot-foot">
                   <span className="gk-section-sub" style={{ margin: 0, fontSize: 13 }}>
                     {t.sourceCount > 0
-                      ? `${t.sourceCount} ${t.sourceCount === 1 ? 'outlet' : 'outlets'} · ${t.articleCount} articles`
-                      : `${t.articleCount} articles`}
+                      ? `${t.sourceCount} ${t.sourceCount === 1 ? 'outlet' : 'outlets'} · ${t.articleCount} ${t.articleCount === 1 ? 'article' : 'articles'}`
+                      : `${t.articleCount} ${t.articleCount === 1 ? 'article' : 'articles'}`}
                   </span>
                   <a className="gk-readlink" href={`/topics/${t.slug}`}>
                     See the full story <ArrowRight />

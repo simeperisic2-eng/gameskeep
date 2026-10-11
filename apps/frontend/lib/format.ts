@@ -74,3 +74,42 @@ export function publicTopicStatus(status: string | null | undefined): string | n
   if (status === 'ongoing') return 'Ongoing';
   return null;
 }
+
+/** A Δ window as shown on a card: "48h" under three days, else whole days ("7d"). */
+export function windowLabel(hours: number | null | undefined): string | null {
+  if (hours == null || !Number.isFinite(hours) || hours <= 0) return null;
+  const h = Math.round(hours);
+  return h < 72 || h % 24 !== 0 ? `${h}h` : `${h / 24}d`;
+}
+
+/**
+ * A Δ as text (Phase P S2). "New" when the previous window was empty, "—" when
+ * there isn't enough history — never "0%" or a guess. Minus is a real minus.
+ */
+export function deltaText(
+  delta: { kind: 'pct'; value: number } | { kind: 'new' } | { kind: 'none' } | null | undefined,
+): string | null {
+  if (!delta) return null;
+  if (delta.kind === 'new') return 'New';
+  if (delta.kind === 'none') return '—';
+  if (!Number.isFinite(delta.value)) return '—';
+  const v = Math.round(delta.value);
+  return v === 0 ? '±0%' : `${v > 0 ? '+' : '−'}${Math.abs(v)}%`;
+}
+
+/**
+ * Drop a summary's first sentence when it only repeats the headline (the
+ * extractive summarizer often opens with it). Null-safe; never empties a summary.
+ */
+export function stripLeadingTitle(
+  summary: string | null | undefined,
+  title: string | null | undefined,
+): string | null {
+  const s = summary?.trim();
+  if (!s) return null;
+  const titleKey = headlineKey(title ?? '');
+  if (!titleKey) return s;
+  const m = s.match(/^(.+?[.!?])\s+(\S[\s\S]*)$/);
+  if (!m) return s;
+  return headlineKey(m[1]!) === titleKey ? m[2]!.trim() : s;
+}

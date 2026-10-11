@@ -534,9 +534,16 @@ export const awardVoteInput = z.object({
  * `consent` MUST be explicitly true — the route rejects a falsey opt-in. Works
  * for anonymous and signed-in subscribers alike.
  */
+/**
+ * Where an explicit-opt-in subscribe came from (Phase P S2: the homepage
+ * newsletter form uses the same consented path as the Awards one).
+ */
+export const SUBSCRIBE_SOURCES = ['awards', 'homepage'] as const;
+
 export const awardSubscribeInput = z.object({
   email: z.string().trim().email().max(320),
   consent: z.boolean(),
+  source: z.enum(SUBSCRIBE_SOURCES).default('awards'),
 });
 
 /** Login-free unsubscribe via the per-row capability token. */

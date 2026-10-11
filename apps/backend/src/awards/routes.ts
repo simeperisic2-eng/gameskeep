@@ -189,7 +189,7 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
       // signed-in; a signed-in subscribe also records the canonical user consent).
       c.post('/subscribe', async (req, reply) => {
         try {
-          const { email, consent } = awardSubscribeInput.parse(req.body);
+          const { email, consent, source } = awardSubscribeInput.parse(req.body);
           if (!consent) {
             reply.code(400).send({
               error: 'consent_required',
@@ -206,7 +206,7 @@ export async function registerAwardRoutes(app: FastifyInstance): Promise<void> {
             session && (await emailOwnedByVerifiedUser(session.user.id, email))
               ? session.user.id
               : null;
-          await subscribe({ email, userId: linkedUserId, source: 'awards', ip: req.ip });
+          await subscribe({ email, userId: linkedUserId, source, ip: req.ip });
           reply.send({ ok: true }); // generic — never an "is this email known?" oracle
         } catch (err) {
           sendAwardError(reply, err);

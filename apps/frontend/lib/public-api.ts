@@ -114,7 +114,54 @@ export interface RankedGame {
   disconnectBand: string | null;
 }
 
+/** Δ vs the previous window of equal length ("New" / "—" are honest states). */
+export type Delta = { kind: 'pct'; value: number } | { kind: 'new' } | { kind: 'none' };
+
+/** A game as a homepage section card (identity + the two public score layers). */
+export interface HomepageGameCard {
+  slug: string;
+  name: string;
+  coverUrl: string | null;
+  status: string;
+  releaseDate: string | null;
+  genres: string[];
+  critics: number | null;
+  community: number | null;
+}
+
+/** One outlet's headline on a Trending story (links OUT to the original). */
+export interface HomepageCoverageRow {
+  source: string;
+  title: string;
+  url: string | null;
+}
+
+export interface HomepageSectionItem {
+  type: 'topic' | 'game';
+  /** An editorial pin — never paid, never labeled. */
+  pinned: boolean;
+  /** A PAID placement (discovery sections only) — the label is render-forced. */
+  promoted: { advertiser: string } | null;
+  delta: Delta | null;
+  metric: number | null;
+  topic: TopicCard | null;
+  game: HomepageGameCard | null;
+  coverage: HomepageCoverageRow[] | null;
+}
+
+/** One enabled homepage section, in the admin's page order. */
+export interface HomepageSection {
+  key: string;
+  kind: 'data' | 'discovery' | 'block' | string;
+  title: string;
+  windowHours: number | null;
+  items: HomepageSectionItem[];
+}
+
 export interface HomepageData {
+  /** Phase P S2: the admin-configured sections, in page order (enabled only). */
+  sections: HomepageSection[];
+  computedAt: string | null;
   hero: TopicCard[];
   feed: TopicCard[];
   latest: LatestArticle[];
@@ -126,6 +173,8 @@ export interface HomepageData {
 }
 
 const EMPTY_HOMEPAGE: HomepageData = {
+  sections: [],
+  computedAt: null,
   hero: [],
   feed: [],
   latest: [],
@@ -854,6 +903,8 @@ export interface AdSlotView {
   fallback: string; // 'ad' | 'organic' | 'hide'
   format: string;
   placement: AdPlacementView | null;
+  /** `ads.showUnsoldPlaceholder` (S2, default false): unsold → render nothing. */
+  showPlaceholder: boolean;
 }
 export interface GamePromotion {
   advertiser: string;

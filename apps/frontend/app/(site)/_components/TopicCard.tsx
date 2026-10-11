@@ -17,15 +17,24 @@ import { BiasMini } from './BiasBar';
 export function TopicCard({
   topic,
   display,
+  layout = 'row',
 }: {
   topic: TopicCardData;
   display: PublicDisplay;
+  /**
+   * 'row' (the single-column feed): cover on the right. 'stacked' (3-across
+   * grids, Phase P S2): cover on top, the title gets the full card width —
+   * no cramped two-line truncation beside a 172px cover.
+   */
+  layout?: 'row' | 'stacked';
 }): React.JSX.Element {
   const time = relativeTime(topic.lastActivityAt);
   const hasCover = topic.primaryGame != null;
   const subtitle = distinctSubtitle(topic.title, topic.tldr);
   return (
-    <article className={`gk-topiccard${hasCover ? ' has-cover' : ''}`}>
+    <article
+      className={`gk-topiccard${hasCover ? ' has-cover' : ''}${layout === 'stacked' ? ' is-stacked' : ''}`}
+    >
       <div className="gk-topiccard-body">
         <div className="gk-chips">
           {topic.typeLabel ? <span className="gk-chip amber">{topic.typeLabel}</span> : null}
