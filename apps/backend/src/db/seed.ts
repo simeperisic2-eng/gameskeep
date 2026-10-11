@@ -3,6 +3,7 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { db } from './client';
 import { isDemo } from '../config/env';
 import { PASSWORD_ALGO, hashPassword } from '../auth/password';
+import { SOURCE_DEFS } from '../data-source/articles/sources';
 import {
   adSlots,
   auditLogs,
@@ -78,6 +79,30 @@ async function relabelSeededSourceType(key: string, from: string, to: string): P
     .where(and(eq(sourceTypes.id, row.id), eq(sourceTypes.label, from)));
 }
 
+/**
+ * Align EXISTING demo source rows with the source definitions (hygiene 3: Eurogamer
+ * and Rock Paper Shotgun were typed "Standalone" while owned by IGN Entertainment).
+ * Demo only; never a source a human edited (any staff audit entry on it).
+ */
+async function alignSeededSourceTypes(): Promise<void> {
+  if (!isDemo()) return;
+  const types = await db.select({ id: sourceTypes.id, key: sourceTypes.key }).from(sourceTypes);
+  const typeIdByKey = new Map(types.map((t) => [t.key, t.id]));
+  const keyByTypeId = new Map(types.map((t) => [t.id, t.key]));
+  for (const def of SOURCE_DEFS) {
+    const want = typeIdByKey.get(def.typeKey);
+    const [row] = await db
+      .select({ id: sources.id, typeId: sources.typeId })
+      .from(sources)
+      .where(eq(sources.slug, def.slug))
+      .limit(1);
+    if (!row || !want || row.typeId === want) continue;
+    if (row.typeId && keyByTypeId.get(row.typeId) === def.typeKey) continue;
+    if (await hasStaffAudit('sources', row.id)) continue;
+    await db.update(sources).set({ typeId: want }).where(eq(sources.id, row.id));
+  }
+}
+
 /** A stored `games.demo_seed` value, or null when absent/malformed (untrusted JSON). */
 function parseDemoSeed(raw: unknown): DemoSeedMarker | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -129,7 +154,14 @@ async function hasStaffAudit(entityType: string, entityId: string): Promise<bool
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(auditLogs)
-    .where(and(eq(auditLogs.entityType, entityType), eq(auditLogs.entityId, entityId)));
+    .where(
+      and(
+        eq(auditLogs.entityType, entityType),
+        eq(auditLogs.entityId, entityId),
+        // System actors (e.g. the derived game status) are not a human edit.
+        sql`${auditLogs.actorLabel} NOT LIKE 'system:%'`,
+      ),
+    );
   return Number(row?.n ?? 0) > 0;
 }
 
@@ -251,6 +283,7 @@ export async function seedDemo(): Promise<void> {
   for (const [key, label] of sourceTypeDefs)
     await ensure(sourceTypes, { key, label }, eq(sourceTypes.key, key));
   await relabelSeededSourceType('independent', 'Independent', 'Standalone');
+  await alignSeededSourceTypes();
 
   const badgeDefs: [string, string][] = [
     ['verified', 'Verified'],
@@ -630,11 +663,6 @@ export async function seedDemo(): Promise<void> {
     { key: 'mainstream', label: 'Mainstream' },
     eq(sourceTypes.key, 'mainstream'),
   );
-  const independent = await ensure(
-    sourceTypes,
-    { key: 'independent', label: 'Standalone' },
-    eq(sourceTypes.key, 'independent'),
-  );
   const ign = await ensure(
     sources,
     {
@@ -654,7 +682,7 @@ export async function seedDemo(): Promise<void> {
       name: 'Eurogamer',
       websiteUrl: 'https://www.eurogamer.net',
       rssUrl: 'https://www.eurogamer.net/feed',
-      typeId: independent.id,
+      typeId: mainstream.id, // owned by IGN Entertainment — never "Standalone"
       parentCompany: 'IGN Entertainment',
     },
     eq(sources.slug, 'eurogamer'),

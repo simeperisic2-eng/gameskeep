@@ -1,3 +1,4 @@
+import { ZodError } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
@@ -15,6 +16,7 @@ import { registerNewsletterAdminRoutes } from './newsletter-routes';
 import { registerListAdminRoutes } from './list-routes';
 import { registerDisplayAdminRoutes } from './display-routes';
 import { registerIntegrityAdminRoutes } from './integrity-routes';
+import { registerJobAdminRoutes } from './job-routes';
 import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
@@ -85,8 +87,19 @@ function redactDiff(resource: ResourceDef, diff: Row): Row {
 }
 
 // ── generic CRUD operations ──────────────────────────────────────────────────
+/**
+ * Run a resource's cross-field rule; a violation is a 400 like any validation
+ * error. The issue carries the message only — never the row (`input`), which
+ * would echo stored fields (incl. redacted ones on other resources) in the body.
+ */
+async function assertValid(resource: ResourceDef, next: Row): Promise<void> {
+  const message = resource.validate ? await resource.validate(next) : null;
+  if (message) throw new ZodError([{ code: 'custom', path: [], message }]);
+}
+
 async function createOne(resource: ResourceDef, body: unknown, actor: Actor): Promise<Row> {
   const parsed = resource.create.parse(body) as Row;
+  await assertValid(resource, parsed);
   if (resource.ops?.create) return resource.ops.create(parsed, actor);
   const values: Row = { ...parsed };
   if (resource.hasSlug && resource.slugFrom && !values.slug) {
@@ -114,6 +127,11 @@ async function updateOne(
   if (resource.ops?.update) return resource.ops.update(id, parsed, rawKeys, actor);
   const before = await getRow(resource.table, id);
   if (!before) return null;
+  if (resource.validate) {
+    const next: Row = { ...before };
+    for (const key of rawKeys) if (key in parsed) next[key] = parsed[key];
+    await assertValid(resource, next);
+  }
   // Apply only the fields the client actually sent (no default-injection on PATCH).
   const patch: Row = {};
   for (const key of rawKeys) if (key in parsed) patch[key] = parsed[key];
@@ -377,6 +395,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       // ── Phase P S1: public display switches + review integrity ───────────────
       await registerDisplayAdminRoutes(admin);
       await registerIntegrityAdminRoutes(admin);
+
+      // ── background job state by id (hygiene 3: wait for YOUR run) ────────────
+      await registerJobAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

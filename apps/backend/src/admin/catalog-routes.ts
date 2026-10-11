@@ -58,8 +58,8 @@ export async function registerCatalogAdminRoutes(admin: FastifyInstance): Promis
       const body = (req.body ?? {}) as { limit?: number };
       const limit =
         typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : undefined;
-      await enqueueCatalogImport({ reason: 'manual', skipIfPopulated: false, limit });
-      reply.code(202).send({ enqueued: true });
+      const jobId = await enqueueCatalogImport({ reason: 'manual', skipIfPopulated: false, limit });
+      reply.code(202).send({ enqueued: true, jobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }

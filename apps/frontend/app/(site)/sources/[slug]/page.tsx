@@ -8,7 +8,7 @@ import { breadcrumbLd, sourceOrganizationLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { SourceIcon } from '../../_components/SourceIcon';
 import { ArticleFlags } from '../../_components/BiasBar';
-import { ReviewSignals } from '../../_components/IntegrityBlock';
+import { NoSignalsNote, ReviewSignals } from '../../_components/IntegrityBlock';
 import { NO_SIGNALS_EXPLAINER, NO_SIGNALS_LABEL } from '@/lib/bias';
 import { AdSlot } from '../../_components/AdSlot';
 
@@ -311,6 +311,7 @@ export default async function SourcePage({
                 No recent coverage from this outlet in our index yet.
               </p>
             )}
+            <NoSignalsNote rows={source.recentArticles} />
           </section>
         </div>
       </div>

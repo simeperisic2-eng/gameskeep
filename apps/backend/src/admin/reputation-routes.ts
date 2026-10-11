@@ -14,8 +14,8 @@ export async function registerReputationAdminRoutes(admin: FastifyInstance): Pro
   admin.post('/reputation/recompute', async (req, reply) => {
     try {
       const body = (req.body ?? {}) as { reason?: string };
-      await enqueueReputationRecompute({ reason: body.reason ?? 'admin' });
-      reply.code(202).send({ ok: true, status: 'enqueued' });
+      const jobId = await enqueueReputationRecompute({ reason: body.reason ?? 'admin' });
+      reply.code(202).send({ ok: true, status: 'enqueued', jobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }

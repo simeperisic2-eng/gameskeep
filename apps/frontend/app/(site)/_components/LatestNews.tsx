@@ -1,6 +1,7 @@
 import type { LatestArticle } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { ArticleBiasTag } from './BiasBar';
+import { NoSignalsNote } from './IntegrityBlock';
 
 /**
  * "Latest news" column (BLUEPRINT 3.1) — newest articles, newest on top. It
@@ -65,6 +66,7 @@ export function LatestNews({ articles }: { articles: LatestArticle[] }): React.J
               </div>
             );
           })}
+          <NoSignalsNote rows={articles} />
         </div>
       )}
     </section>

@@ -5,7 +5,7 @@ import type { PublicDisplay, TopicArticleRow } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { NO_SIGNALS_LABEL } from '@/lib/bias';
 import { ArticleFlags } from './BiasBar';
-import { ReviewSignals } from './IntegrityBlock';
+import { NoSignalsNote, ReviewSignals } from './IntegrityBlock';
 import { SourceIcon } from './SourceIcon';
 
 /**
@@ -218,6 +218,7 @@ export function TopicArticles({
         ))}
         {adAt >= ordered.length ? <PromotedRow /> : null}
       </div>
+      <NoSignalsNote rows={articles} />
     </section>
   );
 }

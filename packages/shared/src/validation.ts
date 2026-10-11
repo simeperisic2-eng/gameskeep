@@ -130,6 +130,8 @@ export const gameCreate = z.object({
   summary: z.string().max(600).optional(),
   description: longText.optional(),
   status: z.enum(GAME_STATUSES).default('announced'),
+  /** Manual override of the release-date status derivation (hygiene 3). */
+  statusLocked: z.boolean().optional(),
   releaseDate: isoDate.optional(),
   developer: z.string().max(200).optional(),
   publisher: z.string().max(200).optional(),

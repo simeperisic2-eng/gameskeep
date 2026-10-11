@@ -18,6 +18,31 @@ export const NO_SIGNALS_LABEL = 'No signals found';
 /** One-line explainer used in tooltips and the Methodology page. */
 export const NO_SIGNALS_EXPLAINER = 'We can show what we found; we cannot prove what isn’t there.';
 
+/**
+ * The once-per-block note (hygiene 3): rows show the short label only; the block
+ * that lists them explains it once.
+ */
+export const NO_SIGNALS_NOTE = `“${NO_SIGNALS_LABEL}” means we checked for sponsorship, affiliate links, review copy and opinion framing and found none. ${NO_SIGNALS_EXPLAINER}`;
+
+/** The fields that decide whether a coverage row renders the "No signals found" label. */
+export interface SignalRowLike {
+  biasMode: 'panel' | 'chip' | 'none';
+  flags: readonly string[];
+  isReview?: boolean;
+  integrity?: readonly unknown[] | null;
+}
+
+/**
+ * Whether a row renders the "No signals found" label — mirrors the row markup: a
+ * review panel shows it in its integrity block when no integrity row is public; a
+ * news panel shows it as its only chip when it carries no flag. Chip/none never do.
+ */
+export function rowShowsNoSignals(row: SignalRowLike): boolean {
+  if (row.biasMode !== 'panel') return false;
+  if (row.isReview) return (row.integrity?.length ?? 0) === 0;
+  return row.flags.length === 0;
+}
+
 // ── influence FLAGS (factual labels, not a scale) ────────────────────────────
 // The influence axis is mostly binary facts, so the public UI names the actual
 // signals present instead of a fake "% influenced" bar. These are labels (what

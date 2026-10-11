@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { PublicDisplay, TopicCard } from '@/lib/public-api';
-import { truncateWords } from '@/lib/format';
+import { distinctSubtitle, publicTopicStatus, truncateWords } from '@/lib/format';
 import { compactTopicToken } from '@/lib/bias';
 import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
@@ -110,7 +110,8 @@ export function Hero({
 
       <div className="gk-spotlight">
         {topics.map((t, i) => {
-          const summary = truncateWords(t.aiSummary ?? t.tldr, 220);
+          const summary = truncateWords(t.aiSummary ?? distinctSubtitle(t.title, t.tldr), 220);
+          const status = publicTopicStatus(t.status);
           return (
             <article
               key={t.id}
@@ -123,10 +124,12 @@ export function Hero({
               <div className="gk-spot-body">
                 <div className="gk-chips">
                   {t.typeLabel ? <span className="gk-chip amber">{t.typeLabel}</span> : null}
-                  <span className="gk-chip">
-                    <span className="gk-chip-dot" style={{ opacity: 0.7 }} aria-hidden />
-                    {t.status}
-                  </span>
+                  {status ? (
+                    <span className="gk-chip">
+                      <span className="gk-chip-dot" style={{ opacity: 0.7 }} aria-hidden />
+                      {status}
+                    </span>
+                  ) : null}
                   {t.primaryGame ? (
                     <a className="gk-chip gk-chip-link" href={`/games/${t.primaryGame.slug}`}>
                       {t.primaryGame.name}

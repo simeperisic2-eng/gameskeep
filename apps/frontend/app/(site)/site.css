@@ -2092,9 +2092,15 @@ h4 {
 .gk-related a {
   display: block;
   padding: var(--s3) 0;
+  color: var(--gk-text);
+  text-decoration: none;
 }
-.gk-related a:hover .gk-related-title {
+.gk-related a:hover .gk-related-title,
+.gk-related a:focus-visible .gk-related-title {
   color: var(--gk-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--gk-accent);
+  text-underline-offset: 3px;
 }
 .gk-related-title {
   display: block;
@@ -6196,8 +6202,11 @@ a.gk-tile-cover {
   font-size: 13px;
   color: var(--gk-text-dim);
 }
-.gk-integrity-hint {
-  opacity: 0.8;
+.gk-nosignal-note {
+  margin: var(--s3) 0 0;
+  font-size: 12.5px;
+  line-height: var(--lh-snug);
+  color: var(--gk-text-dim);
 }
 .gk-integrity-rows {
   list-style: none;

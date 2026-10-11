@@ -36,7 +36,7 @@ export const SOURCE_DEFS: SourceDef[] = [
   {
     slug: 'eurogamer',
     name: 'Eurogamer',
-    typeKey: 'independent',
+    typeKey: 'mainstream',
     websiteUrl: 'https://www.eurogamer.net',
     rssUrl: 'https://www.eurogamer.net/feed',
     parentCompany: 'IGN Entertainment',
@@ -72,7 +72,7 @@ export const SOURCE_DEFS: SourceDef[] = [
   {
     slug: 'rock-paper-shotgun',
     name: 'Rock Paper Shotgun',
-    typeKey: 'independent',
+    typeKey: 'mainstream',
     websiteUrl: 'https://www.rockpapershotgun.com',
     rssUrl: 'https://www.rockpapershotgun.com/feed',
     parentCompany: 'IGN Entertainment',

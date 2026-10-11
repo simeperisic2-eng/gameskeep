@@ -191,16 +191,22 @@ async function main() {
   }
   const topicSlug = coverSlug ?? d.hero?.[0]?.slug;
   const topicHtml = (await getText(`${FRONT}/topics/${topicSlug}`)).text;
+  // Phase P hygiene 3: the status pill shows only reader-facing states
+  // (developing / ongoing) — "resolved" is internal clustering state, no chip.
+  const topicStatus = (await getJson(`${BACK}/public/topic/${topicSlug}`)).json?.data?.status;
+  const pillOk = ['developing', 'ongoing'].includes(topicStatus)
+    ? count(topicHtml, 'gk-status') >= 1
+    : count(topicHtml, 'gk-status') === 0;
 
   // ── 6. topic 3.3 completeness ───────────────────────────────────────────────
   check(
-    '6. Topic SSR: full BLUEPRINT 3.3 (status pill + labeled neutral AI recap + sort + filter + source rows)',
-    count(topicHtml, 'gk-status') >= 1 &&
+    '6. Topic SSR: full BLUEPRINT 3.3 (status pill for public states only — none for "resolved" — + labeled neutral AI recap + sort + filter + source rows)',
+    pillOk &&
       /neutral recap/i.test(topicHtml) &&
       count(topicHtml, 'gk-filterchip') >= 2 &&
       count(topicHtml, 'gk-sort') >= 1 &&
       count(topicHtml, 'gk-srcrow') >= 1,
-    `status ${count(topicHtml, 'gk-status')}, filters ${count(topicHtml, 'gk-filterchip')}, sort ${count(topicHtml, 'gk-sort')}, rows ${count(topicHtml, 'gk-srcrow')}`,
+    `status=${topicStatus} pill ${count(topicHtml, 'gk-status')}, filters ${count(topicHtml, 'gk-filterchip')}, sort ${count(topicHtml, 'gk-sort')}, rows ${count(topicHtml, 'gk-srcrow')}`,
   );
 
   // ── 7. collapse-safe cover + designed placeholder + monogram attribution ────

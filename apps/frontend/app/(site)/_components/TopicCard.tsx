@@ -1,5 +1,5 @@
 import type { PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
-import { relativeTime } from '@/lib/format';
+import { distinctSubtitle, relativeTime } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { BiasMini } from './BiasBar';
 
@@ -23,6 +23,7 @@ export function TopicCard({
 }): React.JSX.Element {
   const time = relativeTime(topic.lastActivityAt);
   const hasCover = topic.primaryGame != null;
+  const subtitle = distinctSubtitle(topic.title, topic.tldr);
   return (
     <article className={`gk-topiccard${hasCover ? ' has-cover' : ''}`}>
       <div className="gk-topiccard-body">
@@ -39,7 +40,7 @@ export function TopicCard({
             {topic.title}
           </a>
         </h3>
-        {topic.tldr ? <p className="gk-topiccard-tldr">{topic.tldr}</p> : null}
+        {subtitle ? <p className="gk-topiccard-tldr">{subtitle}</p> : null}
         <BiasMini
           flags={topic.flags}
           integrity={topic.integrityTally}

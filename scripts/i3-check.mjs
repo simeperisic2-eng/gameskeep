@@ -20,7 +20,11 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
+import { restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
+
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
+/** The clustering settings row as it was before this run (restored, never assumed). */
+let CLUSTERING_SNAPSHOT = null;
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const API = `${BASE}/admin/api`;
 const ARTICLES_MIN = 190;
@@ -101,6 +105,7 @@ function topicWithGuidPrefix(topics, prefix) {
 async function main() {
   const ready = await waitForReady();
   if (!check('Stack ready (/health/ready)', ready)) return print();
+  CLUSTERING_SNAPSHOT = snapshotSettings(['clustering']);
 
   // 1) seam = Mock feed in demo (no live calls)
   const status0 = await api('GET', '/clustering/status');
@@ -216,11 +221,11 @@ async function main() {
     `high(0.9)=${high?.totalTopics} > default(0.5)=${defaultTopics} > low(0.2)=${low?.totalTopics}`,
   );
 
-  // restore default + re-cluster cleanly for the remaining checks
-  await api('PATCH', '/clustering/settings', { similarityThreshold: 0.5 });
+  // restore the settings as they were + re-cluster cleanly for the remaining checks
+  restoreSettings(CLUSTERING_SNAPSHOT);
   const restored = await ingestAndWait({ reset: true });
   check(
-    'Settings restored to default + re-clustered',
+    'Settings restored (as they were) + re-clustered',
     Math.abs((restored?.totalTopics ?? 0) - defaultTopics) <= 3,
     `topics=${restored?.totalTopics} (default ~${defaultTopics})`,
   );

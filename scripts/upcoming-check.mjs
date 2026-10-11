@@ -20,12 +20,15 @@
  * Run after `npm run demo:up`: `npm run verify:upcoming`.
  */
 import { execSync } from 'node:child_process';
+import { lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const DEMO_PW = 'Demo-Panel-2026!';
 const RUN = Date.now().toString(36);
+/** The settings rows this suite tunes — restored as they were, never deleted. */
+let SETTINGS_SNAPSHOT = null;
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -118,8 +121,8 @@ function print() {
   process.exit(pass === results.length ? 0 : 1);
 }
 
-async function main() {
-  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
+async function body() {
+  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return;
   const adm = await login('demo-admin');
   const mod = await login('demo-moderator');
 
@@ -215,7 +218,7 @@ async function main() {
     body: { newWindowDays: 365 },
   });
   const newWide = (await upcoming()).newReleases.length;
-  sqlOne(`DELETE FROM app_settings WHERE key='lists'`); // reset to defaults
+  restoreSettings(SETTINGS_SNAPSHOT); // hygiene 3: restore, never delete
   check(
     '5. "New" window is admin-configurable (window=1 shrinks, 365 grows; from app_settings)',
     newNarrow.newWindowDays === 1 &&
@@ -367,15 +370,41 @@ async function main() {
     `emailCta=${/Email us your enquiry/i.test(promoteHtml)}`,
   );
 
-  // cleanup
+  // cleanup (the finally in main guarantees it even when a check fails early)
   const pid = placement.json?.data?.id;
   if (pid) await api(BACK, `/admin/api/ad-placements/${pid}`, { method: 'DELETE', token: TOKEN });
-  sqlOne(`DELETE FROM ad_placements`);
-  sqlOne(`DELETE FROM app_settings WHERE key IN ('lists','promo-pricing')`);
-  sqlOne(
-    `DELETE FROM unmatched_games WHERE raw_name LIKE 'Verify Suggest ${RUN}' OR raw_name LIKE 'Burst ${RUN}%' OR raw_name LIKE '%Ghost'`,
-  );
+}
 
+/**
+ * Hygiene 3: remove ONLY what this run made (its placement, its suggestions —
+ * every one carries the run token) and put the settings back as they were. The
+ * old blanket `DELETE FROM ad_placements` wiped staff placements too.
+ */
+function cleanupRun() {
+  restoreSettings(SETTINGS_SNAPSHOT);
+  psql(
+    `DELETE FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)};`,
+  );
+  psql(`DELETE FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}%`)};`);
+  return Number(
+    psql(
+      `SELECT (SELECT count(*) FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}%`)});`,
+    ),
+  );
+}
+
+async function main() {
+  SETTINGS_SNAPSHOT = snapshotSettings(['lists', 'promo-pricing']);
+  try {
+    await body();
+  } finally {
+    const left = cleanupRun();
+    check(
+      'Cleanup: this run left no placements or suggestions; settings restored',
+      left === 0,
+      `${left} left`,
+    );
+  }
   print();
 }
 main().catch((e) => {

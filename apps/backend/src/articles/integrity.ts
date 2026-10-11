@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   INTEGRITY_SIGNAL_KINDS,
   INTEGRITY_SNIPPET_MAX,
@@ -132,7 +132,12 @@ export async function scanIntegrity(
     const chunk = guids.slice(i, i + 500);
     if (chunk.length === 0) continue;
     const rows = await db
-      .select({ id: articles.id, guid: articles.externalGuid, publishDate: articles.publishDate })
+      .select({
+        id: articles.id,
+        guid: articles.externalGuid,
+        sourceId: articles.sourceId,
+        publishDate: articles.publishDate,
+      })
       .from(articles)
       .where(and(inArray(articles.externalGuid, chunk), eq(articles.articleType, 'review')));
     for (const row of rows) {
@@ -144,6 +149,8 @@ export async function scanIntegrity(
           .insert(articleIntegritySignals)
           .values({
             articleId: row.id,
+            sourceId: row.sourceId,
+            externalGuid: row.guid,
             kind: d.kind,
             origin: 'auto',
             status: 'detected',
@@ -216,7 +223,7 @@ export async function publicIntegrityFor(
     .innerJoin(articles, eq(articles.id, articleIntegritySignals.articleId))
     .where(inArray(articleIntegritySignals.articleId, articleIds));
   for (const r of rows) {
-    if (!isPublicIntegrityStatus(r.status, autoPublish)) continue;
+    if (!r.articleId || !isPublicIntegrityStatus(r.status, autoPublish)) continue;
     const evidence = publicEvidence(r);
     if (!evidence) continue;
     const list = out.get(r.articleId) ?? [];
@@ -261,7 +268,7 @@ export async function publicIntegrityKinds(
     .innerJoin(articles, eq(articles.id, articleIntegritySignals.articleId));
   const out = new Map<string, Set<IntegritySignalKind>>();
   for (const r of rows) {
-    if (!isPublicIntegrityStatus(r.status, autoPublish)) continue;
+    if (!r.articleId || !isPublicIntegrityStatus(r.status, autoPublish)) continue;
     if (!publicEvidence(r)) continue;
     const set = out.get(r.articleId) ?? new Set<IntegritySignalKind>();
     set.add(r.kind);
@@ -283,7 +290,12 @@ export async function addOrConfirmSignal(
   actor: AuditActor,
 ): Promise<{ id: string } | IntegrityOpError> {
   const [article] = await db
-    .select({ id: articles.id, articleType: articles.articleType })
+    .select({
+      id: articles.id,
+      articleType: articles.articleType,
+      sourceId: articles.sourceId,
+      externalGuid: articles.externalGuid,
+    })
     .from(articles)
     .where(eq(articles.id, articleId))
     .limit(1);
@@ -328,7 +340,15 @@ export async function addOrConfirmSignal(
 
   const [created] = await db
     .insert(articleIntegritySignals)
-    .values({ articleId, kind: input.kind, origin: 'editor', evidenceDate, ...decided })
+    .values({
+      articleId,
+      sourceId: article.sourceId,
+      externalGuid: article.externalGuid,
+      kind: input.kind,
+      origin: 'editor',
+      evidenceDate,
+      ...decided,
+    })
     .returning();
   if (!created) throw new Error('integrity: insert returned no row');
   await writeAudit({
@@ -378,6 +398,23 @@ export async function decideSignal(
   return { id: signalId };
 }
 
+/**
+ * Re-attach signals to their article by IDENTITY (source + feed guid) — after a
+ * full re-cluster recreated the article rows, the moderator decisions find their
+ * article again (hygiene 3). Idempotent; runs in every ingest.
+ */
+export async function relinkIntegrityByIdentity(): Promise<void> {
+  await db.execute(sql`
+    UPDATE article_integrity_signals AS s
+    SET article_id = a.id, updated_at = now()
+    FROM articles AS a
+    WHERE s.article_id IS NULL
+      AND s.external_guid IS NOT NULL
+      AND a.external_guid = s.external_guid
+      AND (s.source_id IS NULL OR a.source_id IS NULL OR a.source_id = s.source_id)
+  `);
+}
+
 // ── admin list ───────────────────────────────────────────────────────────────
 
 export interface AdminIntegrityReview {
@@ -424,6 +461,7 @@ export async function listReviewIntegrity(limit = 200): Promise<AdminIntegrityRe
           .where(inArray(articleIntegritySignals.articleId, ids));
   const byArticle = new Map<string, AdminIntegrityReview['signals']>();
   for (const s of signalRows) {
+    if (!s.articleId) continue;
     const list = byArticle.get(s.articleId) ?? [];
     list.push({
       id: s.id,

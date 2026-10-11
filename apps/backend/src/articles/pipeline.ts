@@ -17,7 +17,7 @@ import { clusterArticle, markStaleTopicsResolved, refreshTopicSummary } from './
 import { getClusterSettings } from './settings';
 import { classifyEventKind, normalizeGameRef } from './event-kind';
 import { recomputeBias } from './bias-engine';
-import { scanIntegrity } from './integrity';
+import { relinkIntegrityByIdentity, scanIntegrity } from './integrity';
 import { displaySettings } from '../display/settings';
 
 /**
@@ -95,12 +95,67 @@ async function ensureSources(): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.slug, r.id]));
 }
 
-/** Wipe feed-produced data so the next ingest re-clusters from scratch (tuning). */
+/**
+ * Wipe feed-produced data so the next ingest re-clusters from scratch (tuning).
+ * Editorial decisions are NOT feed data: before the rows go, every override /
+ * note / internal assessment is snapshotted by IDENTITY (feed guid + source) into
+ * the carry-over, and integrity signals keep their identity (their article link
+ * goes to null) — the ingest that follows re-applies both (hygiene 3).
+ */
 async function resetFeed(): Promise<void> {
-  // Aggregated articles (cascades article_topics / article_subjects); our own
-  // CMS articles and the inline seed topic (no embedding) are preserved.
-  await db.delete(articles).where(eq(articles.origin, 'aggregated'));
-  await db.delete(topics).where(isNotNull(topics.embedding));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      INSERT INTO article_editorial_carryover (
+        external_guid, source_id, influence_override, quality_override,
+        influence_override_reason, quality_override_reason, editor_note, internal_assessment
+      )
+      SELECT external_guid, source_id, influence_override, quality_override,
+        influence_override_reason, quality_override_reason, editor_note, internal_assessment
+      FROM articles
+      WHERE origin = 'aggregated' AND external_guid IS NOT NULL AND (
+        influence_override IS NOT NULL OR quality_override IS NOT NULL
+        OR influence_override_reason IS NOT NULL OR quality_override_reason IS NOT NULL
+        OR editor_note IS NOT NULL OR internal_assessment IS NOT NULL
+      )
+      ON CONFLICT (external_guid) DO UPDATE SET
+        source_id = EXCLUDED.source_id,
+        influence_override = EXCLUDED.influence_override,
+        quality_override = EXCLUDED.quality_override,
+        influence_override_reason = EXCLUDED.influence_override_reason,
+        quality_override_reason = EXCLUDED.quality_override_reason,
+        editor_note = EXCLUDED.editor_note,
+        internal_assessment = EXCLUDED.internal_assessment
+    `);
+    // Aggregated articles (cascades article_topics / article_subjects); our own
+    // CMS articles and the inline seed topic (no embedding) are preserved.
+    await tx.delete(articles).where(eq(articles.origin, 'aggregated'));
+    await tx.delete(topics).where(isNotNull(topics.embedding));
+  });
+}
+
+/**
+ * Re-apply carried-over editorial decisions to the SAME feed article (guid +
+ * source) once it exists again, then drop the applied snapshots. Idempotent.
+ */
+async function restoreEditorialCarryover(): Promise<void> {
+  await db.execute(sql`
+    UPDATE articles AS a SET
+      influence_override = c.influence_override,
+      quality_override = c.quality_override,
+      influence_override_reason = c.influence_override_reason,
+      quality_override_reason = c.quality_override_reason,
+      editor_note = c.editor_note,
+      internal_assessment = c.internal_assessment
+    FROM article_editorial_carryover AS c
+    WHERE a.external_guid = c.external_guid
+      AND (c.source_id IS NULL OR a.source_id IS NULL OR a.source_id = c.source_id)
+  `);
+  await db.execute(sql`
+    DELETE FROM article_editorial_carryover AS c
+    USING articles AS a
+    WHERE a.external_guid = c.external_guid
+      AND (c.source_id IS NULL OR a.source_id IS NULL OR a.source_id = c.source_id)
+  `);
 }
 
 export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult> {
@@ -236,6 +291,11 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
       }
     }
   }
+
+  // Moderator decisions keyed by article IDENTITY find their (possibly newly
+  // recreated) article again — before the bias recompute reads the overrides.
+  await relinkIntegrityByIdentity();
+  await restoreEditorialCarryover();
 
   // Refresh summaries for every touched topic (off the request path), then run
   // the status auto-maintenance pass.

@@ -26,6 +26,7 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
+import { lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const API = `${BASE}/admin/api`;
@@ -107,6 +108,41 @@ async function recomputeAndWait() {
   return (await api('GET', '/bias/status')).json;
 }
 
+// This suite's own editorial fixtures (exact texts — the cleanup key).
+const I4A_NOTE = 'Reads as promotional — cozy vibes, little substance.';
+const SECRET = 'INTERNAL: perceived narrative push — must never leak';
+const I4A_OVERRIDE_REASON = 'editor judged this independent despite the affiliate link';
+/** Ids this run edited (cleared through the audited API at the end). */
+const EDITED = { noteTarget: null, ovTarget: null };
+/** The bias-weights settings row as it was before this run. */
+let WEIGHTS_SNAPSHOT = null;
+/** The clustering settings row as it was before this run. */
+let CLUSTERING_SNAPSHOT = null;
+
+/**
+ * Hygiene 3: editorial decisions now survive a full re-cluster (keyed to the
+ * article identity), so a previous run's fixtures — matched by their exact
+ * texts, never anything an editor wrote — are cleared before this run starts.
+ */
+function clearOwnLeftovers() {
+  psql(
+    [
+      `UPDATE articles SET editor_note = NULL WHERE editor_note = ${lit(I4A_NOTE)};`,
+      `UPDATE articles SET internal_assessment = NULL WHERE internal_assessment = ${lit(SECRET)};`,
+      `UPDATE articles SET influence_override = NULL, influence_override_reason = NULL WHERE influence_override_reason = ${lit(I4A_OVERRIDE_REASON)};`,
+      `DELETE FROM article_editorial_carryover WHERE editor_note = ${lit(I4A_NOTE)} OR internal_assessment = ${lit(SECRET)} OR influence_override_reason = ${lit(I4A_OVERRIDE_REASON)};`,
+    ].join('\n'),
+  );
+}
+
+function ownLeftovers() {
+  return Number(
+    psql(
+      `SELECT count(*) FROM articles WHERE editor_note = ${lit(I4A_NOTE)} OR internal_assessment = ${lit(SECRET)} OR influence_override_reason = ${lit(I4A_OVERRIDE_REASON)};`,
+    ),
+  );
+}
+
 async function biasArticles() {
   return (await api('GET', '/bias/articles')).json?.data ?? [];
 }
@@ -119,9 +155,9 @@ function sumContribs(b) {
   return (b?.contributions ?? []).reduce((acc, c) => acc + c.points, 0);
 }
 
-async function main() {
+async function body() {
   const ready = await waitForReady();
-  if (!check('Stack ready (/health/ready)', ready)) return print();
+  if (!check('Stack ready (/health/ready)', ready)) return;
 
   await waitForArticles(ARTICLES_MIN);
   const biasStatus0 = (await api('GET', '/bias/status')).json;
@@ -169,8 +205,8 @@ async function main() {
     delayOff ? `${delayOff.sources.length} sources` : 'missing',
   );
 
-  // Restore gate ON + re-cluster to a clean default state for the bias checks.
-  await api('PATCH', '/clustering/settings', { gate: { enabled: true } });
+  // Restore the clustering settings as they were + re-cluster for the bias checks.
+  restoreSettings(CLUSTERING_SNAPSHOT);
   await reclusterAndWait();
 
   // ── 2/3. DIRECTION + EXPLAINABILITY ─────────────────────────────────────────
@@ -219,7 +255,7 @@ async function main() {
     sponsoredLow && sponsoredLow.influence.auto < sponsoredBefore,
     `sponsored auto ${sponsoredBefore} → ${sponsoredLow?.influence.auto} (weight 90→40)`,
   );
-  await api('PATCH', '/bias/weights', { influence: { sponsored: 90 } });
+  restoreSettings(WEIGHTS_SNAPSHOT);
   await recomputeAndWait();
 
   // ── 5. FACTUAL vs JUDGMENTAL (no auto note; appears only when a human writes) ─
@@ -227,9 +263,8 @@ async function main() {
   const anyAutoNote = list.some((a) => a.editorNote && a.editorNote.length > 0);
   check('5a. No judgmental editor note is ever auto-generated', !anyAutoNote);
   const noteTarget = byGuid(list, 'bias-sponsored-');
-  await api('POST', `/bias/article/${noteTarget.id}/note`, {
-    editorNote: 'Reads as promotional — cozy vibes, little substance.',
-  });
+  EDITED.noteTarget = noteTarget.id;
+  await api('POST', `/bias/article/${noteTarget.id}/note`, { editorNote: I4A_NOTE });
   const afterNote = (await api('GET', `/bias/article/${noteTarget.id}`)).json?.data;
   check(
     '5b. An editor note is displayed only after a human enters it',
@@ -238,7 +273,6 @@ async function main() {
   );
 
   // ── 6. INTERNAL-FIELD SEPARATION ────────────────────────────────────────────
-  const SECRET = 'INTERNAL: perceived narrative push — must never leak';
   await api('POST', `/bias/article/${noteTarget.id}/internal`, { internalAssessment: SECRET });
   const adminView = (await api('GET', `/bias/article/${noteTarget.id}`)).json?.data;
   const publicRes = await api('GET', `/bias/article/${noteTarget.id}/public`);
@@ -255,9 +289,10 @@ async function main() {
 
   // ── 7. OVERRIDE + AUDIT + survives a re-tune ────────────────────────────────
   const ovTarget = byGuid(await biasArticles(), 'bias-affiliate-');
+  EDITED.ovTarget = ovTarget.id;
   await api('POST', `/bias/article/${ovTarget.id}/override`, {
     influenceScore: 7,
-    reason: 'editor judged this independent despite the affiliate link',
+    reason: I4A_OVERRIDE_REASON,
   });
   let ov = (await api('GET', `/bias/article/${ovTarget.id}`)).json?.data;
   check(
@@ -279,7 +314,7 @@ async function main() {
     ov?.influence.override === 7 && ov?.influence.effective === 7,
     `effective=${ov?.influence.effective}, auto now=${ov?.influence.auto}`,
   );
-  await api('PATCH', '/bias/weights', { influence: { affiliate: 25 } });
+  restoreSettings(WEIGHTS_SNAPSHOT);
   await recomputeAndWait();
 
   // ── 8. TOPIC AGGREGATION ────────────────────────────────────────────────────
@@ -295,7 +330,40 @@ async function main() {
       ? `n=${d.articleCount} infl(${d.influence.independent}+${d.influence.influenced}) qual(${d.quality.top}+${d.quality.slop})`
       : 'no multi-article topic',
   );
+}
 
+async function main() {
+  WEIGHTS_SNAPSHOT = snapshotSettings(['bias-weights']);
+  CLUSTERING_SNAPSHOT = snapshotSettings(['clustering']);
+  clearOwnLeftovers();
+  try {
+    await body();
+  } finally {
+    // Hygiene 3: clear this run's editorial fixtures through the audited API
+    // (they would otherwise survive every later re-cluster and render publicly),
+    // then restore the weights as they were and recompute.
+    if (EDITED.noteTarget) {
+      await api('POST', `/bias/article/${EDITED.noteTarget}/note`, { editorNote: null });
+      await api('POST', `/bias/article/${EDITED.noteTarget}/internal`, {
+        internalAssessment: null,
+      });
+    }
+    if (EDITED.ovTarget) {
+      await api('POST', `/bias/article/${EDITED.ovTarget}/override`, {
+        influenceScore: null,
+        reason: 'verify:i4a cleanup',
+      });
+    }
+    restoreSettings(WEIGHTS_SNAPSHOT);
+    restoreSettings(CLUSTERING_SNAPSHOT);
+    await recomputeAndWait();
+    const left = ownLeftovers();
+    check(
+      "Cleanup: this run's note, internal assessment + override cleared; weights restored",
+      left === 0,
+      `${left} left`,
+    );
+  }
   print();
 }
 

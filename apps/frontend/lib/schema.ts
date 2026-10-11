@@ -6,7 +6,7 @@
  * has scores), and BreadcrumbList. Every value is drawn from the SAME leak-proof
  * public DTO the page renders — the internal assessment is not in that shape.
  */
-import { scoreToTen } from './format';
+import { distinctSubtitle, scoreToTen } from './format';
 import type {
   CatalogGame,
   GameDetail,
@@ -72,7 +72,8 @@ export function newsArticleLd(topic: TopicDetail, siteUrl: string): Record<strin
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
     headline: topic.title.slice(0, 110),
-    description: topic.tldr ?? topic.aiSummary?.slice(0, 250) ?? undefined,
+    description:
+      distinctSubtitle(topic.title, topic.tldr) ?? topic.aiSummary?.slice(0, 250) ?? undefined,
     url,
     mainEntityOfPage: { '@type': 'WebPage', '@id': url },
     image: [shareImage(siteUrl)],

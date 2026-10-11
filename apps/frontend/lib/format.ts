@@ -41,3 +41,36 @@ export function relativeTime(iso: string | null | undefined): string | null {
   if (months < 12) return `${months}mo ago`;
   return `${Math.round(months / 12)}y ago`;
 }
+
+/** Letters + digits only, lower-cased (curly/straight quotes, dashes, spacing ignored). */
+function headlineKey(text: string): string {
+  return text
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * A subtitle worth showing under a title (hygiene 3): null when it is empty or only
+ * repeats the title (feeds often send the headline as the description).
+ */
+export function distinctSubtitle(
+  title: string | null | undefined,
+  subtitle: string | null | undefined,
+): string | null {
+  const sub = subtitle?.trim();
+  if (!sub) return null;
+  const key = headlineKey(sub);
+  if (!key) return null;
+  return key === headlineKey(title ?? '') ? null : sub;
+}
+
+/**
+ * Topic status chip label for PUBLIC pages (hygiene 3). "Resolved" is internal
+ * clustering state, not reader information — it renders nothing.
+ */
+export function publicTopicStatus(status: string | null | undefined): string | null {
+  if (status === 'developing') return 'Developing';
+  if (status === 'ongoing') return 'Ongoing';
+  return null;
+}

@@ -65,8 +65,8 @@ export async function registerRatingAdminRoutes(admin: FastifyInstance): Promise
   admin.post('/ratings/recompute', async (req, reply) => {
     try {
       const body = (req.body ?? {}) as { gameId?: string };
-      await enqueueRatingRecompute({ reason: 'manual', gameId: body.gameId });
-      reply.code(202).send({ enqueued: true });
+      const jobId = await enqueueRatingRecompute({ reason: 'manual', gameId: body.gameId });
+      reply.code(202).send({ enqueued: true, jobId: jobId ?? null });
     } catch (err) {
       sendError(reply, err);
     }

@@ -1,3 +1,4 @@
+import { isDemo } from '../../config/env';
 import { slugify } from '../../lib/slug';
 import type { ArticlePullOptions, ArticleSourceProvider, RawFeedItem } from './types';
 import { MOCK_FEED_ITEMS } from './mock-data';
@@ -24,13 +25,30 @@ function withPermalink(item: RawFeedItem): RawFeedItem {
   return { ...item, url: `${site.replace(/\/$/, '')}/articles/${slugify(item.title)}` };
 }
 
+/**
+ * Shift every dated item by one offset so the NEWEST lands at `anchor` — the
+ * relative spacing (developing stories, the clustering time window, stale-topic
+ * resolution) is untouched (Phase P hygiene 3). Undated / unparseable items pass
+ * through as they are (the normalizer handles them).
+ */
+export function anchorFeedDates(items: RawFeedItem[], anchor: Date): RawFeedItem[] {
+  const times = items.map((i) => Date.parse(i.publishedAt ?? '')).filter((t) => Number.isFinite(t));
+  if (times.length === 0 || !Number.isFinite(anchor.getTime())) return items;
+  const shift = anchor.getTime() - Math.max(...times);
+  return items.map((i) => {
+    const t = Date.parse(i.publishedAt ?? '');
+    return Number.isFinite(t) ? { ...i, publishedAt: new Date(t + shift).toISOString() } : i;
+  });
+}
+
 export class MockFeedProvider implements ArticleSourceProvider {
   readonly name = 'mock' as const;
 
   private readonly all: RawFeedItem[];
 
-  constructor(dataset: RawFeedItem[] = MOCK_FEED_ITEMS) {
-    this.all = dataset.map(withPermalink);
+  constructor(dataset: RawFeedItem[] = MOCK_FEED_ITEMS, opts: { anchor?: Date | null } = {}) {
+    const anchored = opts.anchor ? anchorFeedDates(dataset, opts.anchor) : dataset;
+    this.all = anchored.map(withPermalink);
   }
 
   listSourceSlugs(): string[] {
@@ -54,4 +72,14 @@ export class MockFeedProvider implements ArticleSourceProvider {
   }
 }
 
-export const mockFeedProvider = new MockFeedProvider();
+/**
+ * Where the demo feed's newest article lands: ten minutes before this process
+ * booted — the briefing's "today" and S2's time-window deltas have recent data on
+ * both sides. Demo mode only; the bundled dataset is unchanged.
+ */
+export const DEMO_FEED_ANCHOR: Date | null = isDemo()
+  ? new Date(Date.now() - 10 * 60 * 1000)
+  : null;
+
+/** The demo feed, anchored at `DEMO_FEED_ANCHOR`. */
+export const mockFeedProvider = new MockFeedProvider(MOCK_FEED_ITEMS, { anchor: DEMO_FEED_ANCHOR });

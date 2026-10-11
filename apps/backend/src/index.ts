@@ -1,8 +1,10 @@
 import { buildServer } from './server';
 import { env, isDemo } from './config/env';
 import { scheduleHeartbeat } from './queue/heartbeat';
-import { enqueueCatalogImport } from './catalog/jobs';
+import { armGameStatusSync, enqueueCatalogImport } from './catalog/jobs';
+import { syncDerivedGameStatuses } from './catalog/status';
 import { enqueueArticleIngest } from './articles/jobs';
+import { realignStoredDemoFeedDates } from './articles/demo-dates';
 import { enqueueRatingRecompute } from './ratings/jobs';
 import { enqueueReputationRecompute } from './reputation/jobs';
 import { runMigrations } from './db/migrate';
@@ -26,6 +28,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Game status derived from release dates (hygiene 3) — at boot and daily. A
+  // hiccup here must not stop the API; the daily pass catches up.
+  try {
+    const derived = await syncDerivedGameStatuses();
+    if (derived > 0) app.log.info({ derived }, 'game statuses derived from release dates');
+    await armGameStatusSync();
+  } catch (err) {
+    app.log.error({ err }, 'game status sync failed');
+  }
+
   // Register the demo background job. Don't crash the API if Redis isn't up
   // yet — log it; the readiness endpoint will report the real state.
   try {
@@ -44,6 +56,15 @@ async function main(): Promise<void> {
       app.log.info('catalog import job enqueued');
     } catch (err) {
       app.log.error({ err }, 'failed to enqueue catalog import job');
+    }
+
+    // Demo feed dates relative to boot (hygiene 3): articles already stored from
+    // the mock feed move with it, so a reused volume reads as recent too.
+    try {
+      const moved = await realignStoredDemoFeedDates();
+      if (moved) app.log.info(moved, 'demo feed dates realigned to boot');
+    } catch (err) {
+      app.log.error({ err }, 'demo feed date realignment failed');
     }
 
     // Run the article pipeline (pull → embed → cluster → summarize) off the

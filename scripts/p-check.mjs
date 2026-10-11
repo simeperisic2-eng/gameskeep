@@ -34,9 +34,24 @@
  *   S1.13 public copy keeps its spaces (no word glued to a closing inline tag)
  *   (S1.5f/g self-review regressions: bad evidence date → 400; a confirming note
  *    never replaces the linked source quote; the topic panel agrees with its rows)
+ *
+ *  H3 — hygiene 3 (before S2)
+ *   H3.1  mock article dates relative to boot (newest just before boot, spacing
+ *         kept; the briefing reads "today")
+ *   H3.2  confirm + dismiss + bias override + editor note, FULL re-cluster → all
+ *         still there (keyed to source + guid, re-linked, no duplicate rows)
+ *   H3.3  Death Stranding 2: the game page Reviews block shows a confirmed signal
+ *   H3.4  game status derived from release date (system-audited); a staff status
+ *         edit locks it; unlocking hands it back
+ *   H3.5  a source with a parent company cannot be typed "Standalone" (400)
+ *   H3.6  polish: no public "resolved" chip; an echoing subtitle hidden; "No
+ *         signals found" rows short + one explanation per block; related links
+ *         in brand colours
+ *   H3.7  after the full ladder no verify fixture on any public route or in the DB
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { lit, psql, purgeFixtures, runJobAndWait } from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
@@ -435,6 +450,7 @@ async function s1() {
 
   const mod = await login('demo-moderator', DEMO_PW);
   const reg = await makeVerified('nonstaff');
+  const sigPrior = rowJson('article_integrity_signals', sigId, SIGNAL_COLS);
   const anonConfirm = await api(BACK, `/admin/api/integrity/signals/${sigId}/confirm`, {
     method: 'POST',
     body: {},
@@ -451,7 +467,7 @@ async function s1() {
     csrf: mod.csrf,
     body: {},
   });
-  cleanup.integrityResets.push(sigId);
+  cleanup.integrityResets.push({ id: sigId, json: sigPrior });
   const afterHtml = await html(`/topics/${reviewSlug}`);
   const ignUrl = sqlOne(`SELECT url FROM articles WHERE id='${ignId}'`);
   // The evidence row itself must carry the snippet, the confirmation and its own
@@ -581,13 +597,14 @@ async function s1() {
   const ds2Snippet = sqlOne(
     `SELECT evidence_snippet FROM article_integrity_signals WHERE id='${ds2Sig}'`,
   );
+  const ds2Prior = ds2Sig ? rowJson('article_integrity_signals', ds2Sig, SIGNAL_COLS) : null;
   const withNote = await api(BACK, `/admin/api/integrity/signals/${ds2Sig}/confirm`, {
     method: 'POST',
     jar: mod.jar,
     csrf: mod.csrf,
     body: { note: 'Checked against the outlet page' },
   });
-  if (ds2Sig) cleanup.integrityResets.push(ds2Sig);
+  if (ds2Sig) cleanup.integrityResets.push({ id: ds2Sig, json: ds2Prior });
   const ds2Slug = topicSlugOfGuid('ds2-reviews-eurogamer');
   const ds2Row = ((await api(BACK, `/public/topic/${ds2Slug}`)).json?.data?.articles ?? []).find(
     (a) => a.id === ds2Id,
@@ -743,18 +760,393 @@ async function s1() {
   );
 }
 
+// ═══════════════════════ Phase P hygiene 3 (group H3) ═══════════════════════
+// Restored exactly at the end (finally): signal decisions + article editorial
+// fields this group touches, the game it locks, the fixture source it creates.
+const h3Restore = { signals: [], articles: [], sources: [] };
+
+/** One row as JSON (its prior state), for an exact restore. */
+const rowJson = (table, id, cols) =>
+  psql(`SELECT row_to_json(x) FROM (SELECT ${cols} FROM ${table} WHERE id = ${lit(id)}) x;`);
+
+const SIGNAL_COLS = 'status, editor_note, decided_by_user_id, decided_by_label, decided_at';
+const EDITORIAL_COLS =
+  'editor_note, internal_assessment, influence_override, influence_override_reason, quality_override, quality_override_reason';
+
+/** Put one signal's decision fields back exactly as snapshotted. */
+function restoreSignal(id, json) {
+  if (!id || !json) return;
+  psql(
+    `UPDATE article_integrity_signals s SET status = r.status, editor_note = r.editor_note, decided_by_user_id = r.decided_by_user_id, decided_by_label = r.decided_by_label, decided_at = r.decided_at FROM json_populate_record(NULL::article_integrity_signals, ${lit(json)}) r WHERE s.id = ${lit(id)};`,
+  );
+}
+
+function restoreH3() {
+  for (const { id, json } of [...h3Restore.signals].reverse()) restoreSignal(id, json);
+  for (const { guid, json } of h3Restore.articles) {
+    if (!json) continue;
+    psql(
+      `UPDATE articles a SET editor_note = r.editor_note, internal_assessment = r.internal_assessment, influence_override = r.influence_override, influence_override_reason = r.influence_override_reason, quality_override = r.quality_override, quality_override_reason = r.quality_override_reason FROM json_populate_record(NULL::articles, ${lit(json)}) r WHERE a.external_guid = ${lit(guid)};`,
+    );
+  }
+  for (const id of h3Restore.sources) psql(`DELETE FROM sources WHERE id = ${lit(id)};`);
+}
+
+/** Run a catalog import (the derived status is synced after it) and wait for it by id. */
+const importAndWait = () => runJobAndWait('/catalog/import', 'catalog', {}, 120_000);
+
+async function h3() {
+  // ── H3.1 mock article dates relative to boot ───────────────────────────────
+  const newestEpoch = Number(
+    psql(
+      `SELECT extract(epoch FROM max(publish_date))::bigint FROM articles WHERE origin = 'aggregated';`,
+    ),
+  );
+  const ageH = (Date.now() / 1000 - newestEpoch) / 3600;
+  const briefing = (await api(BACK, '/public/homepage')).json?.data?.briefing;
+  const oldest = Number(
+    psql(
+      `SELECT extract(epoch FROM min(publish_date))::bigint FROM articles WHERE origin = 'aggregated';`,
+    ),
+  );
+  check(
+    'H3.1 mock feed is relative to boot: newest article lands just before boot (never in the future), spacing kept; briefing reads "today"',
+    Number.isFinite(ageH) &&
+      ageH >= -0.02 &&
+      ageH <= 24 &&
+      briefing?.isToday === true &&
+      // the bundled spacing (~17 months) survives the shift
+      (newestEpoch - oldest) / 86400 > 300,
+    `newest ${ageH.toFixed(2)}h ago, span ${((newestEpoch - oldest) / 86400).toFixed(0)}d, briefing.isToday=${briefing?.isToday}`,
+  );
+
+  // ── H3.2 moderator decisions survive a FULL re-cluster ─────────────────────
+  const mod = await login('demo-moderator', DEMO_PW);
+  const DS2 = 'death-stranding-2-on-the-beach';
+  const ds2Guid = 'ds2-reviews-eurogamer';
+  const sigIdOf = (kind) =>
+    psql(
+      `SELECT id FROM article_integrity_signals WHERE external_guid = ${lit(ds2Guid)} AND kind = ${lit(kind)};`,
+    );
+  const rcId = sigIdOf('review_copy');
+  const emId = sigIdOf('embargo');
+  for (const id of [rcId, emId].filter(Boolean)) {
+    h3Restore.signals.push({ id, json: rowJson('article_integrity_signals', id, SIGNAL_COLS) });
+  }
+  const edGuid = 'ds2-reviews-gamespot';
+  h3Restore.articles.push({
+    guid: edGuid,
+    json: psql(
+      `SELECT row_to_json(x) FROM (SELECT ${EDITORIAL_COLS} FROM articles WHERE external_guid = ${lit(edGuid)}) x;`,
+    ),
+  });
+  const decide = (id, action) =>
+    api(BACK, `/admin/api/integrity/signals/${id}/${action}`, {
+      method: 'POST',
+      jar: mod.jar,
+      csrf: mod.csrf,
+      body: {},
+    });
+  const conf = rcId ? await decide(rcId, 'confirm') : { status: 0 };
+  const dism = emId ? await decide(emId, 'dismiss') : { status: 0 };
+  const edBefore = articleIdOfGuid(edGuid);
+  const ovNote = `H3 note ${RUN}`;
+  const ov = await api(BACK, `/admin/api/bias/article/${edBefore}/override`, {
+    method: 'POST',
+    token: TOKEN,
+    body: { influenceScore: 12, reason: `H3 carryover ${RUN}` },
+  });
+  const note = await api(BACK, `/admin/api/bias/article/${edBefore}/note`, {
+    method: 'POST',
+    token: TOKEN,
+    body: { editorNote: ovNote },
+  });
+  const rcArticleBefore = psql(
+    `SELECT article_id FROM article_integrity_signals WHERE id = ${lit(rcId)};`,
+  );
+  const reset = await api(BACK, '/admin/api/clustering/ingest', {
+    method: 'POST',
+    token: TOKEN,
+    body: { reset: true },
+  });
+  const resetState = await waitForJob(reset.json?.jobId);
+  const ds2Article = articleIdOfGuid(ds2Guid);
+  const [rcStatus, rcArticle] = psql(
+    `SELECT status || '|' || coalesce(article_id::text, '') FROM article_integrity_signals WHERE id = ${lit(rcId)};`,
+  ).split('|');
+  const emStatus = psql(`SELECT status FROM article_integrity_signals WHERE id = ${lit(emId)};`);
+  const edAfter = psql(
+    `SELECT coalesce(influence_override::text, '') || '|' || coalesce(editor_note, '') FROM articles WHERE external_guid = ${lit(edGuid)};`,
+  );
+  const carryLeft = Number(psql('SELECT count(*) FROM article_editorial_carryover;'));
+  const dupSignals = Number(
+    psql(
+      `SELECT count(*) FROM article_integrity_signals WHERE external_guid = ${lit(ds2Guid)} AND kind IN ('review_copy', 'embargo');`,
+    ),
+  );
+  check(
+    'H3.2 a full re-cluster keeps moderator decisions: confirmed stays confirmed, dismissed stays dismissed (re-linked to the new article row, no duplicate), bias override + editor note restored',
+    conf.status === 200 &&
+      dism.status === 200 &&
+      ov.status === 200 &&
+      note.status === 200 &&
+      resetState === 'completed' &&
+      rcStatus === 'confirmed' &&
+      emStatus === 'dismissed' &&
+      rcArticle === ds2Article &&
+      rcArticle !== rcArticleBefore &&
+      dupSignals === 2 &&
+      edAfter === `12|${ovNote}` &&
+      carryLeft === 0,
+    `reset=${resetState} rc=${rcStatus} em=${emStatus} relinked=${rcArticle === ds2Article && rcArticle !== rcArticleBefore} rows=${dupSignals} editorial=${edAfter} carryover=${carryLeft}`,
+  );
+
+  // ── H3.3 the DS2 game page reads confirmed signals ─────────────────────────
+  const ds2Html = await html(`/games/${DS2}`);
+  const ds2 = (await api(BACK, `/public/game/${DS2}`)).json?.data;
+  const euro = (ds2?.reviews ?? []).find((r) => r.id === ds2Article);
+  const withoutSignals = (ds2?.reviews ?? []).filter(
+    (r) => (r.integrity ?? []).length === 0,
+  ).length;
+  check(
+    'H3.3 Death Stranding 2: a confirmed review-copy signal shows in the game page Reviews block (not "No signals found"); the dismissed one stays hidden',
+    euro?.integrity?.some((r) => r.kind === 'review_copy' && r.confirmed) &&
+      !euro?.integrity?.some((r) => r.kind === 'embargo') &&
+      ds2Html.includes('Confirmed by an editor') &&
+      count(ds2Html, 'class="gk-integrity-none"') === withoutSignals,
+    `euro=${JSON.stringify((euro?.integrity ?? []).map((r) => `${r.kind}:${r.confirmed}`))} noneLines=${count(ds2Html, 'class="gk-integrity-none"')}/${withoutSignals}`,
+  );
+
+  // ── H3.4 game status derived from the release date, manual override wins ───
+  const gameRow = (slug) =>
+    psql(
+      `SELECT g.id || '|' || g.status || '|' || g.status_locked::text || '|' || coalesce(g.release_date, '') FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(slug)};`,
+    ).split('|');
+  const [ds2Id, ds2Status, , ds2Date] = gameRow(DS2);
+  const derivedAudit = Number(
+    psql(
+      `SELECT count(*) FROM audit_logs WHERE entity_type = 'games' AND entity_id = ${lit(ds2Id)} AND actor_label = 'system:game-status';`,
+    ),
+  );
+  const futureStillUpcoming = gameRow('grand-theft-auto-vi')[1];
+  check(
+    'H3.4a a pre-release game whose release date passed is "released" (DS2), audited as a system actor; a future one is untouched',
+    ds2?.status === 'released' &&
+      ds2Status === 'released' &&
+      ds2Date <= new Date().toISOString().slice(0, 10) &&
+      derivedAudit >= 1 &&
+      ['announced', 'in_development'].includes(futureStillUpcoming),
+    `ds2=${ds2?.status} (${ds2Date}) audit=${derivedAudit} gta6=${futureStillUpcoming}`,
+  );
+  // Lock: a staff status edit is a manual override the derivation leaves alone.
+  const lockSlug = 'metroid-prime-4-beyond';
+  const [lockId, lockStatus0, lockLocked0] = gameRow(lockSlug);
+  const patchGame = (body) =>
+    api(BACK, `/admin/api/games/${lockId}`, { method: 'PATCH', token: TOKEN, body });
+  // Exactly what the admin form sends: the new status AND its (unticked) lock
+  // checkbox — a status CHANGE must lock regardless.
+  const setManual = await patchGame({ status: 'announced', statusLocked: false });
+  const imp1 = await importAndWait();
+  const [, lockedStatus, lockedFlag] = gameRow(lockSlug);
+  const unlock = await patchGame({ statusLocked: false });
+  const imp2 = await importAndWait();
+  const [, unlockedStatus, unlockedFlag] = gameRow(lockSlug);
+  check(
+    "H3.4b manual override: a staff status change locks it (even with the form's unticked checkbox; sync leaves it), unlocking alone hands it back",
+    lockStatus0 === 'released' &&
+      lockLocked0 === 'false' &&
+      setManual.status === 200 &&
+      imp1.ok &&
+      lockedStatus === 'announced' &&
+      lockedFlag === 'true' &&
+      unlock.status === 200 &&
+      imp2.ok &&
+      unlockedStatus === 'released' &&
+      unlockedFlag === 'false',
+    `start=${lockStatus0}/${lockLocked0} manual→${lockedStatus}/${lockedFlag} (import ${imp1.state}) unlocked→${unlockedStatus}/${unlockedFlag} (import ${imp2.state})`,
+  );
+
+  // ── H3.5 source rule: a parent company on record ≠ "Standalone" ────────────
+  const standaloneId = psql(`SELECT id FROM source_types WHERE key = 'independent';`);
+  const mainstreamId = psql(`SELECT id FROM source_types WHERE key = 'mainstream';`);
+  const euroSrc = psql(`SELECT id FROM sources WHERE slug = 'eurogamer';`);
+  const euroPatch = await api(BACK, `/admin/api/sources/${euroSrc}`, {
+    method: 'PATCH',
+    token: TOKEN,
+    body: { typeId: standaloneId },
+  });
+  const created = await api(BACK, '/admin/api/sources', {
+    method: 'POST',
+    token: TOKEN,
+    body: { name: `H3 Src ${RUN}`, parentCompany: 'Parent Corp', typeId: standaloneId },
+  });
+  const ok = await api(BACK, '/admin/api/sources', {
+    method: 'POST',
+    token: TOKEN,
+    body: { name: `H3 Owned ${RUN}`, parentCompany: 'Parent Corp', typeId: mainstreamId },
+  });
+  const okId = ok.json?.data?.id;
+  if (okId) h3Restore.sources.push(okId);
+  const toStandalone = okId
+    ? await api(BACK, `/admin/api/sources/${okId}`, {
+        method: 'PATCH',
+        token: TOKEN,
+        body: { typeId: standaloneId },
+      })
+    : { status: 0 };
+  const clearAndStandalone = okId
+    ? await api(BACK, `/admin/api/sources/${okId}`, {
+        method: 'PATCH',
+        token: TOKEN,
+        body: { parentCompany: '', typeId: standaloneId },
+      })
+    : { status: 0 };
+  const violations = Number(
+    psql(
+      `SELECT count(*) FROM sources s JOIN source_types t ON t.id = s.type_id WHERE t.key = 'independent' AND coalesce(trim(s.parent_company), '') <> '';`,
+    ),
+  );
+  const euroType = psql(
+    `SELECT t.key FROM sources s JOIN source_types t ON t.id = s.type_id WHERE s.slug = 'eurogamer';`,
+  );
+  const msg = 'cannot be typed "Standalone"';
+  const issue = (r) => (r.json?.issues ?? []).map((i) => i.message).join(' ');
+  // The 400 names the rule only — it never echoes the stored row back.
+  const noEcho = (r) => !r.text.includes('IGN Entertainment') && !r.text.includes('"input"');
+  check(
+    'H3.5 a source with a parent company cannot be typed "Standalone" (create + update → 400, validated on the merged row); Eurogamer is fixed; no violating row exists',
+    euroPatch.status === 400 &&
+      issue(euroPatch).includes(msg) &&
+      noEcho(euroPatch) &&
+      created.status === 400 &&
+      issue(created).includes(msg) &&
+      ok.status === 201 &&
+      toStandalone.status === 400 &&
+      clearAndStandalone.status === 200 &&
+      euroType === 'mainstream' &&
+      violations === 0,
+    `euroPatch=${euroPatch.status} msg=${issue(euroPatch).includes(msg)} noEcho=${noEcho(euroPatch)} create=${created.status} owned→standalone=${toStandalone.status} cleared→standalone=${clearAndStandalone.status} eurogamer=${euroType} violations=${violations}`,
+  );
+
+  // ── H3.6 public polish ─────────────────────────────────────────────────────
+  const resolvedSlug = psql(`SELECT slug FROM topics WHERE status = 'resolved' LIMIT 1;`);
+  const resolvedHtml = resolvedSlug ? await html(`/topics/${resolvedSlug}`) : '';
+  const homeHtml = await html('/');
+  const noResolvedChip = (h) =>
+    !h.includes('gk-status-resolved') && !/>\s*resolved\s*</i.test(h.replace(/<!--.*?-->/g, ''));
+  check(
+    'H3.6a the internal "resolved" topic state renders no public chip (topic page + homepage spotlight)',
+    Boolean(resolvedSlug) && noResolvedChip(resolvedHtml) && noResolvedChip(homeHtml),
+    `topic=${resolvedSlug} topicChip=${!noResolvedChip(resolvedHtml)} homeChip=${!noResolvedChip(homeHtml)}`,
+  );
+  const echo = psql(
+    `SELECT slug || '|' || title FROM topics WHERE lower(regexp_replace(coalesce(tldr, ''), '[^a-zA-Z0-9]', '', 'g')) = lower(regexp_replace(title, '[^a-zA-Z0-9]', '', 'g')) AND title ~ '^[A-Za-z0-9 :,.-]+$' LIMIT 1;`,
+  ).split('|');
+  const echoHtml = echo[0] ? await html(`/topics/${echo[0]}`) : '';
+  const distinct = psql(
+    `SELECT slug FROM topics WHERE tldr IS NOT NULL AND length(tldr) > 20 AND lower(regexp_replace(tldr, '[^a-zA-Z0-9]', '', 'g')) <> lower(regexp_replace(title, '[^a-zA-Z0-9]', '', 'g')) LIMIT 1;`,
+  );
+  const distinctHtml = distinct ? await html(`/topics/${distinct}`) : '';
+  check(
+    'H3.6b a subtitle that only repeats the title is hidden (a distinct one still shows)',
+    Boolean(echo[0]) &&
+      !echoHtml.includes('class="gk-story-tldr"') &&
+      distinctHtml.includes('class="gk-story-tldr"'),
+    `echo=${echo[0]} shown=${echoHtml.includes('class="gk-story-tldr"')} distinct=${distinct} shown=${distinctHtml.includes('class="gk-story-tldr"')}`,
+  );
+  const reviewsBlock = (() => {
+    const i = ds2Html.indexOf('aria-label="Reviews"');
+    const j = ds2Html.indexOf('</section>', i);
+    return i >= 0 ? ds2Html.slice(i, j) : '';
+  })();
+  const noneRows = [...reviewsBlock.matchAll(/<p class="gk-integrity-none">([\s\S]*?)<\/p>/g)].map(
+    (m) => m[1],
+  );
+  check(
+    'H3.6c "No signals found" rows carry the short label only; the explanation appears once per block',
+    noneRows.length >= 1 &&
+      noneRows.every((t) => t === 'No signals found') &&
+      count(reviewsBlock, 'cannot prove what isn') === 1 &&
+      count(reviewsBlock, 'class="gk-nosignal-note"') === 1 &&
+      count(ds2Html, 'gk-integrity-hint') === 0,
+    `rows=${noneRows.length} labels=${JSON.stringify([...new Set(noneRows)])} explainers=${count(reviewsBlock, 'cannot prove what isn')}`,
+  );
+  const css = readFileSync(CSS_PATH, 'utf8');
+  const relA = cssRule(css, '.gk-related a');
+  const relHover = cssRule(css, '.gk-related a:focus-visible .gk-related-title');
+  check(
+    'H3.6d related-stories links use brand colours (no default-blue underline; amber on hover/focus)',
+    /color:\s*var\(--gk-text\)/.test(relA) &&
+      /text-decoration:\s*none/.test(relA) &&
+      /text-decoration-color:\s*var\(--gk-accent\)/.test(relHover) &&
+      /color:\s*var\(--gk-accent\)/.test(relHover),
+    `a{${relA.trim().replace(/\s+/g, ' ')}}`,
+  );
+}
+
+/** Fixture names every verify suite uses — none may reach a public page. */
+const FIXTURE_RE =
+  /Disconnect Probe|Bombtest|Fairtest Realm|Launchday Saga|Voidtest|Lowtest|I7 Nominee|I7 Test|__i7 verify|Verify (?:Game|Source|Topic|Suggest)|Typed Topic|UpPromo|Sec Adv|Lists Promo|H3 (?:note|carryover|Src|Owned)|\bgk_(?!voter[1-8]\b)[a-z0-9]+(?:_[a-z0-9]+)*_[0-9a-z]{8}\b|\bi4b[pu]\d+_|\bi8_[a-z0-9]+_|\bp_(?:vote|nonstaff)_/;
+
+async function fixtureCrawl() {
+  const routes = [
+    '/',
+    '/games',
+    '/games/browse',
+    '/upcoming',
+    '/topics',
+    '/sources',
+    '/awards',
+    '/sitemap.xml',
+    '/games/age-of-empires-iv',
+  ];
+  const hits = [];
+  for (const r of routes) {
+    const res = await api(FRONT, r);
+    const m = res.text.match(FIXTURE_RE);
+    if (m) hits.push(`${r}: "${m[0]}"`);
+  }
+  for (const r of ['/public/homepage', '/public/catalog', '/public/upcoming']) {
+    const res = await api(BACK, r);
+    const m = res.text.match(FIXTURE_RE);
+    if (m) hits.push(`${r}: "${m[0]}"`);
+  }
+  const dbLeft = psql(
+    [
+      "SELECT 'users:' || count(*) FROM users WHERE (username ~ '^(gk_|i4b[pu][0-9]|i8_|p_|f2_|verify_)' AND username !~ '^gk_voter[1-8]$') OR username LIKE 'deleted\\_%'",
+      "UNION ALL SELECT 'games:' || count(*) FROM subjects WHERE slug ~ '^(disconnect-probe|bombtest|fairtest-realm|launchday-saga|voidtest|lowtest|i7-nominee-[ab]|verify-game)-'",
+      "UNION ALL SELECT 'awards:' || ((SELECT count(*) FROM award_categories WHERE key LIKE 'i7cat\\_%') + (SELECT count(*) FROM award_editions WHERE name LIKE '\\_\\_i7 verify%'))",
+      "UNION ALL SELECT 'subscriptions:' || count(*) FROM newsletter_subscriptions WHERE email ~ '@(example\\.test|verify\\.local)$'",
+      "UNION ALL SELECT 'placements:' || count(*) FROM ad_placements WHERE advertiser_name ~ '^(UpPromo|Sec Adv|Lists Promo|F4 Adv) '",
+      "UNION ALL SELECT 'sources:' || count(*) FROM sources WHERE name ~ '^(Verify Source|H3 (Src|Owned)) '",
+      "UNION ALL SELECT 'topics:' || count(*) FROM topics WHERE title ~ '^(Verify Topic|Typed Topic) '",
+      "UNION ALL SELECT 'queue:' || count(*) FROM unmatched_games WHERE raw_name ~ '^(Phantom Title|Spam Title|Verify Suggest|Burst|NoCsrf) ' OR raw_name LIKE '%<script>%'",
+      "UNION ALL SELECT 'badges:' || count(*) FROM badges WHERE key LIKE 'i8\\_%';",
+    ].join(' '),
+  )
+    .split('\n')
+    .filter((l) => !l.endsWith(':0'));
+  check(
+    'H3.7 after the full ladder no verify fixture appears on any public route (pages, sitemap, public API) or remains in the database',
+    hits.length === 0 && dbLeft.length === 0,
+    hits.length || dbLeft.length
+      ? `${hits.slice(0, 4).join(' · ')} ${dbLeft.join(' ')}`
+      : `${routes.length + 3} routes clean, DB clean`,
+  );
+}
+
 async function main() {
   if (!check('0. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
   try {
     await s1();
+    await h3();
   } finally {
+    restoreH3();
     // Re-run safety: restore switches + undo this run's integrity/vote rows.
     if (cleanup.display) await setDisplay(cleanup.display);
-    for (const id of cleanup.integrityResets) {
-      sqlOne(
-        `UPDATE article_integrity_signals SET status='detected', editor_note=NULL, decided_by_user_id=NULL, decided_by_label=NULL, decided_at=NULL WHERE id='${id}' AND origin='auto'`,
-      );
-    }
+    // Exact prior decision back (hygiene 3) — newest first, so a signal touched
+    // twice ends where it started.
+    for (const { id, json } of [...cleanup.integrityResets].reverse()) restoreSignal(id, json);
     for (const id of cleanup.integrityDeletes) {
       sqlOne(`DELETE FROM article_integrity_signals WHERE id='${id}'`);
     }
@@ -766,7 +1158,12 @@ async function main() {
     for (const uid of cleanup.voteUsers) {
       sqlOne(`DELETE FROM topic_bias_votes WHERE user_id='${uid}'`);
     }
+    // Hygiene 3: this run's accounts go too (their votes/sessions cascade).
+    const purge = await purgeFixtures({ run: RUN, usernames: [`p\\_%\\_${RUN}`] });
+    if (!purge.ok) check("Cleanup: this run's accounts removed", false, purge.detail.join(' '));
   }
+  // Last (the ladder runs verify:p last): nothing any suite made is public.
+  await fixtureCrawl();
   print();
 }
 

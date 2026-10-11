@@ -59,6 +59,8 @@ import { db } from '../db/client';
 import { slugify } from '../lib/slug';
 import { DEFAULT_SECTION_RANK, SECTION_RANK_DEFAULTS } from './rbac';
 import { diffRows, writeAudit } from './audit';
+import { sourceRuleViolation } from '../sources/rules';
+import { statusLockFor } from '../catalog/status';
 
 export { slugify };
 import { getRow, insertRow, slugTaken, type Row, updateRow } from './crud';
@@ -121,6 +123,11 @@ export interface ResourceDef {
   hasSlug?: boolean;
   slugFrom?: string;
   ops?: ResourceOps;
+  /**
+   * Cross-field rule on the row as it WOULD be saved (create values, or the
+   * current row + patch). Returns a message to reject with 400, or null.
+   */
+  validate?: (next: Row) => Promise<string | null>;
   /**
    * I6 hardening (MED): secret columns stripped from every CRUD payload and
    * every audit snapshot (e.g. users.passwordHash). Values render as
@@ -222,6 +229,11 @@ async function gameUpdateOp(
     if (key === 'name' || key === 'slug') continue;
     if (key in input) gamePatch[key] = input[key];
   }
+  // Hygiene 3: a staff status CHANGE is a manual override — the release-date
+  // derivation leaves a locked status alone (unlock: statusLocked:false alone).
+  const lock = statusLockFor(String(game.status), input, rawKeys);
+  if (lock === null) delete gamePatch.statusLocked;
+  else gamePatch.statusLocked = lock;
   if (Object.keys(gamePatch).length > 0) await updateRow(schema.games, id, gamePatch);
 
   const after = await gameGet(id);
@@ -365,6 +377,7 @@ export const RESOURCES: ResourceDef[] = [
       F.text('summary'),
       F.area('description'),
       F.enum('status', GAME_STATUSES),
+      F.bool('statusLocked'),
       F.date('releaseDate'),
       F.text('developer'),
       F.text('publisher'),
@@ -397,6 +410,8 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.sources,
     create: sourceCreate,
     update: sourceCreate.partial(),
+    // Hygiene 3: an outlet with a parent company can't be typed "Standalone".
+    validate: (next) => sourceRuleViolation(next),
     labelColumn: 'name',
     hasSlug: true,
     slugFrom: 'name',

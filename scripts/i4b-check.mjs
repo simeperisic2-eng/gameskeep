@@ -25,6 +25,15 @@
  */
 
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
+import {
+  lit,
+  psql,
+  purgeFixtures,
+  restoreSettings,
+  snapshotSettings,
+  waitForJob,
+} from './lib/fixtures.mjs';
+
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const API = `${BASE}/admin/api`;
 
@@ -64,11 +73,13 @@ async function waitForReady() {
 }
 
 const now = Date.now();
+/** This run's fixture token — every user/game it creates carries it (cleanup key). */
+const RUN = now.toString(36);
 const daysAgoISO = (d) => new Date(now - d * 86_400_000).toISOString();
 const minsAgoISO = (m) => new Date(now - m * 60_000).toISOString();
 
 async function createUser(prefix, i, proven) {
-  const username = `${prefix}${i}_${now % 100000}`;
+  const username = `${prefix}${i}_${RUN}`;
   const r = await api('POST', '/users', {
     username,
     email: `${username}@verify.local`,
@@ -89,16 +100,45 @@ async function vote(gameId, userId, score, ratedAt) {
   return api('POST', '/game-user-ratings', { gameId, userId, score, ratedAt });
 }
 
-/** Recompute ONE game and wait for its computedAt to advance. */
+/** Recompute ONE game and wait for THAT job (by id — hygiene 3), then read it. */
 async function recomputeGame(gameId) {
-  const before = (await api('GET', `/ratings/game/${gameId}`)).json?.data?.computedAt ?? '';
-  await api('POST', '/ratings/recompute', { gameId });
-  for (let i = 0; i < 40; i += 1) {
-    await sleep(1000);
-    const g = (await api('GET', `/ratings/game/${gameId}`)).json?.data;
-    if ((g?.computedAt ?? '') !== before) return g;
-  }
+  const r = await api('POST', '/ratings/recompute', { gameId });
+  const jobId = r.json?.jobId ?? null;
+  if (jobId) await waitForJob('ratings', jobId, 60_000);
   return (await api('GET', `/ratings/game/${gameId}`)).json?.data;
+}
+
+/** The rating settings row as it was before this run (restored, never assumed). */
+let RATING_SNAPSHOT = null;
+
+async function main() {
+  RATING_SNAPSHOT = snapshotSettings(['ratings']);
+  try {
+    await body();
+  } finally {
+    // Hygiene 3: restore the rating settings, remove every user + game this run
+    // created (their votes/overrides cascade) and recompute, awaited by job id.
+    restoreSettings(RATING_SNAPSHOT);
+    const purge = await purgeFixtures({
+      run: RUN,
+      usernames: [`i4bp%\\_${RUN}`, `i4bu%\\_${RUN}`],
+      subjectSlugs: [`%-${RUN}`],
+    });
+    check(
+      "Cleanup: this run's users + games removed, settings restored, ratings recomputed",
+      purge.ok && leftovers() === 0,
+      `${purge.detail.join(' ')} leftovers=${leftovers()}`,
+    );
+  }
+  print();
+}
+
+function leftovers() {
+  return Number(
+    psql(
+      `SELECT (SELECT count(*) FROM users WHERE username LIKE ${lit(`%${RUN}`)}) + (SELECT count(*) FROM subjects WHERE slug LIKE ${lit(`%-${RUN}`)});`,
+    ),
+  );
 }
 
 let ROLE_ID = null;
@@ -106,8 +146,8 @@ let LEVEL_ID = null;
 let PROVEN = [];
 let UNPROVEN = [];
 
-async function main() {
-  if (!check('Stack ready (/health/ready)', await waitForReady())) return print();
+async function body() {
+  if (!check('Stack ready (/health/ready)', await waitForReady())) return;
 
   // wait for the boot recompute to score the seeded games
   let seeded = [];
@@ -153,7 +193,7 @@ async function main() {
   LEVEL_ID = ((await api('GET', '/user-levels')).json?.data ?? []).find(
     (l) => l.key === 'trusted',
   )?.id;
-  if (!check('User role/level lookups resolved', ROLE_ID && LEVEL_ID)) return print();
+  if (!check('User role/level lookups resolved', ROLE_ID && LEVEL_ID)) return;
   for (let i = 0; i < 32; i += 1) PROVEN.push(await createUser('i4bp', i, true));
   for (let i = 0; i < 40; i += 1) UNPROVEN.push(await createUser('i4bu', i, false));
   check(
@@ -163,7 +203,7 @@ async function main() {
   );
 
   // ── 4. REVIEW-BOMB on game A ─────────────────────────────────────────────────
-  const gameA = await createGame(`Bombtest Arena ${now % 100000}`);
+  const gameA = await createGame(`Bombtest Arena ${RUN}`);
   // critics (to prove they're untouched by weighting)
   await api('POST', '/game-critic-reviews', { gameId: gameA, outletName: 'IGN', score: 82 });
   await api('POST', '/game-critic-reviews', { gameId: gameA, outletName: 'GameSpot', score: 78 });
@@ -216,7 +256,8 @@ async function main() {
     `proven cred=${provenVote?.credibility.total} (effW ${provenVote?.effectiveWeight}) vs bomb cred=${bombVote?.credibility.total}`,
   );
 
-  // 6. tunability — raise minBurstVotes very high → flag clears
+  // 6. tunability — raise minBurstVotes very high → flag clears (the rating
+  //    settings row is snapshotted first and restored in main's finally)
   await api('PATCH', '/ratings/settings', { burst: { minBurstVotes: 9999 } });
   const aTuned = await recomputeGame(gameA);
   check(
@@ -224,7 +265,7 @@ async function main() {
     aTuned?.community.burstFlag === false,
     `flag ${a1?.community.burstFlag} → ${aTuned?.community.burstFlag}`,
   );
-  await api('PATCH', '/ratings/settings', { burst: { minBurstVotes: 15 } });
+  restoreSettings(RATING_SNAPSHOT);
   await recomputeGame(gameA);
 
   // 7. override + audit + survives re-tune
@@ -235,7 +276,7 @@ async function main() {
   const aOv = (await api('GET', `/ratings/game/${gameA}`)).json?.data;
   await api('PATCH', '/ratings/settings', { credibility: { email: 0.4 } });
   const aRetune = await recomputeGame(gameA);
-  await api('PATCH', '/ratings/settings', { credibility: { email: 0.45 } });
+  restoreSettings(RATING_SNAPSHOT);
   const auditHit = (
     (await api('GET', '/_audit?entityType=game-rating-summaries&limit=50')).json?.data ?? []
   ).some((a) => /rating override/i.test(a.summary ?? ''));
@@ -250,7 +291,7 @@ async function main() {
   );
 
   // ── COUNTER-CASE: legitimate low from proven voters (game B) ─────────────────
-  const gameB = await createGame(`Fairtest Realm ${now % 100000}`);
+  const gameB = await createGame(`Fairtest Realm ${RUN}`);
   for (let i = 0; i < 12; i += 1) await vote(gameB, PROVEN[i], 80, daysAgoISO(60 - i * 4));
   for (let i = 0; i < 20; i += 1) await vote(gameB, PROVEN[12 + i], 30, minsAgoISO(i));
   const b = await recomputeGame(gameB);
@@ -266,7 +307,7 @@ async function main() {
   );
 
   // ── FIRST-SURGE with no prior history (game C) ───────────────────────────────
-  const gameC = await createGame(`Launchday Saga ${now % 100000}`);
+  const gameC = await createGame(`Launchday Saga ${RUN}`);
   const spread = [40, 55, 70, 65, 80, 50, 60, 75, 45, 82, 62, 58, 72, 48, 68, 78, 38, 76, 52, 66];
   for (let i = 0; i < spread.length; i += 1) await vote(gameC, PROVEN[i], spread[i], minsAgoISO(i));
   const c = await recomputeGame(gameC);
@@ -294,7 +335,7 @@ async function main() {
 
   // 3b. A freshly-computed large gap auto-explains NOTHING — the context tag is
   // null until a human sets it (re-run-safe; the game starts with no tag).
-  const gameDis = await createGame(`Disconnect Probe ${now % 100000}`);
+  const gameDis = await createGame(`Disconnect Probe ${RUN}`);
   await api('POST', '/game-critic-reviews', { gameId: gameDis, outletName: 'IGN', score: 92 });
   await api('POST', '/game-critic-reviews', { gameId: gameDis, outletName: 'Polygon', score: 90 });
   for (let i = 0; i < 6; i += 1) await vote(gameDis, PROVEN[i], 45, daysAgoISO(30 - i * 3));
@@ -313,7 +354,7 @@ async function main() {
     `gap=${disAuto?.disconnect.value} autoTag=${tagWasAuto ?? 'null'} → set="${disTagged?.disconnect.contextTag ?? ''}"`,
   );
 
-  const gameD = await createGame(`Voidtest ${now % 100000}`);
+  const gameD = await createGame(`Voidtest ${RUN}`);
   const d = await recomputeGame(gameD);
   check(
     '10. No-data is distinct from a score of 0 (no crash, no fabricated number)',
@@ -328,8 +369,6 @@ async function main() {
     '8c. A game with no flags row → contentFlags absent (≠ "unknown")',
     d?.contentFlags === null,
   );
-
-  print();
 }
 
 function print() {

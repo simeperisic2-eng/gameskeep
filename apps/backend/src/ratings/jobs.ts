@@ -33,14 +33,18 @@ export function getRatingsQueue(): Queue<RatingJobData> {
   return queue;
 }
 
-export async function enqueueRatingRecompute(data: RatingJobData = {}): Promise<void> {
+/** Enqueue a recompute; returns the BullMQ job id (callers can wait for THEIR run). */
+export async function enqueueRatingRecompute(
+  data: RatingJobData = {},
+): Promise<string | undefined> {
   const q = getRatingsQueue();
-  await q.add(RATINGS_JOB, data, {
+  const job = await q.add(RATINGS_JOB, data, {
     removeOnComplete: 20,
     removeOnFail: 20,
     attempts: 3,
     backoff: { type: 'exponential', delay: 4000 },
   });
+  return job.id;
 }
 
 export function startRatingsWorker(): Worker<RatingJobData> {

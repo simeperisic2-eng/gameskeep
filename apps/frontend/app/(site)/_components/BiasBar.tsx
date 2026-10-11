@@ -224,9 +224,7 @@ export function ArticleFlags({
       </span>
       <span className="gk-tip-card" role="tooltip">
         {flags.length === 0 ? (
-          <>
-            {NO_SIGNALS_LABEL} for sponsored, affiliate or opinion signals. {NO_SIGNALS_EXPLAINER}
-          </>
+          <>Checked for sponsored, affiliate and opinion signals — none found.</>
         ) : (
           <>
             Carries: <b>{flags.map((f) => FLAG_LABEL[f]).join(', ')}</b>. These are factual labels

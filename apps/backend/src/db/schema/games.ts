@@ -67,6 +67,10 @@ export const games = pgTable(
     summary: varchar('summary', { length: 600 }),
     description: text('description'),
     status: gameStatusEnum('status').notNull().default('announced'),
+    // Manual override (hygiene 3): status is DERIVED from the release date (a
+    // pre-release game whose full release date has passed becomes `released`)
+    // unless staff set it by hand — a staff status edit locks it until unlocked.
+    statusLocked: boolean('status_locked').notNull().default(false),
     releaseDate: text('release_date'), // YYYY-MM-DD (nullable, often partial/unknown)
     developer: varchar('developer', { length: 200 }),
     publisher: varchar('publisher', { length: 200 }),

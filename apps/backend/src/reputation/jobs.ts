@@ -31,14 +31,18 @@ export function getReputationQueue(): Queue<ReputationJobData> {
   return queue;
 }
 
-export async function enqueueReputationRecompute(data: ReputationJobData = {}): Promise<void> {
+/** Enqueue a recompute; returns the BullMQ job id (callers can wait for THEIR run). */
+export async function enqueueReputationRecompute(
+  data: ReputationJobData = {},
+): Promise<string | undefined> {
   const q = getReputationQueue();
-  await q.add(REPUTATION_JOB, data, {
+  const job = await q.add(REPUTATION_JOB, data, {
     removeOnComplete: 20,
     removeOnFail: 20,
     attempts: 3,
     backoff: { type: 'exponential', delay: 4000 },
   });
+  return job.id;
 }
 
 export function startReputationWorker(): Worker<ReputationJobData> {

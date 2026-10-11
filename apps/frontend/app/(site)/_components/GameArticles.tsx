@@ -1,7 +1,7 @@
 import type { GameArticleRow } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { ArticleFlags } from './BiasBar';
-import { ReviewSignals } from './IntegrityBlock';
+import { NoSignalsNote, ReviewSignals } from './IntegrityBlock';
 import { SourceIcon } from './SourceIcon';
 
 /**
@@ -97,6 +97,7 @@ export function GameArticles({
           <Row key={a.id} a={a} />
         ))}
       </div>
+      <NoSignalsNote rows={articles} />
     </section>
   );
 }

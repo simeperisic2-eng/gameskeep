@@ -1,6 +1,7 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
+import { syncDerivedGameStatuses } from './status';
 import { importCatalog, type CatalogImportResult } from './import';
 
 /**
@@ -35,22 +36,43 @@ export function getCatalogQueue(): Queue<CatalogJobData> {
 }
 
 /** Enqueue a catalog import (off the request path). */
-export async function enqueueCatalogImport(data: CatalogJobData = {}): Promise<void> {
+export async function enqueueCatalogImport(data: CatalogJobData = {}): Promise<string | undefined> {
   const q = getCatalogQueue();
-  await q.add(CATALOG_IMPORT_JOB, data, {
+  const job = await q.add(CATALOG_IMPORT_JOB, data, {
     removeOnComplete: 20,
     removeOnFail: 20,
     // Retry a few times with backoff so a transient DB hiccup at boot self-heals.
     attempts: 5,
     backoff: { type: 'exponential', delay: 3000 },
   });
+  return job.id;
+}
+
+export const GAME_STATUS_SYNC_JOB = 'game-status-sync';
+
+/**
+ * Arm the daily derived-status pass (hygiene 3) — a release date passing needs
+ * no human. Idempotent: BullMQ keys the repeatable job by name + interval.
+ */
+export async function armGameStatusSync(): Promise<void> {
+  await getCatalogQueue().add(
+    GAME_STATUS_SYNC_JOB,
+    {},
+    { repeat: { every: 24 * 60 * 60 * 1000 }, removeOnComplete: 5, removeOnFail: 5 },
+  );
 }
 
 /** Worker that runs catalog imports. Runs in the worker process. */
 export function startCatalogWorker(): Worker<CatalogJobData> {
   return new Worker<CatalogJobData>(
     CATALOG_QUEUE,
-    async (job: Job<CatalogJobData>): Promise<CatalogImportResult> => {
+    async (
+      job: Job<CatalogJobData>,
+    ): Promise<CatalogImportResult | { statusesDerived: number }> => {
+      // Daily (and on-demand) derived-status pass — no import.
+      if (job.name === GAME_STATUS_SYNC_JOB) {
+        return { statusesDerived: await syncDerivedGameStatuses() };
+      }
       const result = await importCatalog({
         skipIfPopulated: job.data.skipIfPopulated,
         limit: job.data.limit,
@@ -61,6 +83,8 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
         finishedAt: new Date().toISOString(),
       };
       await redis.set(CATALOG_STATE_KEY, JSON.stringify(state));
+      // Newly imported games get their status derived from the release date too.
+      await syncDerivedGameStatuses();
       return result;
     },
     { connection: queueConnection() },

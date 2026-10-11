@@ -16,6 +16,8 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
+import { lit, psql, waitForJob } from './lib/fixtures.mjs';
+
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const API = `${BASE}/admin/api`;
@@ -92,25 +94,25 @@ async function main() {
     `${total} games (provider=${status.json?.provider?.provider})`,
   );
 
-  // 3) idempotent re-import: trigger, wait for a fresh run, count unchanged
+  // 3) idempotent re-import: trigger, wait for THIS run (by job id — hygiene 3:
+  //    never "whichever import finished last"), count unchanged
   const before = await api('GET', '/catalog/status');
   const beforeCount = before.json?.totalGames ?? 0;
-  const beforeAt = before.json?.lastImport?.finishedAt ?? '';
   const trigger = await api('POST', '/catalog/import', {});
-  check('Trigger re-import (background)', trigger.status === 202, `HTTP ${trigger.status}`);
-  let afterCount = beforeCount;
-  for (let i = 0; i < 30; i += 1) {
-    await sleep(1500);
-    const s = await api('GET', '/catalog/status');
-    if ((s.json?.lastImport?.finishedAt ?? '') !== beforeAt) {
-      afterCount = s.json?.totalGames ?? 0;
-      break;
-    }
-  }
+  const importJobId = trigger.json?.jobId ?? null;
+  check(
+    'Trigger re-import (background) → its job id',
+    trigger.status === 202 && Boolean(importJobId),
+    `HTTP ${trigger.status} job=${importJobId}`,
+  );
+  const importRun = importJobId
+    ? await waitForJob('catalog', importJobId, 60_000)
+    : { ok: false, state: 'no job id' };
+  const afterCount = (await api('GET', '/catalog/status')).json?.totalGames ?? 0;
   check(
     'Re-import is idempotent (count unchanged)',
-    afterCount === beforeCount && beforeCount > 0,
-    `${beforeCount} → ${afterCount}`,
+    importRun.ok && afterCount === beforeCount && beforeCount > 0,
+    `job=${importRun.state} ${beforeCount} → ${afterCount}`,
   );
 
   // 4) auto-resolve by name — existing seeded game (DB hit)
@@ -186,6 +188,15 @@ async function main() {
     upRows.length > 0 && upRows.some((g) => g.slug === 'grand-theft-auto-vi'),
     `${upRows.length} upcoming`,
   );
+
+  // Hygiene 3: leave nothing behind — this run's queue entries go.
+  psql(
+    `DELETE FROM unmatched_games WHERE raw_name IN (${lit(unknownName)}, ${lit(`Spam Title ${RUN}`)});`,
+  );
+  const left = Number(
+    psql(`SELECT count(*) FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}`)};`),
+  );
+  check('Cleanup: this run left no unmatched-queue rows', left === 0, `${left} left`);
 
   print();
 }

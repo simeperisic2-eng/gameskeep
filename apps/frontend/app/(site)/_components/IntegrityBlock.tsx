@@ -1,5 +1,10 @@
 import type { PublicIntegrityRow, TopicArticleRow } from '@/lib/public-api';
-import { NO_SIGNALS_EXPLAINER, NO_SIGNALS_LABEL } from '@/lib/bias';
+import {
+  NO_SIGNALS_LABEL,
+  NO_SIGNALS_NOTE,
+  rowShowsNoSignals,
+  type SignalRowLike,
+} from '@/lib/bias';
 import { isHttpUrl } from '@/lib/url';
 import { ArticleFlags } from './BiasBar';
 
@@ -24,7 +29,8 @@ function shortDate(iso: string | null): string | null {
  * The review-integrity block (Phase P S1): up to three rows — review copy from
  * the publisher · embargo · sponsored event or press trip — each ONLY when a
  * signal was found, with its evidence (a short quoted snippet that links to the
- * source article, or an editor note) and a date. Nothing found → one line.
+ * source article, or an editor note) and a date. Nothing found → the short label
+ * only; the list around it explains it once (`NoSignalsNote`).
  * Evidence text is rendered escaped (React children), never as HTML.
  */
 export function IntegrityBlock({
@@ -38,10 +44,7 @@ export function IntegrityBlock({
     <div className="gk-integrity" aria-label="Review integrity">
       <span className="gk-integrity-head">Review integrity</span>
       {rows.length === 0 ? (
-        <p className="gk-integrity-none">
-          {NO_SIGNALS_LABEL}
-          <span className="gk-integrity-hint"> — {NO_SIGNALS_EXPLAINER}</span>
-        </p>
+        <p className="gk-integrity-none">{NO_SIGNALS_LABEL}</p>
       ) : (
         <ul className="gk-integrity-rows">
           {rows.map((r) => {
@@ -86,4 +89,17 @@ export function ReviewSignals({ row }: { row: TopicArticleRow }): React.JSX.Elem
       <IntegrityBlock rows={row.integrity ?? []} sourceUrl={row.url} />
     </div>
   );
+}
+
+/**
+ * The "No signals found" explanation, ONCE per list of coverage rows (hygiene 3)
+ * — rendered only when at least one row in the block shows the label.
+ */
+export function NoSignalsNote({
+  rows,
+}: {
+  rows: readonly SignalRowLike[];
+}): React.JSX.Element | null {
+  if (!rows.some(rowShowsNoSignals)) return null;
+  return <p className="gk-nosignal-note">{NO_SIGNALS_NOTE}</p>;
 }

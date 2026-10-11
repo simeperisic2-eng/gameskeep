@@ -49,10 +49,12 @@
  * Run after `npm run demo:up`: `npm run verify:i7`.
  */
 import { execSync } from 'node:child_process';
+import { lit, psql, purgeFixtures } from './lib/fixtures.mjs';
 
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const ADMIN_TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const SVC = { 'x-admin-token': ADMIN_TOKEN };
+const RUN_START = new Date().toISOString();
 const RUN = Date.now().toString(36);
 
 const results = [];
@@ -158,9 +160,9 @@ function print() {
   process.exit(pass === results.length ? 0 : 1);
 }
 
-async function main() {
+async function body() {
   cleanEmailThrottle();
-  if (!check('1. Stack ready (backend)', await waitForReady())) return print();
+  if (!check('1. Stack ready (backend)', await waitForReady())) return;
 
   // register → consume the outbox verify token → verify-email (signs in).
   async function makeVerified(tag) {
@@ -240,7 +242,7 @@ async function main() {
       `ed=${edId ? 'ok' : 'FAIL'} ec=${ecId ? 'ok' : 'FAIL'} noms=${nomA && nomB ? 'ok' : 'FAIL'}`,
     )
   )
-    return print();
+    return;
 
   const v1 = await makeVerified('v1');
   const v2 = await makeVerified('v2');
@@ -703,7 +705,37 @@ async function main() {
   // edition the site's current one.
   await api(BACK, `/admin/api/award-editions/${edId}`, { method: 'DELETE', headers: SVC });
   await api(BACK, `/admin/api/award-editions/${edId2}`, { method: 'DELETE', headers: SVC });
+}
 
+async function main() {
+  try {
+    await body();
+  } finally {
+    // Hygiene 3: nothing this run made may reach a public page — the nominee
+    // games (with their seeded critic rows), the throwaway editions + category,
+    // the anonymous subscriptions, every account and the delete-account tombstone.
+    const purge = await purgeFixtures({
+      run: RUN,
+      usernames: [`%${RUN}%`],
+      subjectSlugs: [`%${RUN}%`],
+      tombstonesSince: RUN_START,
+      extra: [
+        `DELETE FROM award_editions WHERE name = ${lit(`__i7 verify ${RUN}`)};`,
+        `DELETE FROM award_categories WHERE key = ${lit(`i7cat_${RUN}`)};`,
+        `DELETE FROM newsletter_subscriptions WHERE email LIKE ${lit(`%${RUN}%`)};`,
+      ],
+    });
+    const left = Number(
+      psql(
+        `SELECT (SELECT count(*) FROM users WHERE username LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM subjects WHERE slug LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM award_categories WHERE key LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM award_editions WHERE name LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM newsletter_subscriptions WHERE email LIKE ${lit(`%${RUN}%`)});`,
+      ),
+    );
+    check(
+      "Cleanup: this run's games, accounts, tombstone, editions, category + subscriptions removed",
+      purge.ok && left === 0,
+      `${purge.detail.join(' ')} leftovers=${left}`,
+    );
+  }
   print();
 }
 

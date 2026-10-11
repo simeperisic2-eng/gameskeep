@@ -114,11 +114,22 @@
  */
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {
+  lit,
+  psql,
+  purgeFixtures,
+  restoreSettings,
+  snapshotSettings,
+  waitForJob,
+} from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const ADMIN_TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
+const RUN_START = new Date().toISOString();
 const RUN = Date.now().toString(36);
+/** The settings rows this suite tunes — restored as they were, never deleted. */
+let SETTINGS_SNAPSHOT = null;
 
 const results = [];
 const record = (name, ok, detail = '') => results.push({ name, ok, detail });
@@ -232,10 +243,10 @@ async function waitForReady() {
   return false;
 }
 
-async function main() {
+async function body() {
   cleanAuthKeys();
   cleanEmailThrottle();
-  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
+  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return;
 
   const userA = {
     username: `gk_a_${RUN}`,
@@ -997,7 +1008,7 @@ async function main() {
   const rlStatuses = [];
   for (let i = 0; i < 4; i += 1)
     rlStatuses.push((await cRate(alice.jar, alice.csrf, ratingGame, 60)).status);
-  sqlOne(`DELETE FROM app_settings WHERE key='community'`); // restore defaults
+  restoreSettings(SETTINGS_SNAPSHOT); // restore what was there (hygiene 3)
   cleanRedisKeys('gk:community:write:*');
   check(
     '28. Per-user rate limit: with cap 3, the 4th write in the window is 429 (cap from app_settings)',
@@ -1051,7 +1062,7 @@ async function main() {
     csrf: mod.csrf,
   });
   const restoredState = sqlOne(`SELECT is_removed::text FROM comments WHERE id='${targetCmt}'`);
-  sqlOne(`DELETE FROM app_settings WHERE key='community'`); // restore defaults
+  restoreSettings(SETTINGS_SNAPSHOT); // restore what was there (hygiene 3)
   check(
     '31. A MODERATOR (rank 30) can restore an auto-hidden comment (is_removed back to false); audited',
     restore.status === 200 && restoredState === 'false',
@@ -1059,8 +1070,11 @@ async function main() {
   );
 
   // ── 32. article trust vote is credibility-weighted (decision 13) ────────────
-  const trustArticle = sqlOne(`SELECT id FROM articles ORDER BY publish_date DESC LIMIT 1`);
-  sqlOne(`DELETE FROM article_trust_votes WHERE article_id='${trustArticle}'`); // clean slate (re-run-safe)
+  // An article nobody has trust-voted (hygiene 3: never wipe real votes for a
+  // clean slate; this run's own votes go with its users at cleanup).
+  const trustArticle = sqlOne(
+    `SELECT a.id FROM articles a WHERE NOT EXISTS (SELECT 1 FROM article_trust_votes v WHERE v.article_id = a.id) ORDER BY a.publish_date DESC NULLS LAST LIMIT 1`,
+  );
   await api(BACK, `/community/articles/${trustArticle}/trust-vote`, {
     method: 'POST',
     jar: proven[0].jar,
@@ -1143,9 +1157,8 @@ async function main() {
   // ── 34. upcoming hype: one-per-user toggle, credibility-weighted count ───────
   const hypeGame =
     sqlOne(
-      `SELECT g.id FROM games g WHERE g.status IN ('announced','in_development','early_access') ORDER BY g.created_at DESC LIMIT 1`,
-    ) || ratingGame;
-  sqlOne(`DELETE FROM game_hype_votes WHERE game_id='${hypeGame}'`); // clean slate (re-run-safe)
+      `SELECT g.id FROM games g WHERE g.status IN ('announced','in_development','early_access') AND NOT EXISTS (SELECT 1 FROM game_hype_votes h WHERE h.game_id = g.id) ORDER BY g.created_at DESC LIMIT 1`,
+    ) || ratingGame; // nobody's hype yet → deterministic, nothing real wiped (hygiene 3)
   const h1 = await api(BACK, `/community/games/${hypeGame}/hype`, {
     method: 'POST',
     jar: proven[0].jar,
@@ -1296,18 +1309,15 @@ async function main() {
       body: { kind: 'like' },
     });
 
-  // Trigger the background reputation recompute and wait for its state to advance.
+  // Trigger the background reputation recompute and wait for THAT job (by id —
+  // hygiene 3: never "whichever recompute finished last").
   async function recomputeReputation() {
-    const before =
-      (await api(BACK, '/admin/api/reputation/status', { headers: SVC })).json?.data?.finishedAt ??
-      '';
-    await api(BACK, '/admin/api/reputation/recompute', { method: 'POST', headers: SVC });
-    for (let i = 0; i < 40; i += 1) {
-      await sleep(1000);
-      const s = (await api(BACK, '/admin/api/reputation/status', { headers: SVC })).json?.data;
-      if (s && (s.finishedAt ?? '') !== before) return s;
-    }
-    return null;
+    const r = await api(BACK, '/admin/api/reputation/recompute', { method: 'POST', headers: SVC });
+    const jobId = r.json?.jobId ?? null;
+    if (!jobId) return null;
+    const done = await waitForJob('reputation', jobId, 60_000);
+    if (!done.ok) return null;
+    return (await api(BACK, '/admin/api/reputation/status', { headers: SVC })).json?.data ?? null;
   }
   const repRow = () => ({
     rep: Number(sqlOne(`SELECT reputation FROM users WHERE id='${repTarget.id}'`)),
@@ -1372,7 +1382,7 @@ async function main() {
     );
   const verifiedBadge = badgeCount(repTarget.id, 'verified');
   const aliceEarly = badgeCount(alice.id, 'early-voter');
-  sqlOne(`DELETE FROM app_settings WHERE key='reputation'`); // restore defaults
+  restoreSettings(SETTINGS_SNAPSHOT); // restore what was there (hygiene 3)
   check(
     '41. Auto-badges: a verified user earns "verified"; a user past the vote threshold earns "early-voter"; two recomputes leave exactly ONE row each (idempotent)',
     verifiedBadge === 1 && aliceEarly === 1,
@@ -1758,6 +1768,35 @@ async function main() {
   );
 
   cleanAuthKeys(); // targeted — so an immediate rerun starts clean
+}
+
+async function main() {
+  SETTINGS_SNAPSHOT = snapshotSettings(['community', 'reputation']);
+  try {
+    await body();
+  } finally {
+    // Hygiene 3: settings back as they were; every account this run made (and
+    // the tombstones its delete-account probes left) + its games go — their
+    // votes, comments, follows, reports cascade; ratings/reputation recompute.
+    restoreSettings(SETTINGS_SNAPSHOT);
+    const purge = await purgeFixtures({
+      run: RUN,
+      usernames: [`%${RUN}%`],
+      subjectSlugs: [`%${RUN}%`],
+      tombstonesSince: RUN_START,
+    });
+    const left = Number(
+      psql(
+        `SELECT (SELECT count(*) FROM users WHERE username LIKE ${lit(`%${RUN}%`)} OR (username LIKE 'deleted\\_%' AND created_at >= ${lit(RUN_START)})) + (SELECT count(*) FROM subjects WHERE slug LIKE ${lit(`%${RUN}%`)});`,
+      ),
+    );
+    check(
+      "Cleanup: this run's accounts, tombstones + games removed; settings restored; ratings + reputation recomputed",
+      purge.ok && left === 0,
+      `${purge.detail.join(' ')} leftovers=${left}`,
+    );
+    cleanAuthKeys();
+  }
   print();
 }
 

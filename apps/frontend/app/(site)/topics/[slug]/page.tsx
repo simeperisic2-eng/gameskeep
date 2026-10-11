@@ -3,7 +3,13 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getComments, getTopic, type TopicDetail } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
-import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
+import {
+  distinctSubtitle,
+  publicTopicStatus,
+  relativeTime,
+  scoreToTen,
+  truncateWords,
+} from '@/lib/format';
 import { breadcrumbLd, newsArticleLd, videoGameRatingLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { BiasBar } from '../../_components/BiasBar';
@@ -23,12 +29,6 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 // Memoize per request so generateMetadata + the page share one backend fetch.
 const loadTopic = cache((slug: string): Promise<TopicDetail | null> => getTopic(slug));
 
-const STATUS_LABEL: Record<string, string> = {
-  developing: 'Developing',
-  ongoing: 'Ongoing',
-  resolved: 'Resolved',
-};
-
 export async function generateMetadata({
   params,
 }: {
@@ -40,7 +40,7 @@ export async function generateMetadata({
 
   const url = `${siteUrl}/topics/${topic.slug}`;
   const description =
-    topic.tldr ??
+    distinctSubtitle(topic.title, topic.tldr) ??
     truncateWords(topic.aiSummary, 180) ??
     `How ${topic.sourceCount} outlets are covering this story — and the coverage signals we found.`;
 
@@ -77,7 +77,9 @@ export default async function TopicPage({
   const topic = await loadTopic(slug);
   if (!topic) notFound();
 
-  const statusLabel = STATUS_LABEL[topic.status] ?? topic.status;
+  // "Resolved" is internal clustering state — no public chip (hygiene 3).
+  const statusLabel = publicTopicStatus(topic.status);
+  const subtitle = distinctSubtitle(topic.title, topic.tldr);
   const updated = relativeTime(topic.lastActivityAt);
   const summary = truncateWords(topic.aiSummary, 600);
 
@@ -104,7 +106,9 @@ export default async function TopicPage({
         <header className="gk-story-head">
           <div className="gk-story-head-main">
             <div className="gk-chips">
-              <span className={`gk-status gk-status-${topic.status}`}>{statusLabel}</span>
+              {statusLabel ? (
+                <span className={`gk-status gk-status-${topic.status}`}>{statusLabel}</span>
+              ) : null}
               {topic.typeLabel ? <span className="gk-chip amber">{topic.typeLabel}</span> : null}
               {topic.games.map((g) => (
                 <a key={g.slug} className="gk-chip gk-chip-link" href={`/games/${g.slug}`}>
@@ -116,7 +120,7 @@ export default async function TopicPage({
               <h1 className="gk-story-title">{topic.title}</h1>
               <FollowButton entityType="topic" slug={topic.slug} />
             </div>
-            {topic.tldr ? <p className="gk-story-tldr">{topic.tldr}</p> : null}
+            {subtitle ? <p className="gk-story-tldr">{subtitle}</p> : null}
             <div className="gk-story-meta">
               <span>
                 {topic.sourceCount} {topic.sourceCount === 1 ? 'outlet' : 'outlets'}

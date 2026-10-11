@@ -66,10 +66,14 @@
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
 import { execSync } from 'node:child_process';
+import { lit, psql, purgeFixtures, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
+const RUN_START = new Date().toISOString();
 const RUN = Date.now().toString(36);
+/** The settings rows this suite tunes — restored as they were, never deleted. */
+let SETTINGS_SNAPSHOT = null;
 const DEMO_PW = 'Demo-Panel-2026!';
 
 const results = [];
@@ -181,8 +185,8 @@ function print() {
 }
 const code = (base, path, jar) => api(base, path, { jar }).then((r) => r.status);
 
-async function main() {
-  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
+async function body() {
+  if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return;
 
   // ── 2. blanket-access fix: anon through the FRONTEND BFF is 401, not 200 ─────
   const anonBff = await code(FRONT, '/admin/api/dashboard', {});
@@ -597,7 +601,7 @@ async function main() {
     `promo=${promoTarget} front=${top3[0]}`,
   );
 
-  // cleanup: remove the promo placement + reset the lists config to defaults
+  // cleanup: remove the promo placement + restore the lists config as it was
   const promoPid = promoPlacement.json?.data?.id;
   if (promoPid)
     await api(BACK, `/admin/api/ad-placements/${promoPid}`, {
@@ -605,7 +609,7 @@ async function main() {
       jar: adm.jar,
       csrf: adm.csrf,
     });
-  sqlOne(`DELETE FROM app_settings WHERE key='lists'`);
+  restoreSettings(SETTINGS_SNAPSHOT); // hygiene 3: restore, never delete
 
   // ════════════════════════ Slice 6 — phase-close security fixes ══════════════
   // ── 25. F1: signed-in subscribe cannot hijack another user's subscription ────
@@ -773,9 +777,42 @@ async function main() {
       !/unsafe-inline/.test(scriptSrc),
     scriptSrc.replace(/nonce-[^']*/, 'nonce-<N>'),
   );
+}
 
+async function main() {
+  SETTINGS_SNAPSHOT = snapshotSettings(['lists']);
+  try {
+    await body();
+  } finally {
+    // Hygiene 3: settings back as they were; every account, placement, badge,
+    // campaign and subscription this run made goes (most already did inline —
+    // this is the guarantee when a check fails half-way).
+    restoreSettings(SETTINGS_SNAPSHOT);
+    const purge = await purgeFixtures({
+      run: RUN,
+      usernames: [`%${RUN}%`],
+      tombstonesSince: RUN_START,
+      extra: [
+        `DELETE FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)};`,
+        `DELETE FROM badges WHERE key = ${lit(`i8_${RUN}`)};`,
+        `DELETE FROM newsletter_campaigns WHERE subject LIKE ${lit(`%${RUN}%`)};`,
+        `DELETE FROM newsletter_subscriptions WHERE email LIKE ${lit(`%${RUN}%`)};`,
+      ],
+    });
+    const left = Number(
+      psql(
+        `SELECT (SELECT count(*) FROM users WHERE username LIKE ${lit(`%${RUN}%`)} OR email LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM badges WHERE key LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM newsletter_subscriptions WHERE email LIKE ${lit(`%${RUN}%`)});`,
+      ),
+    );
+    check(
+      "Cleanup: this run's accounts, placements, badge, campaigns + subscriptions removed; lists config restored",
+      purge.ok && left === 0,
+      `${purge.detail.join(' ')} leftovers=${left}`,
+    );
+  }
   print();
 }
+
 main().catch((e) => {
   console.error(e);
   process.exit(1);
