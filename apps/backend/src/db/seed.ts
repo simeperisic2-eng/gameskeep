@@ -1229,6 +1229,8 @@ async function seedRatings(opts: {
       currentPlayers: Math.round(current * f),
       peakPlayers: i === shape.length - 1 ? peak : null,
       capturedAt: new Date(now - (shape.length - 1 - i) * 7 * 86_400_000),
+      // Mock history (S2): expanded to daily samples + realigned at demo boot.
+      demoSeed: true,
     }));
     await db.insert(gamePlayerCounts).values(rows);
   }

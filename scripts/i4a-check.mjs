@@ -26,7 +26,7 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
-import { lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
+import { auditSql, lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const API = `${BASE}/admin/api`;
@@ -125,12 +125,21 @@ let CLUSTERING_SNAPSHOT = null;
  * texts, never anything an editor wrote — are cleared before this run starts.
  */
 function clearOwnLeftovers() {
+  if (ownLeftovers() === 0) return; // nothing left by a previous run
   psql(
     [
+      'BEGIN;',
+      auditSql({
+        entityType: 'articles',
+        entityId: 'verify-i4a',
+        summary:
+          "verify cleanup cleared a previous i4a run's editorial fixtures (exact fixture texts)",
+      }),
       `UPDATE articles SET editor_note = NULL WHERE editor_note = ${lit(I4A_NOTE)};`,
       `UPDATE articles SET internal_assessment = NULL WHERE internal_assessment = ${lit(SECRET)};`,
       `UPDATE articles SET influence_override = NULL, influence_override_reason = NULL WHERE influence_override_reason = ${lit(I4A_OVERRIDE_REASON)};`,
       `DELETE FROM article_editorial_carryover WHERE editor_note = ${lit(I4A_NOTE)} OR internal_assessment = ${lit(SECRET)} OR influence_override_reason = ${lit(I4A_OVERRIDE_REASON)};`,
+      'COMMIT;',
     ].join('\n'),
   );
 }

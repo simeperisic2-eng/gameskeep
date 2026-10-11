@@ -35,6 +35,7 @@ export * from './awards';
 export * from './community';
 export * from './gdpr';
 export * from './newsletter';
+export * from './homepage';
 export * from './ads';
 // (ads exported above; barrel keeps a single import surface for the seed/client)
 export * from './unmatched';

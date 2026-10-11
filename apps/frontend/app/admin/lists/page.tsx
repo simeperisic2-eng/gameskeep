@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { getListsConfig, getListsPreview, getListsSlots } from '../lib';
+import { getListsConfig, getListsSlots } from '../lib';
 import { ListsManager } from '../_components/ListsManager';
 
 export const dynamic = 'force-dynamic';
@@ -9,17 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default async function ListsPage(): Promise<React.JSX.Element> {
-  const [{ config, promotedGameSlugs }, preview, slots] = await Promise.all([
-    getListsConfig(),
-    getListsPreview(),
-    getListsSlots(),
-  ]);
-  return (
-    <ListsManager
-      initialConfig={config}
-      promotedGameSlugs={promotedGameSlugs}
-      initialPreview={preview}
-      slots={slots}
-    />
-  );
+  const [{ config }, slots] = await Promise.all([getListsConfig(), getListsSlots()]);
+  return <ListsManager initialConfig={config} slots={slots} />;
 }

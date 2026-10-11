@@ -4,6 +4,7 @@ import { getArticlesQueue } from '../articles/jobs';
 import { getCatalogQueue } from '../catalog/jobs';
 import { getRatingsQueue } from '../ratings/jobs';
 import { getReputationQueue } from '../reputation/jobs';
+import { getHomepageQueue } from '../homepage/jobs';
 import { sendError } from './http';
 
 /**
@@ -17,6 +18,7 @@ const QUEUES: Record<string, () => Queue> = {
   catalog: getCatalogQueue as () => Queue,
   ratings: getRatingsQueue as () => Queue,
   reputation: getReputationQueue as () => Queue,
+  homepage: getHomepageQueue as () => Queue,
 };
 
 export async function registerJobAdminRoutes(admin: FastifyInstance): Promise<void> {

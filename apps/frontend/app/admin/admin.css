@@ -546,3 +546,59 @@
 .gk-integrity-admin-row .gk-nl-actions {
   margin-top: 4px;
 }
+
+/* Phase P S2 — homepage sections */
+.gk-hp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gk-hp-row {
+  border: 1px solid var(--gk-card-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.gk-hp-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.gk-hp-row-head > .gk-cp-dim {
+  flex: 1 1 auto;
+  font-size: 12px;
+}
+.gk-hp-move {
+  display: inline-flex;
+  gap: 4px;
+}
+.gk-hp-editor {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gk-hp-sub {
+  border-top: 1px solid var(--gk-card-border);
+  padding-top: 12px;
+}
+.gk-hp-rule {
+  display: contents;
+}
+.gk-hp-pin {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.gk-hp-pin input[type='number'] {
+  width: 64px;
+}
+.gk-hp-pin input:not([type]) {
+  flex: 1 1 200px;
+  min-width: 0;
+}

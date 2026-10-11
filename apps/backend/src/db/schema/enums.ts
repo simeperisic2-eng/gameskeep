@@ -11,6 +11,8 @@ import {
   AWARD_PHASES,
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
+  HOMEPAGE_SECTION_KINDS,
+  HOMEPAGE_SECTION_MODES,
   INTEGRITY_SIGNAL_KINDS,
   INTEGRITY_SIGNAL_ORIGINS,
   INTEGRITY_SIGNAL_STATUSES,
@@ -70,3 +72,5 @@ export const integritySignalStatusEnum = pgEnum(
   'integrity_signal_status',
   INTEGRITY_SIGNAL_STATUSES,
 );
+export const homepageSectionKindEnum = pgEnum('homepage_section_kind', HOMEPAGE_SECTION_KINDS);
+export const homepageSectionModeEnum = pgEnum('homepage_section_mode', HOMEPAGE_SECTION_MODES);

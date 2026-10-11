@@ -48,10 +48,35 @@
  *         signals found" rows short + one explanation per block; related links
  *         in brand colours
  *   H3.7  after the full ladder no verify fixture on any public route or in the DB
+ *
+ *  S2 — homepage sections (commit 1: schema, DB rejection, snapshots, settings, admin)
+ *   S2.1  (acc. 1) reorder in admin → the homepage order follows after save; audited
+ *   S2.2  (acc. 2) a Promoted placement on Trending / any data section → API 400 AND
+ *         the DB rejects it (FK + CHECK); a data section cannot be re-typed sellable
+ *   S2.3  (acc. 3) a discovery section holds ONE Promoted item at its position, with
+ *         the advertiser; a 2nd active → 409; a story is never promotable
+ *   S2.4  (acc. 4) too few samples → "—"; an empty previous window → "New"
+ *   S2.5  (acc. 5) a pinned item keeps its position across refreshes
+ *   S2.6  a ring of fresh accounts adds nothing to Trending; a credible one counts
+ *   S2.7  Top rated ranks on the critic + community layers only
+ *   S2.8  the homepage serves the STORED snapshots (no ranking on a request)
+ *   S2.9  section edits validated per kind; RBAC
+ *   S2.10 player counts sampled daily; the game chart stays weekly
+ *   S2.11 the Standalone rule keys on the type’s stable role (rename-proof)
+ *   S2.12 ads.showUnsoldPlaceholder default false, admin-set + audited
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { lit, psql, purgeFixtures, runJobAndWait } from './lib/fixtures.mjs';
+import {
+  auditSql,
+  lit,
+  psql,
+  purgeFixtures,
+  restoreSettings,
+  runJobAndWait,
+  snapshotSettings,
+  waitForJob as waitForJobLib,
+} from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
@@ -773,11 +798,23 @@ const SIGNAL_COLS = 'status, editor_note, decided_by_user_id, decided_by_label, 
 const EDITORIAL_COLS =
   'editor_note, internal_assessment, influence_override, influence_override_reason, quality_override, quality_override_reason';
 
-/** Put one signal's decision fields back exactly as snapshotted. */
+/** Put one signal's decision fields back exactly as snapshotted — audited. */
 function restoreSignal(id, json) {
   if (!id || !json) return;
+  const now = rowJson('article_integrity_signals', id, SIGNAL_COLS);
+  if (!now || now === json) return;
   psql(
-    `UPDATE article_integrity_signals s SET status = r.status, editor_note = r.editor_note, decided_by_user_id = r.decided_by_user_id, decided_by_label = r.decided_by_label, decided_at = r.decided_at FROM json_populate_record(NULL::article_integrity_signals, ${lit(json)}) r WHERE s.id = ${lit(id)};`,
+    [
+      'BEGIN;',
+      `UPDATE article_integrity_signals s SET status = r.status, editor_note = r.editor_note, decided_by_user_id = r.decided_by_user_id, decided_by_label = r.decided_by_label, decided_at = r.decided_at FROM json_populate_record(NULL::article_integrity_signals, ${lit(json)}) r WHERE s.id = ${lit(id)};`,
+      auditSql({
+        entityType: 'article-integrity',
+        entityId: id,
+        changes: { decision: { from: JSON.parse(now), to: JSON.parse(json) } },
+        summary: 'verify cleanup restored the signal decision this run changed',
+      }),
+      'COMMIT;',
+    ].join('\n'),
   );
 }
 
@@ -785,11 +822,30 @@ function restoreH3() {
   for (const { id, json } of [...h3Restore.signals].reverse()) restoreSignal(id, json);
   for (const { guid, json } of h3Restore.articles) {
     if (!json) continue;
+    const id = articleIdOfGuid(guid);
+    const now = psql(
+      `SELECT row_to_json(x) FROM (SELECT ${EDITORIAL_COLS} FROM articles WHERE external_guid = ${lit(guid)}) x;`,
+    );
+    if (!id || !now || now === json) continue;
     psql(
-      `UPDATE articles a SET editor_note = r.editor_note, internal_assessment = r.internal_assessment, influence_override = r.influence_override, influence_override_reason = r.influence_override_reason, quality_override = r.quality_override, quality_override_reason = r.quality_override_reason FROM json_populate_record(NULL::articles, ${lit(json)}) r WHERE a.external_guid = ${lit(guid)};`,
+      [
+        'BEGIN;',
+        `UPDATE articles a SET editor_note = r.editor_note, internal_assessment = r.internal_assessment, influence_override = r.influence_override, influence_override_reason = r.influence_override_reason, quality_override = r.quality_override, quality_override_reason = r.quality_override_reason FROM json_populate_record(NULL::articles, ${lit(json)}) r WHERE a.external_guid = ${lit(guid)};`,
+        auditSql({
+          entityType: 'articles',
+          entityId: id,
+          changes: { editorial: { from: JSON.parse(now), to: JSON.parse(json) } },
+          summary: 'verify cleanup restored the editorial fields this run changed',
+        }),
+        'COMMIT;',
+      ].join('\n'),
     );
   }
-  for (const id of h3Restore.sources) psql(`DELETE FROM sources WHERE id = ${lit(id)};`);
+  for (const id of h3Restore.sources) {
+    psql(
+      `BEGIN;\nDELETE FROM sources WHERE id = ${lit(id)};\n${auditSql({ action: 'delete', entityType: 'sources', entityId: id, summary: 'verify cleanup removed its fixture source' })}\nCOMMIT;`,
+    );
+  }
 }
 
 /** Run a catalog import (the derived status is synced after it) and wait for it by id. */
@@ -1086,7 +1142,7 @@ async function h3() {
 
 /** Fixture names every verify suite uses — none may reach a public page. */
 const FIXTURE_RE =
-  /Disconnect Probe|Bombtest|Fairtest Realm|Launchday Saga|Voidtest|Lowtest|I7 Nominee|I7 Test|__i7 verify|Verify (?:Game|Source|Topic|Suggest)|Typed Topic|UpPromo|Sec Adv|Lists Promo|H3 (?:note|carryover|Src|Owned)|\bgk_(?!voter[1-8]\b)[a-z0-9]+(?:_[a-z0-9]+)*_[0-9a-z]{8}\b|\bi4b[pu]\d+_|\bi8_[a-z0-9]+_|\bp_(?:vote|nonstaff)_/;
+  /Disconnect Probe|Bombtest|Fairtest Realm|Launchday Saga|Voidtest|Lowtest|I7 Nominee|I7 Test|__i7 verify|Verify (?:Game|Source|Topic|Suggest)|Typed Topic|UpPromo|Sec Adv|Lists Promo|S2 Promo|H3 (?:note|carryover|Src|Owned)|\bgk_(?!voter[1-8]\b)[a-z0-9]+(?:_[a-z0-9]+)*_[0-9a-z]{8}\b|\bi4b[pu]\d+_|\bi8_[a-z0-9]+_|\bp_(?:vote|nonstaff)_/;
 
 async function fixtureCrawl() {
   const routes = [
@@ -1117,7 +1173,7 @@ async function fixtureCrawl() {
       "UNION ALL SELECT 'games:' || count(*) FROM subjects WHERE slug ~ '^(disconnect-probe|bombtest|fairtest-realm|launchday-saga|voidtest|lowtest|i7-nominee-[ab]|verify-game)-'",
       "UNION ALL SELECT 'awards:' || ((SELECT count(*) FROM award_categories WHERE key LIKE 'i7cat\\_%') + (SELECT count(*) FROM award_editions WHERE name LIKE '\\_\\_i7 verify%'))",
       "UNION ALL SELECT 'subscriptions:' || count(*) FROM newsletter_subscriptions WHERE email ~ '@(example\\.test|verify\\.local)$'",
-      "UNION ALL SELECT 'placements:' || count(*) FROM ad_placements WHERE advertiser_name ~ '^(UpPromo|Sec Adv|Lists Promo|F4 Adv) '",
+      "UNION ALL SELECT 'placements:' || count(*) FROM ad_placements WHERE advertiser_name ~ '^(UpPromo|Sec Adv|Lists Promo|F4 Adv|S2 Promo) '",
       "UNION ALL SELECT 'sources:' || count(*) FROM sources WHERE name ~ '^(Verify Source|H3 (Src|Owned)) '",
       "UNION ALL SELECT 'topics:' || count(*) FROM topics WHERE title ~ '^(Verify Topic|Typed Topic) '",
       "UNION ALL SELECT 'queue:' || count(*) FROM unmatched_games WHERE raw_name ~ '^(Phantom Title|Spam Title|Verify Suggest|Burst|NoCsrf) ' OR raw_name LIKE '%<script>%'",
@@ -1135,12 +1191,487 @@ async function fixtureCrawl() {
   );
 }
 
+// ═══════════════════════ Phase P S2 — homepage sections ══════════════════════
+// Restored at the end (finally): order, pins, section fields, placements,
+// settings rows and the source-type rename this group makes.
+const s2Restore = {
+  order: null,
+  pins: new Map(), // key → [{position, topicSlug|gameSlug}]
+  sections: new Map(), // key → original fields patch
+  placements: [],
+  settings: null,
+  sourceType: null,
+};
+
+const adminApi = (path, method = 'GET', body) =>
+  api(BACK, `/admin/api${path}`, { method, token: TOKEN, body });
+
+async function homeSections() {
+  return (await api(BACK, '/public/homepage')).json?.data?.sections ?? [];
+}
+async function sectionsConfig() {
+  return (await adminApi('/homepage/config')).json?.data?.sections ?? [];
+}
+async function waitHomepage(res) {
+  const id = res?.json?.jobId;
+  return id ? (await waitForHomepageJob(id)).ok : false;
+}
+const waitForHomepageJob = (id) => waitForJobLib('homepage', id, 90_000);
+async function recomputeHomepage() {
+  return waitHomepage(await adminApi('/homepage/recompute', 'POST', {}));
+}
+const pinsOf = (cfg, key) =>
+  (cfg.find((x) => x.key === key)?.pins ?? []).map((p) =>
+    p.topicSlug
+      ? { position: p.position, topicSlug: p.topicSlug }
+      : { position: p.position, gameSlug: p.gameSlug },
+  );
+/** Targeted cleanup of the per-IP email throttle keys (never flushall). */
+function clearOwnEmailThrottle() {
+  try {
+    execSync(
+      `docker exec gameskeep-redis-1 sh -c "redis-cli --scan --pattern 'gk:email:send:*' | xargs -r redis-cli del"`,
+      { encoding: 'utf8' },
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+const itemSlug = (i) => i.topic?.slug ?? i.game?.slug ?? null;
+
+async function s2a() {
+  const cfg0 = await sectionsConfig();
+  s2Restore.order = cfg0.map((x) => x.key);
+  s2Restore.settings = snapshotSettings(['homepage', 'ads']);
+  for (const key of ['trending', 'featured']) s2Restore.pins.set(key, pinsOf(cfg0, key));
+  const featured0 = cfg0.find((x) => x.key === 'featured');
+  s2Restore.sections.set('featured', {
+    promotedPosition: featured0?.promotedPosition ?? null,
+    mode: featured0?.mode,
+  });
+  const mod = await login('demo-moderator', DEMO_PW);
+
+  // ── S2.1 (acc.1) reorder → the homepage order follows after save, audited ──
+  const newOrder = [...s2Restore.order];
+  const ti = newOrder.indexOf('top_rated');
+  newOrder.splice(ti, 1);
+  newOrder.splice(1, 0, 'top_rated'); // Top rated right after the briefing
+  const modOrder = await api(BACK, '/admin/api/homepage/order', {
+    method: 'PUT',
+    jar: mod.jar,
+    csrf: mod.csrf,
+    body: { keys: newOrder },
+  });
+  const put = await adminApi('/homepage/order', 'PUT', { keys: newOrder });
+  const done = await waitHomepage(put);
+  const served = (await homeSections()).map((x) => x.key);
+  const expected = newOrder.filter((k) => served.includes(k));
+  const orderAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'homepage-section' AND entity_id = 'order' AND created_at > now() - interval '5 minutes';",
+    ),
+  );
+  check(
+    'S2.1 (acc.1) reordering sections in admin changes the homepage order after save — no deploy; audited; moderator 403',
+    modOrder.status === 403 &&
+      put.status === 200 &&
+      done &&
+      served.join(',') === expected.join(',') &&
+      served.indexOf('top_rated') < served.indexOf('trending') &&
+      orderAudit >= 1,
+    `mod=${modOrder.status} put=${put.status} served=${served.slice(0, 4).join('>')}… audit=${orderAudit}`,
+  );
+
+  // ── S2.2 (acc.2) a paid placement for a DATA section is rejected: API + DB ──
+  const game =
+    psql("SELECT slug FROM subjects WHERE type = 'game' AND slug = 'elden-ring';") || 'elden-ring';
+  const dataKeys = cfg0.filter((x) => x.kind === 'data').map((x) => x.key);
+  const apiRejects = [];
+  for (const key of dataKeys) {
+    const r = await adminApi(`/homepage/sections/${key}/promotions`, 'POST', {
+      advertiserName: `S2 Promo ${RUN}`,
+      gameSlug: game,
+    });
+    apiRejects.push(`${key}:${r.status}`);
+  }
+  const dbTry = (sqlText) => {
+    try {
+      psql(sqlText);
+      return 'ACCEPTED';
+    } catch (e) {
+      return /check constraint|foreign key/i.test(String(e.stderr ?? e.message))
+        ? 'rejected'
+        : 'error';
+    }
+  };
+  const trendingId = psql("SELECT id FROM homepage_sections WHERE key = 'trending';");
+  const gameSubject = psql(`SELECT id FROM subjects WHERE slug = ${lit(game)};`);
+  const asDiscovery = dbTry(
+    `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id) VALUES (${lit(trendingId)}, 'discovery', ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(gameSubject)});`,
+  );
+  const asData = dbTry(
+    `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id) VALUES (${lit(trendingId)}, 'data', ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(gameSubject)});`,
+  );
+  const retype = dbTry("UPDATE homepage_sections SET kind = 'discovery' WHERE key = 'trending';");
+  check(
+    'S2.2 (acc.2) attaching a Promoted placement to Trending (and every data section) is rejected — API 400 AND the DB (FK/CHECK); a data section cannot be re-typed sellable',
+    apiRejects.every((x) => x.endsWith(':400')) &&
+      dataKeys.includes('trending') &&
+      asDiscovery === 'rejected' &&
+      asData === 'rejected' &&
+      retype === 'rejected',
+    `api=${apiRejects.join(' ')} db(as discovery)=${asDiscovery} db(as data)=${asData} retype=${retype}`,
+  );
+
+  // ── S2.3 (acc.3) Featured: the one Promoted item at its position, labeled ──
+  const story = psql(
+    "SELECT slug FROM topics WHERE bias_distribution IS NOT NULL AND (bias_distribution->>'articleCount')::int > 0 ORDER BY last_activity_at DESC LIMIT 1;",
+  );
+  await adminApi('/homepage/sections/featured', 'PATCH', { promotedPosition: 2, mode: 'manual' });
+  await adminApi('/homepage/sections/featured/pins', 'PUT', {
+    pins: [
+      { position: 1, topicSlug: story },
+      { position: 3, gameSlug: 'hades-ii' },
+    ],
+  });
+  const promo = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+    advertiserName: `S2 Promo ${RUN}`,
+    gameSlug: game,
+  });
+  const promoId = promo.json?.data?.id;
+  if (promoId) s2Restore.placements.push(promoId);
+  const act = await adminApi(`/ads/placements/${promoId}/status`, 'POST', { status: 'active' });
+  await waitHomepage(act);
+  const featured = (await homeSections()).find((x) => x.key === 'featured');
+  const at2 = featured?.items?.[1];
+  const second = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+    advertiserName: `S2 Promo B ${RUN}`,
+    gameSlug: 'hades-ii',
+  });
+  const secondId = second.json?.data?.id;
+  if (secondId) s2Restore.placements.push(secondId);
+  const secondAct = await adminApi(`/ads/placements/${secondId}/status`, 'POST', {
+    status: 'active',
+  });
+  const storyPromo = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+    advertiserName: `S2 Promo C ${RUN}`,
+    gameSlug: story,
+  });
+  const dataPaid = (await homeSections())
+    .filter((x) => x.kind === 'data')
+    .some((x) => x.items.some((i) => i.promoted));
+  check(
+    'S2.3 (acc.3) a discovery section carries ONE Promoted item at its admin-chosen position with the advertiser; a second active one → 409; a story is never promotable; no data section holds a paid item',
+    promo.status === 201 &&
+      act.status === 200 &&
+      at2?.promoted?.advertiser === `S2 Promo ${RUN}` &&
+      itemSlug(at2) === game &&
+      featured?.items?.filter((i) => i.promoted).length === 1 &&
+      second.status === 201 &&
+      secondAct.status === 409 &&
+      storyPromo.status === 400 &&
+      !dataPaid,
+    `pos2=${itemSlug(at2)} label=${at2?.promoted?.advertiser ?? '—'} 2nd-active=${secondAct.status} story=${storyPromo.status} dataPaid=${dataPaid}`,
+  );
+
+  // ── S2.4 (acc.4) Δ honesty: too few samples → "—"; empty prior window → New ──
+  const playersOf = async () => (await homeSections()).find((x) => x.key === 'by_players');
+  const p3 = await playersOf();
+  const pctAt3 = (p3?.items ?? []).filter((i) => i.delta?.kind === 'pct').length;
+  await waitHomepage(await adminApi('/homepage/settings', 'PATCH', { deltaMinPoints: 50 }));
+  const p50 = await playersOf();
+  const allDash = (p50?.items ?? []).length > 0 && p50.items.every((i) => i.delta?.kind === 'none');
+  await waitHomepage(await adminApi('/homepage/settings', 'PATCH', { deltaMinPoints: 3 }));
+  // "New": find a window where some public story has coverage now and NONE in the
+  // previous window (deterministic on any data), set it, assert, put 48h back.
+  const defaultWindow = cfg0.find((x) => x.key === 'trending')?.deltaWindowHours;
+  const counts2 = (slug, w) =>
+    psql(
+      `SELECT count(*) FILTER (WHERE a.publish_date > now() - interval '${w} hours' AND a.publish_date <= now()) || '|' || count(*) FILTER (WHERE a.publish_date > now() - interval '${2 * w} hours' AND a.publish_date <= now() - interval '${w} hours') FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE t.slug = ${lit(slug)};`,
+    ).split('|');
+  let win = null;
+  let firstNew = null;
+  for (const w of [48, 24, 12, 6, 72, 96, 168]) {
+    const slug = psql(
+      `SELECT t.slug FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE t.bias_distribution IS NOT NULL GROUP BY t.slug HAVING count(*) FILTER (WHERE a.publish_date > now() - interval '${w} hours' AND a.publish_date <= now()) > 0 AND count(*) FILTER (WHERE a.publish_date > now() - interval '${2 * w} hours' AND a.publish_date <= now() - interval '${w} hours') = 0 LIMIT 1;`,
+    );
+    if (slug) {
+      win = w;
+      firstNew = slug;
+      break;
+    }
+  }
+  if (win && win !== defaultWindow) {
+    await waitHomepage(
+      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: win }),
+    );
+  }
+  const trendW = (await homeSections()).find((x) => x.key === 'trending');
+  const newItem = (trendW?.items ?? []).find((i) => itemSlug(i) === firstNew);
+  const counts = firstNew ? counts2(firstNew, win) : ['?', '?'];
+  if (win && win !== defaultWindow) {
+    await waitHomepage(
+      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: defaultWindow }),
+    );
+  }
+  const trend = (await homeSections()).find((x) => x.key === 'trending');
+  check(
+    'S2.4 (acc.4) a game below the minimum samples shows "—" (never 0% / a guess); a story with an empty previous window shows "New"',
+    pctAt3 >= 1 &&
+      allDash &&
+      defaultWindow === 48 &&
+      Boolean(firstNew) &&
+      newItem?.delta?.kind === 'new' &&
+      Number(counts[0]) >= 1 &&
+      Number(counts[1]) === 0,
+    `players: pct@3=${pctAt3} allDash@50=${allDash} · trending default ${defaultWindow}h; at ${win}h "${firstNew}" → ${newItem?.delta?.kind ?? 'absent'} (now=${counts[0]} prev=${counts[1]})`,
+  );
+
+  // ── S2.5 (acc.5) a pinned item keeps its position across auto refreshes ────
+  const trendItems = (trend?.items ?? []).map(itemSlug);
+  const pinStory = trendItems[trendItems.length - 1];
+  const pinRes = await adminApi('/homepage/sections/trending/pins', 'PUT', {
+    pins: [{ position: 3, topicSlug: pinStory }],
+  });
+  await waitHomepage(pinRes);
+  const at3a = (await homeSections()).find((x) => x.key === 'trending')?.items?.[2];
+  await recomputeHomepage();
+  await recomputeHomepage();
+  const at3b = (await homeSections()).find((x) => x.key === 'trending')?.items?.[2];
+  check(
+    'S2.5 (acc.5) a pinned item keeps its position across auto refreshes (two snapshot recomputes)',
+    pinRes.status === 200 &&
+      itemSlug(at3a) === pinStory &&
+      at3a?.pinned === true &&
+      itemSlug(at3b) === pinStory &&
+      at3b?.pinned === true,
+    `pin=${pinStory} → #3 ${itemSlug(at3a)} → after 2 refreshes #3 ${itemSlug(at3b)}`,
+  );
+
+  // ── S2.6 Trending: a ring of new accounts adds nothing; a credible one counts ─
+  const metricOf = async (slug) =>
+    (await homeSections())
+      .find((x) => x.key === 'trending')
+      ?.items?.find((i) => itemSlug(i) === slug)?.metric ?? null;
+  await adminApi('/homepage/sections/trending/pins', 'PUT', { pins: [] });
+  await recomputeHomepage();
+  // The top Trending story (it has coverage in the window); its score must not move
+  // for the ring and must move by exactly one follow weight for a credible account.
+  const target = itemSlug(
+    ((await homeSections()).find((x) => x.key === 'trending')?.items ?? []).find(
+      (i) => (i.metric ?? 0) > 0,
+    ) ?? {},
+  );
+  const targetId = psql(`SELECT id FROM topics WHERE slug = ${lit(target)};`);
+  const before = await metricOf(target);
+  clearOwnEmailThrottle(); // targeted (like verify:i6) — never flushall
+  const ring = [];
+  for (let i = 0; i < 4; i += 1) ring.push(await makeVerified(`ring${i}`));
+  let ringWrites = 0;
+  for (const u of ring) {
+    const c = await api(BACK, `/community/comment/topic/${targetId}`, {
+      method: 'POST',
+      jar: u.jar,
+      csrf: u.csrf,
+      body: { body: `great story ${RUN}` },
+    });
+    const f = await api(BACK, `/community/follow/topic/${target}`, {
+      method: 'POST',
+      jar: u.jar,
+      csrf: u.csrf,
+    });
+    if (c.status < 300 && f.status < 300) ringWrites += 1;
+  }
+  await recomputeHomepage();
+  const afterRing = await metricOf(target);
+  // A credible account (aged + reputable — credibility 1.0) follows the story.
+  const cred = await makeVerified('cred');
+  psql(
+    `UPDATE users SET reputation = 80, created_at = now() - interval '60 days' WHERE id = ${lit(cred.id)};`,
+  );
+  const credFollow = await api(BACK, `/community/follow/topic/${target}`, {
+    method: 'POST',
+    jar: cred.jar,
+    csrf: cred.csrf,
+  });
+  await recomputeHomepage();
+  const afterCred = await metricOf(target);
+  const followWeight = (await adminApi('/homepage/config')).json?.data?.settings?.trendingWeights
+    ?.follows;
+  check(
+    'S2.6 Trending: a ring of fresh verified accounts (comment + follow) adds NOTHING (credibility floor, per-account cap, engagement ≤ coverage); a credible account’s follow adds its weight',
+    ringWrites === ring.length &&
+      before != null &&
+      afterRing === before &&
+      credFollow.status < 300 &&
+      afterCred != null &&
+      Math.abs(afterCred - before - followWeight) < 1e-6,
+    `story=${target} score ${before} → ring(${ringWrites} accounts) ${afterRing} → credible follow ${afterCred} (follow weight ${followWeight})`,
+  );
+
+  // ── S2.7 Top rated ranks on the critic + community layers only ─────────────
+  const top = (await homeSections()).find((x) => x.key === 'top_rated');
+  const rows = (top?.items ?? []).filter((i) => !i.pinned && i.game);
+  const means = rows.map((i) => {
+    const layers = [i.game.critics, i.game.community].filter((n) => n != null);
+    return layers.reduce((a, b) => a + b, 0) / layers.length;
+  });
+  const metricsMatch = rows.every(
+    (i, n) => Math.abs((i.metric ?? -1) - Math.round(means[n] * 10) / 10) < 0.11,
+  );
+  const sorted = means.every((m, n) => n === 0 || means[n - 1] >= m - 1e-9);
+  const ourWouldDiffer = Number(
+    psql(
+      'SELECT count(*) FROM game_rating_summaries WHERE our_score IS NOT NULL AND (critics_score IS NOT NULL OR community_our_score IS NOT NULL);',
+    ),
+  );
+  check(
+    'S2.7 Top rated ranks on the critic + community layers only (the team score stays out — S5 decision)',
+    rows.length >= 3 && metricsMatch && sorted && ourWouldDiffer > 0,
+    `${rows.length} ranked, metric = mean(critic, community) ${metricsMatch}, descending ${sorted}`,
+  );
+
+  // ── S2.8 the homepage serves STORED snapshots (no ranking on the request) ──
+  const snap = JSON.parse(
+    psql("SELECT payload::text FROM homepage_section_snapshots WHERE section_key = 'top_rated';"),
+  );
+  const swapped = { ...snap, items: [...snap.items].reverse() };
+  psql(
+    `UPDATE homepage_section_snapshots SET payload = ${lit(JSON.stringify(swapped))}::jsonb WHERE section_key = 'top_rated';`,
+  );
+  const servedTop = ((await homeSections()).find((x) => x.key === 'top_rated')?.items ?? []).map(
+    itemSlug,
+  );
+  await recomputeHomepage();
+  const restoredTop = ((await homeSections()).find((x) => x.key === 'top_rated')?.items ?? []).map(
+    itemSlug,
+  );
+  const home = (await api(BACK, '/public/homepage')).json?.data;
+  check(
+    'S2.8 the homepage serves the STORED snapshot (a stored order is served as-is; the job re-ranks), with its computedAt',
+    servedTop.join(',') === swapped.items.map((i) => i.slug).join(',') &&
+      restoredTop.join(',') === snap.items.map((i) => i.slug).join(',') &&
+      typeof home?.computedAt === 'string',
+    `served stored=${servedTop.join(',') === swapped.items.map((i) => i.slug).join(',')} recomputed back=${restoredTop.join(',') === snap.items.map((i) => i.slug).join(',')} computedAt=${home?.computedAt}`,
+  );
+
+  // ── S2.9 section config is validated per kind; RBAC ────────────────────────
+  const v = async (key, body) =>
+    (await adminApi(`/homepage/sections/${key}`, 'PATCH', body)).status;
+  const modPatch = await api(BACK, '/admin/api/homepage/sections/trending', {
+    method: 'PATCH',
+    jar: mod.jar,
+    csrf: mod.csrf,
+    body: { title: 'x' },
+  });
+  const results = {
+    promotedOnData: await v('trending', { promotedPosition: 1 }),
+    ourPicksAuto: await v('our_picks', { mode: 'auto' }),
+    windowOnTopRated: await v('top_rated', { deltaWindowHours: 24 }),
+    tooMany: await v('latest', { itemCount: 99 }),
+    sourcesOnGames: await v('top_rated', { rules: { include: { sources: ['ign'] } } }),
+    unknown: await v('nope', { title: 'x' }),
+  };
+  check(
+    'S2.9 section edits are validated per kind (paid position on a data section, Our picks auto, Δ window off-section, out-of-range, wrong rule dimension → 400; unknown → 404); moderator 403',
+    modPatch.status === 403 &&
+      results.promotedOnData === 400 &&
+      results.ourPicksAuto === 400 &&
+      results.windowOnTopRated === 400 &&
+      results.tooMany === 400 &&
+      results.sourcesOnGames === 400 &&
+      results.unknown === 404,
+    `mod=${modPatch.status} ${Object.entries(results)
+      .map(([k, x]) => `${k}=${x}`)
+      .join(' ')}`,
+  );
+
+  // ── S2.10 player counts are sampled daily (demo history included) ──────────
+  const ph = psql(
+    "SELECT count(DISTINCT game_id) || '|' || min(n) || '|' || coalesce(round(extract(epoch FROM (now() - max(newest))) / 3600)::text, '?') FROM (SELECT game_id, count(*) n, max(captured_at) newest FROM game_player_counts GROUP BY game_id) x;",
+  ).split('|');
+  const spacing = psql(
+    'SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY gap) FROM (SELECT extract(epoch FROM captured_at - lag(captured_at) OVER (PARTITION BY game_id ORDER BY captured_at)) / 86400 gap FROM game_player_counts) x WHERE gap IS NOT NULL;',
+  );
+  const chart =
+    (await api(BACK, '/public/game/cyberpunk-2077')).json?.data?.playerCountHistory ?? [];
+  check(
+    'S2.10 player counts are sampled daily (mock history too): ≥150 daily samples per tracked game, newest within a day; the game chart stays one point per week',
+    Number(ph[0]) >= 1 &&
+      Number(ph[1]) >= 150 &&
+      Number(ph[2]) <= 26 &&
+      Math.abs(Number(spacing) - 1) < 0.05 &&
+      chart.length >= 24 &&
+      chart.length <= 28,
+    `${ph[0]} games, min ${ph[1]} samples, newest ${ph[2]}h ago, median spacing ${Number(spacing).toFixed(2)}d, chart ${chart.length} weekly points`,
+  );
+
+  // ── S2.11 the Standalone rule keys on the type's stable role ───────────────
+  const st = psql(
+    "SELECT id || '|' || key || '|' || label FROM source_types WHERE role = 'standalone';",
+  ).split('|');
+  s2Restore.sourceType = { id: st[0], key: st[1], label: st[2] };
+  const renamed = await adminApi(`/source-types/${st[0]}`, 'PATCH', {
+    key: `renamed-${RUN}`,
+    label: `Renamed ${RUN}`,
+  });
+  const euro = psql("SELECT id FROM sources WHERE slug = 'eurogamer';");
+  const afterRename = await adminApi(`/sources/${euro}`, 'PATCH', { typeId: st[0] });
+  const roleKept = psql(`SELECT role FROM source_types WHERE id = ${lit(st[0])};`);
+  check(
+    'S2.11 "parent company ⇒ not Standalone" keys on the type’s stable role: renaming its key AND label in admin cannot detach it',
+    renamed.status === 200 && afterRename.status === 400 && roleKept === 'standalone',
+    `rename=${renamed.status} eurogamer→renamed type=${afterRename.status} role=${roleKept}`,
+  );
+
+  // ── S2.12 unsold-slot placeholder switch: default off, admin-set, audited ──
+  const slot0 = (await api(BACK, '/public/adslot/home')).json?.data;
+  const on = await adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: true });
+  const slot1 = (await api(BACK, '/public/adslot/home')).json?.data;
+  const adsAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'ads' AND created_at > now() - interval '5 minutes';",
+    ),
+  );
+  check(
+    'S2.12 ads.showUnsoldPlaceholder: default false (an unsold slot tells the page to render nothing); admin-set + audited',
+    slot0?.showPlaceholder === false &&
+      on.status === 200 &&
+      slot1?.showPlaceholder === true &&
+      adsAudit >= 1,
+    `default=${slot0?.showPlaceholder} on=${slot1?.showPlaceholder} audit=${adsAudit}`,
+  );
+}
+
+async function restoreS2() {
+  for (const id of s2Restore.placements) {
+    await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
+    await adminApi(`/ad-placements/${id}`, 'DELETE');
+  }
+  psql(`DELETE FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)};`);
+  for (const [key, pins] of s2Restore.pins)
+    await adminApi(`/homepage/sections/${key}/pins`, 'PUT', { pins });
+  for (const [key, patch] of s2Restore.sections) {
+    const body = Object.fromEntries(Object.entries(patch).filter(([, x]) => x !== undefined));
+    await adminApi(`/homepage/sections/${key}`, 'PATCH', body);
+  }
+  if (s2Restore.order) await adminApi('/homepage/order', 'PUT', { keys: s2Restore.order });
+  if (s2Restore.settings) restoreSettings(s2Restore.settings);
+  if (s2Restore.sourceType) {
+    const { id, key, label } = s2Restore.sourceType;
+    await adminApi(`/source-types/${id}`, 'PATCH', { key, label });
+  }
+  await recomputeHomepage();
+}
+
 async function main() {
   if (!check('0. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
   try {
     await s1();
     await h3();
+    await s2a();
   } finally {
+    await restoreS2();
     restoreH3();
     // Re-run safety: restore switches + undo this run's integrity/vote rows.
     if (cleanup.display) await setDisplay(cleanup.display);
@@ -1148,7 +1679,12 @@ async function main() {
     // twice ends where it started.
     for (const { id, json } of [...cleanup.integrityResets].reverse()) restoreSignal(id, json);
     for (const id of cleanup.integrityDeletes) {
-      sqlOne(`DELETE FROM article_integrity_signals WHERE id='${id}'`);
+      psql(
+        `BEGIN;
+DELETE FROM article_integrity_signals WHERE id = ${lit(id)};
+${auditSql({ action: 'delete', entityType: 'article-integrity', entityId: id, summary: 'verify cleanup removed the editor signal this run added' })}
+COMMIT;`,
+      );
     }
     // The S1.5f date probes must create nothing — but if a regression lets one
     // through, don't leave it behind for the next run.

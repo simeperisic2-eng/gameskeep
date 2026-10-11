@@ -568,3 +568,241 @@ export type GameDataProviderName = (typeof GAME_DATA_PROVIDERS)[number];
  */
 export const UNMATCHED_STATUSES = ['pending', 'resolved', 'dismissed'] as const;
 export type UnmatchedStatus = (typeof UNMATCHED_STATUSES)[number];
+
+// ── Homepage sections (Phase P S2) ────────────────────────────────────────────
+/**
+ * Section kinds. DATA sections (Trending, By players, Top rated, Our picks, the
+ * latest-stories feed, Games in focus) are NEVER sold: a paid placement cannot
+ * target one — enforced at the service AND the DB (composite FK + CHECK).
+ * DISCOVERY sections (New, Upcoming, Featured) may hold at most one Promoted
+ * item at an admin-chosen position, always labeled. BLOCKS carry no items.
+ */
+export const HOMEPAGE_SECTION_KINDS = ['data', 'discovery', 'block'] as const;
+export type HomepageSectionKind = (typeof HOMEPAGE_SECTION_KINDS)[number];
+
+/** auto = the section's rule only; manual = pins only; pins_auto = pins + auto fill. */
+export const HOMEPAGE_SECTION_MODES = ['auto', 'manual', 'pins_auto'] as const;
+export type HomepageSectionMode = (typeof HOMEPAGE_SECTION_MODES)[number];
+
+/** What a section lists: stories, games, both (Featured), or nothing (blocks). */
+export type HomepageItemType = 'topic' | 'game' | 'mixed' | 'none';
+
+export interface HomepageSectionDef {
+  kind: HomepageSectionKind;
+  items: HomepageItemType;
+  /** Shows a Δ vs the previous window of equal length (admin-set window). */
+  delta: boolean;
+  title: string;
+  /** Default config for a fresh install (the admin edits everything after). */
+  defaults: {
+    position: number;
+    enabled: boolean;
+    mode: HomepageSectionMode;
+    itemCount: number;
+    deltaWindowHours: number | null;
+    promotedPosition: number | null;
+  };
+}
+
+/**
+ * The fixed section catalogue: the KEY is the stable identity and decides the
+ * kind (a CHECK in the DB mirrors this map, so no edit can turn a data section
+ * into a sellable one). Titles, order, counts, modes, rules and pins are data.
+ */
+export const HOMEPAGE_SECTIONS = {
+  briefing: {
+    kind: 'block',
+    items: 'none',
+    delta: false,
+    title: 'Today’s briefing',
+    defaults: {
+      position: 1,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 1,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  trending: {
+    kind: 'data',
+    items: 'topic',
+    delta: true,
+    title: 'Trending now',
+    defaults: {
+      position: 2,
+      enabled: true,
+      mode: 'pins_auto',
+      itemCount: 8,
+      deltaWindowHours: 48,
+      promotedPosition: null,
+    },
+  },
+  latest: {
+    kind: 'data',
+    items: 'topic',
+    delta: false,
+    title: 'The latest stories',
+    defaults: {
+      position: 3,
+      enabled: true,
+      mode: 'pins_auto',
+      itemCount: 18,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  featured: {
+    kind: 'discovery',
+    items: 'mixed',
+    delta: false,
+    title: 'Featured',
+    defaults: {
+      position: 4,
+      enabled: true,
+      mode: 'manual',
+      itemCount: 3,
+      deltaWindowHours: null,
+      promotedPosition: 2,
+    },
+  },
+  by_players: {
+    kind: 'data',
+    items: 'game',
+    delta: true,
+    title: 'By players',
+    defaults: {
+      position: 5,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 6,
+      deltaWindowHours: 168,
+      promotedPosition: null,
+    },
+  },
+  new: {
+    kind: 'discovery',
+    items: 'game',
+    delta: false,
+    title: 'New releases',
+    defaults: {
+      position: 6,
+      enabled: true,
+      mode: 'pins_auto',
+      itemCount: 6,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  our_picks: {
+    kind: 'data',
+    items: 'game',
+    delta: false,
+    title: 'Our picks',
+    defaults: {
+      position: 7,
+      enabled: true,
+      mode: 'manual',
+      itemCount: 6,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  focus: {
+    kind: 'data',
+    items: 'game',
+    delta: false,
+    title: 'Games in focus',
+    defaults: {
+      position: 8,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 3,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  top_rated: {
+    kind: 'data',
+    items: 'game',
+    delta: false,
+    title: 'Top rated right now',
+    defaults: {
+      position: 9,
+      enabled: true,
+      mode: 'pins_auto',
+      itemCount: 6,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  upcoming: {
+    kind: 'discovery',
+    items: 'game',
+    delta: false,
+    title: 'Upcoming',
+    defaults: {
+      position: 10,
+      enabled: true,
+      mode: 'pins_auto',
+      itemCount: 6,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  genres: {
+    kind: 'block',
+    items: 'none',
+    delta: false,
+    title: 'Browse by genre',
+    defaults: {
+      position: 11,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 12,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  community: {
+    kind: 'block',
+    items: 'none',
+    delta: false,
+    title: 'Your voice, with weight',
+    defaults: {
+      position: 12,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 1,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+  newsletter: {
+    kind: 'block',
+    items: 'none',
+    delta: false,
+    title: 'Daily briefing',
+    defaults: {
+      position: 13,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 1,
+      deltaWindowHours: null,
+      promotedPosition: null,
+    },
+  },
+} as const satisfies Record<string, HomepageSectionDef>;
+export type HomepageSectionKey = keyof typeof HOMEPAGE_SECTIONS;
+export const HOMEPAGE_SECTION_KEYS = Object.keys(HOMEPAGE_SECTIONS) as HomepageSectionKey[];
+
+/** Max items any section may list (and the highest pin / promoted position). */
+export const HOMEPAGE_MAX_ITEMS = 24;
+
+/** Rule dimensions a section can filter on (include / exclude lists). */
+export const HOMEPAGE_RULE_DIMENSIONS = ['categories', 'tags', 'genres', 'sources'] as const;
+export type HomepageRuleDimension = (typeof HOMEPAGE_RULE_DIMENSIONS)[number];
+
+/** Built-in source-type ROLES — the stable identity a rule keys on (S2). */
+export const SOURCE_TYPE_ROLES = ['standalone'] as const;
+export type SourceTypeRole = (typeof SOURCE_TYPE_ROLES)[number];

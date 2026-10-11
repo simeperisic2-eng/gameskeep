@@ -1,25 +1,25 @@
 import type { FastifyInstance } from 'fastify';
 import { listsConfigInput } from '@gameskeep/shared/validation';
 import { listsSettings, setListsSettings } from '../lists/settings';
-import { activePromotedGameSlugs, inventory } from '../ads/service';
+import { inventory } from '../ads/service';
 import { getHomepageData } from '../public/queries';
 import { actorOf, sendError } from './http';
 
 /**
  * List / slot configuration admin routes (SPEC I8, Slice 4) — registered inside
  * the session/token-guarded admin scope, before the generic `/:resource` CRUD.
- * The `lists` section falls through to the ADMIN (40) default rank. These edit
- * the homepage rail sizes + manual pins (all in `app_settings.lists`) and expose
- * a leak-proof preview + the slot-placement inventory (ad_slots, from Slice 2).
+ * The `lists` section falls through to the ADMIN (40) default rank. Since Phase P
+ * S2 the config holds only the "New" window — rail sizes + pins live on the
+ * homepage sections (/admin/api/homepage); `pinPromotedGames` is removed (data
+ * lists are never sold). Plus a leak-proof preview + the slot inventory.
  * Slot RECORDS are edited via the generic `ad-slots` CRUD; this ties the two
  * "configuration" concerns together in one Control Panel surface.
  */
 export async function registerListAdminRoutes(admin: FastifyInstance): Promise<void> {
-  // Read the current list config + the promoted-game slugs it would auto-pin.
+  // Read the current list config.
   admin.get('/lists/config', async (_req, reply) => {
     try {
-      const [config, promoted] = await Promise.all([listsSettings(), activePromotedGameSlugs()]);
-      reply.send({ data: { config, promotedGameSlugs: promoted } });
+      reply.send({ data: { config: await listsSettings() } });
     } catch (err) {
       sendError(reply, err);
     }
@@ -42,11 +42,28 @@ export async function registerListAdminRoutes(admin: FastifyInstance): Promise<v
   admin.get('/lists/preview', async (_req, reply) => {
     try {
       const home = await getHomepageData();
+      const deltaLabel = (d: { kind: string; value?: number } | null): string | null =>
+        !d
+          ? null
+          : d.kind === 'new'
+            ? 'New'
+            : d.kind === 'none'
+              ? '—'
+              : `${(d.value ?? 0) > 0 ? '+' : ''}${d.value}%`;
       reply.send({
         data: {
-          hero: home.hero.map((c) => ({ slug: c.slug, title: c.title })),
-          topRated: home.topRated.map((g) => ({ slug: g.slug, name: g.name })),
-          controversial: home.controversial.map((g) => ({ slug: g.slug, name: g.name })),
+          computedAt: home.computedAt,
+          sections: home.sections.map((sec) => ({
+            key: sec.key,
+            title: sec.title,
+            windowHours: sec.windowHours,
+            items: sec.items.map((it) => ({
+              label: it.topic?.title ?? it.game?.name ?? '?',
+              pinned: it.pinned,
+              promoted: it.promoted?.advertiser ?? null,
+              delta: deltaLabel(it.delta),
+            })),
+          })),
         },
       });
     } catch (err) {

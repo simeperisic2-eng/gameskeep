@@ -91,6 +91,7 @@ const NAV: {
     title: 'Config & lists',
     minRank: 40,
     items: [
+      { label: 'Homepage', href: '/admin/homepage', minRank: 40 },
       { label: 'Lists & slots', href: '/admin/lists', minRank: 40 },
       { label: 'Display & bias', href: '/admin/display', minRank: 40 },
       { label: 'User levels', href: '/admin/user-levels', minRank: 40 },

@@ -2,6 +2,7 @@ import { Queue, Worker, type Job } from 'bullmq';
 import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
 import { recomputeAllRatings, recomputeGameRating, type RecomputeResult } from './rating-engine';
+import { recomputeHomepageQuietly } from '../homepage/jobs';
 
 /**
  * Rating-engine background job (SPEC I4b; CLAUDE.md "nothing heavy on user
@@ -53,6 +54,7 @@ export function startRatingsWorker(): Worker<RatingJobData> {
     async (job: Job<RatingJobData>): Promise<RecomputeResult> => {
       if (job.data.gameId) {
         await recomputeGameRating(job.data.gameId);
+        await recomputeHomepageQuietly('rating:game');
         return { gamesProcessed: 1 };
       }
       const result = await recomputeAllRatings();
@@ -62,6 +64,8 @@ export function startRatingsWorker(): Worker<RatingJobData> {
         finishedAt: new Date().toISOString(),
       };
       await redis.set(RATINGS_STATE_KEY, JSON.stringify(state));
+      // Top rated / Games in focus read the summaries this job just wrote.
+      await recomputeHomepageQuietly('rating');
       return result;
     },
     { connection: queueConnection(), concurrency: 1 },

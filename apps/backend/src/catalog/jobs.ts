@@ -2,6 +2,7 @@ import { Queue, Worker, type Job } from 'bullmq';
 import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
 import { syncDerivedGameStatuses } from './status';
+import { recomputeHomepageQuietly } from '../homepage/jobs';
 import { importCatalog, type CatalogImportResult } from './import';
 
 /**
@@ -71,7 +72,9 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
     ): Promise<CatalogImportResult | { statusesDerived: number }> => {
       // Daily (and on-demand) derived-status pass — no import.
       if (job.name === GAME_STATUS_SYNC_JOB) {
-        return { statusesDerived: await syncDerivedGameStatuses() };
+        const statusesDerived = await syncDerivedGameStatuses();
+        if (statusesDerived > 0) await recomputeHomepageQuietly('game-status');
+        return { statusesDerived };
       }
       const result = await importCatalog({
         skipIfPopulated: job.data.skipIfPopulated,
@@ -85,6 +88,7 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
       await redis.set(CATALOG_STATE_KEY, JSON.stringify(state));
       // Newly imported games get their status derived from the release date too.
       await syncDerivedGameStatuses();
+      await recomputeHomepageQuietly('catalog');
       return result;
     },
     { connection: queueConnection() },

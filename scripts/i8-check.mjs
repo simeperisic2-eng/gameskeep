@@ -40,13 +40,16 @@
  *  21.  digest reuses EXISTING summaries (no new AI): the generated draft is
  *       kind=digest and its body carries a real topic slug + its stored summary
  *
- *  Slice 4 — list / slot configuration (nothing hardcoded)
- *  22.  the lists config section is RBAC-gated (moderator 403, admin 200) and
- *       persists (a PATCH is read back — not a hardcoded value)
- *  23.  a MANUAL game pin floats that game to the FRONT of Top Rated on the
- *       public homepage (auto ranking still runs underneath)
- *  24.  AUTO-pin promoted games: an active game promotion surfaces at the front
- *       of Top Rated when the option is on (auto default, manual override)
+ *  Slice 4 — list / slot configuration (nothing hardcoded) — rewritten in
+ *  Phase P S2 for the homepage SECTIONS (old → new in PROGRESS):
+ *  22.  the homepage section config is RBAC-gated (moderator 403, admin 200),
+ *       a PATCH persists (read back) + is audited, and the REMOVED
+ *       `lists.pinPromotedGames` is rejected (400 — the setting is gone)
+ *  23.  a MANUAL pin holds its explicit position in Top Rated, across a
+ *       snapshot recompute (auto ranking still runs underneath)
+ *  24.  data lists are NEVER sold: a paid placement for Top Rated is rejected by
+ *       the API (400) AND by the DB, and an active game promotion leaves the Top
+ *       Rated order untouched (the old auto-pin is gone)
  *
  *  Slice 6 — phase-close security fixes (regressions for the review findings)
  *  25.  F1 (HIGH): a signed-in caller CANNOT hijack another user's subscription
@@ -66,7 +69,14 @@
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
 import { execSync } from 'node:child_process';
-import { lit, psql, purgeFixtures, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
+import {
+  lit,
+  psql,
+  purgeFixtures,
+  restoreSettings,
+  snapshotSettings,
+  waitForJob,
+} from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
@@ -536,43 +546,124 @@ async function body() {
   sqlOne(`DELETE FROM email_outbox WHERE purpose='newsletter'`);
 
   // ════════════════════════ Slice 4 — list / slot configuration ═══════════════
-  // ── 22. lists config section RBAC-gated + persists (not hardcoded) ──────────
-  const modCfg = await code(BACK, '/admin/api/lists/config', mod.jar);
-  const patchCfg = await api(BACK, '/admin/api/lists/config', {
+  // ── 22. homepage section config: RBAC + persists + audited; the old knob is gone
+  // (Phase P S2 rewrite of "lists config persists (heroCount = 11)").
+  const sectionCfg = async () =>
+    (await api(BACK, '/admin/api/homepage/config', { jar: adm.jar })).json?.data?.sections ?? [];
+  const topRatedBefore = (await sectionCfg()).find((x) => x.key === 'top_rated');
+  const modCfg = await code(BACK, '/admin/api/homepage/config', mod.jar);
+  const nextCount = topRatedBefore?.itemCount === 5 ? 6 : 5;
+  const patchCfg = await api(BACK, '/admin/api/homepage/sections/top_rated', {
     method: 'PATCH',
     jar: adm.jar,
     csrf: adm.csrf,
-    body: { heroCount: 11 },
+    body: { itemCount: nextCount },
   });
-  const readCfg = await api(BACK, '/admin/api/lists/config', { jar: adm.jar });
-  check(
-    '22. Lists config: moderator 403, admin PATCH persists (heroCount read back = 11)',
-    modCfg === 403 && patchCfg.status === 200 && readCfg.json?.data?.config?.heroCount === 11,
-    `mod=${modCfg} patch=${patchCfg.status} heroCount=${readCfg.json?.data?.config?.heroCount}`,
+  if (patchCfg.json?.jobId) await waitForJob('homepage', patchCfg.json.jobId, 60_000);
+  const readBack = (await sectionCfg()).find((x) => x.key === 'top_rated')?.itemCount;
+  const cfgAudited = Number(
+    sqlOne(
+      `SELECT count(*) FROM audit_logs WHERE entity_type='homepage-section' AND entity_id='top_rated' AND changes->'itemCount'->>'to' = '${nextCount}'`,
+    ),
   );
+  const oldKnob = await api(BACK, '/admin/api/lists/config', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { pinPromotedGames: true },
+  });
+  check(
+    '22. Homepage section config: moderator 403, admin PATCH persists + audited; removed lists.pinPromotedGames → 400',
+    modCfg === 403 &&
+      patchCfg.status === 200 &&
+      readBack === nextCount &&
+      cfgAudited >= 1 &&
+      oldKnob.status === 400,
+    `mod=${modCfg} patch=${patchCfg.status} itemCount=${readBack} audit=${cfgAudited} pinPromotedGames=${oldKnob.status}`,
+  );
+  // put the count back as it was
+  if (topRatedBefore) {
+    await api(BACK, '/admin/api/homepage/sections/top_rated', {
+      method: 'PATCH',
+      jar: adm.jar,
+      csrf: adm.csrf,
+      body: { itemCount: topRatedBefore.itemCount },
+    });
+  }
 
-  // ── 23. a MANUAL game pin floats to the FRONT of Top Rated ──────────────────
-  const home1 = await api(BACK, '/public/homepage');
-  const top1 = (home1.json?.data?.topRated ?? []).map((g) => g.slug);
+  // ── 23. a MANUAL pin holds its explicit position in Top Rated (across recomputes)
+  const topRatedSlugs = async () =>
+    (
+      (await api(BACK, '/public/homepage')).json?.data?.sections?.find((x) => x.key === 'top_rated')
+        ?.items ?? []
+    ).map((i) => i.game?.slug);
+  const recomputeAndWait = async () => {
+    const r = await api(BACK, '/admin/api/homepage/recompute', {
+      method: 'POST',
+      jar: adm.jar,
+      csrf: adm.csrf,
+      body: {},
+    });
+    return r.json?.jobId ? (await waitForJob('homepage', r.json.jobId, 60_000)).ok : false;
+  };
+  const pinsBefore = (topRatedBefore?.pins ?? [])
+    .map((x) => (x.gameSlug ? { position: x.position, gameSlug: x.gameSlug } : null))
+    .filter(Boolean);
+  await recomputeAndWait();
+  const top1 = await topRatedSlugs();
   const pinTarget = top1.length >= 2 ? top1[top1.length - 1] : top1[0];
-  await api(BACK, '/admin/api/lists/config', {
-    method: 'PATCH',
+  const pinSet = await api(BACK, '/admin/api/homepage/sections/top_rated/pins', {
+    method: 'PUT',
     jar: adm.jar,
     csrf: adm.csrf,
-    body: { pinnedGameSlugs: [pinTarget], pinPromotedGames: false },
+    body: { pins: [{ position: 1, gameSlug: pinTarget }] },
   });
-  const home2 = await api(BACK, '/public/homepage');
-  const top2 = (home2.json?.data?.topRated ?? []).map((g) => g.slug);
+  if (pinSet.json?.jobId) await waitForJob('homepage', pinSet.json.jobId, 60_000);
+  const top2 = await topRatedSlugs();
+  const again = await recomputeAndWait();
+  const top3 = await topRatedSlugs();
   check(
-    '23. Manual game pin floats the game to the FRONT of Top Rated',
-    Boolean(pinTarget) && top2[0] === pinTarget,
-    `pin=${pinTarget} front=${top2[0]}`,
+    '23. A manual pin holds its explicit position in Top Rated, across a snapshot recompute',
+    Boolean(pinTarget) &&
+      pinSet.status === 200 &&
+      top2[0] === pinTarget &&
+      again &&
+      top3[0] === pinTarget,
+    `pin=${pinTarget} front=${top2[0]} after recompute=${top3[0]}`,
   );
 
-  // ── 24. AUTO-pin promoted games surfaces at the FRONT of Top Rated ──────────
-  // Promote a DIFFERENT scored game (must be in the ranked set → pick from top1).
-  const promoTarget = top1.find((s) => s !== pinTarget) ?? top1[0];
+  // ── 24. data lists are NEVER sold (service + DB); a promotion moves nothing ──
+  const promoTarget = top1.find((x) => x !== pinTarget) ?? top1[0];
+  const apiReject = await api(BACK, '/admin/api/homepage/sections/top_rated/promotions', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { advertiserName: `Lists Promo ${RUN}`, gameSlug: promoTarget },
+  });
+  // DB layer: a raw insert pointing a placement at Top Rated must fail.
+  const topRatedId = sqlOne(`SELECT id FROM homepage_sections WHERE key='top_rated'`);
   const promoSubjectId = sqlOne(`SELECT id FROM subjects WHERE slug='${promoTarget}'`);
+  let dbReject = false;
+  try {
+    psql(
+      `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id, status) VALUES (${lit(topRatedId)}, 'discovery', ${lit(`Lists Promo ${RUN}`)}, 'X', ${lit(promoSubjectId)}, 'active');`,
+    );
+  } catch {
+    dbReject = true;
+  }
+  const dbRows = Number(
+    sqlOne(`SELECT count(*) FROM ad_placements WHERE section_id='${topRatedId}'`),
+  );
+  // Baseline order with no pins, THEN an active slot promotion of a Top Rated
+  // game (the old auto-pin trigger) — the order must not move.
+  await api(BACK, '/admin/api/homepage/sections/top_rated/pins', {
+    method: 'PUT',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { pins: [] },
+  });
+  await recomputeAndWait();
+  const topBase = await topRatedSlugs();
   const slotIdForPromo = sqlOne(`SELECT id FROM ad_slots WHERE key='home'`);
   const promoPlacement = await api(BACK, '/admin/api/ad-placements', {
     method: 'POST',
@@ -586,22 +677,25 @@ async function body() {
       status: 'active',
     },
   });
-  // Clear the manual pin so the ONLY thing pulling promoTarget forward is the auto-pin.
-  await api(BACK, '/admin/api/lists/config', {
-    method: 'PATCH',
-    jar: adm.jar,
-    csrf: adm.csrf,
-    body: { pinnedGameSlugs: [], pinPromotedGames: true },
-  });
-  const home3 = await api(BACK, '/public/homepage');
-  const top3 = (home3.json?.data?.topRated ?? []).map((g) => g.slug);
+  await recomputeAndWait();
+  const top4 = await topRatedSlugs();
+  const home4 = (await api(BACK, '/public/homepage')).json?.data;
+  const paidInData = (home4?.sections ?? [])
+    .filter((x) => x.kind === 'data')
+    .some((x) => x.items.some((i) => i.promoted));
   check(
-    '24. Auto-pin: an active game promotion floats to the FRONT of Top Rated',
-    promoPlacement.status < 300 && Boolean(promoTarget) && top3[0] === promoTarget,
-    `promo=${promoTarget} front=${top3[0]}`,
+    '24. Data lists are never sold: Top Rated placement → API 400 + DB rejects; an active promotion leaves the order as ranked',
+    apiReject.status === 400 &&
+      /never sold/.test(apiReject.json?.message ?? '') &&
+      dbReject &&
+      dbRows === 0 &&
+      promoPlacement.status < 300 &&
+      top4.join(',') === topBase.join(',') &&
+      !paidInData,
+    `api=${apiReject.status} db=${dbReject ? 'rejected' : 'ACCEPTED'} rows=${dbRows} promo=${promoTarget} order kept=${top4.join(',') === topBase.join(',')} paidInData=${paidInData}`,
   );
 
-  // cleanup: remove the promo placement + restore the lists config as it was
+  // cleanup: remove the promo placement + restore the pins + lists config as they were
   const promoPid = promoPlacement.json?.data?.id;
   if (promoPid)
     await api(BACK, `/admin/api/ad-placements/${promoPid}`, {
@@ -609,6 +703,12 @@ async function body() {
       jar: adm.jar,
       csrf: adm.csrf,
     });
+  await api(BACK, '/admin/api/homepage/sections/top_rated/pins', {
+    method: 'PUT',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { pins: pinsBefore },
+  });
   restoreSettings(SETTINGS_SNAPSHOT); // hygiene 3: restore, never delete
 
   // ════════════════════════ Slice 6 — phase-close security fixes ══════════════

@@ -3,6 +3,7 @@ import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
 import { runIngest, type IngestOptions, type IngestResult } from './pipeline';
 import { recomputeBias, type RecomputeResult } from './bias-engine';
+import { recomputeHomepageQuietly } from '../homepage/jobs';
 
 /**
  * Article-ingest background job (SPEC I3 §6; CLAUDE.md "nothing heavy on user
@@ -117,6 +118,9 @@ export function startArticlesWorker(): Worker<ArticleJobData> {
           jobId: job.id,
         } satisfies BiasRecomputeState),
       );
+      // A re-cluster recreates topic rows — refresh the homepage snapshots before
+      // this job reports done, so no snapshot points at a story that just went.
+      await recomputeHomepageQuietly(`ingest:${job.data.reason ?? 'manual'}`);
       return result;
     },
     {

@@ -45,7 +45,12 @@ function rotate<T>(items: T[]): T[] {
 }
 
 function RankCard({ game, rank }: { game: RankedGame; rank: number }): React.JSX.Element {
-  const headline = scoreToTen(game.critics ?? game.our ?? game.community);
+  // Phase P S2: Top rated ranks on the critic + community layers only (the team
+  // score stays out until S5 switches it on) — the card shows that same figure.
+  const layers = [game.critics, game.community].filter((n): n is number => n != null);
+  const headline = scoreToTen(
+    layers.length ? layers.reduce((a, b) => a + b, 0) / layers.length : null,
+  );
   return (
     <a className="gk-rankcard" href={`/games/${game.slug}`}>
       <span className="gk-rankcard-rank">{rank}</span>

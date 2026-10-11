@@ -161,20 +161,24 @@ export async function getSubscribers(q?: string): Promise<SubscriberRow[]> {
 }
 
 // ── lists / slot configuration (I8 Slice 4) ───────────────────────────────────
+/** The `lists` setting — only the "New" window since Phase P S2. */
 export interface ListsConfig {
-  heroCount: number;
-  feedCount: number;
-  topRatedCount: number;
-  focusCount: number;
-  pinnedTopicSlugs: string[];
-  pinnedGameSlugs: string[];
-  pinPromotedGames: boolean;
   newWindowDays: number;
 }
-export interface ListsPreview {
-  hero: { slug: string; title: string }[];
-  topRated: { slug: string; name: string }[];
-  controversial: { slug: string; name: string }[];
+/** What the homepage sections currently show (the stored snapshots, hydrated). */
+export interface HomepagePreview {
+  computedAt: string | null;
+  sections: {
+    key: string;
+    title: string;
+    windowHours: number | null;
+    items: {
+      label: string;
+      pinned: boolean;
+      promoted: string | null;
+      delta: string | null;
+    }[];
+  }[];
 }
 export interface SlotPlacementRow {
   slotKey: string;
@@ -191,16 +195,67 @@ export interface SlotPlacementRow {
   } | null;
 }
 
-export async function getListsConfig(): Promise<{
-  config: ListsConfig;
-  promotedGameSlugs: string[];
-}> {
-  return (
-    await adminGet<{ data: { config: ListsConfig; promotedGameSlugs: string[] } }>('/lists/config')
-  ).data;
+export async function getListsConfig(): Promise<{ config: ListsConfig }> {
+  return (await adminGet<{ data: { config: ListsConfig } }>('/lists/config')).data;
 }
-export async function getListsPreview(): Promise<ListsPreview> {
-  return (await adminGet<{ data: ListsPreview }>('/lists/preview')).data;
+export async function getHomepagePreview(): Promise<HomepagePreview> {
+  return (await adminGet<{ data: HomepagePreview }>('/lists/preview')).data;
+}
+
+// ── Phase P S2: homepage sections ─────────────────────────────────────────────
+export type HomepageRuleDimension = 'categories' | 'tags' | 'genres' | 'sources';
+export type HomepageRuleLists = Partial<Record<HomepageRuleDimension, string[]>>;
+export interface HomepageSectionConfig {
+  id: string;
+  key: string;
+  kind: 'data' | 'discovery' | 'block';
+  items: 'topic' | 'game' | 'mixed' | 'none';
+  delta: boolean;
+  title: string;
+  defaultTitle: string;
+  enabled: boolean;
+  position: number;
+  mode: 'auto' | 'manual' | 'pins_auto';
+  itemCount: number;
+  deltaWindowHours: number | null;
+  cardTagFamilies: string[];
+  cardTagCount: number;
+  rules: { include: HomepageRuleLists; exclude: HomepageRuleLists };
+  ruleDimensions: HomepageRuleDimension[];
+  promotedPosition: number | null;
+  pins: {
+    position: number;
+    topicSlug: string | null;
+    gameSlug: string | null;
+    name: string | null;
+  }[];
+  promotions: {
+    id: string;
+    advertiser: string;
+    gameSlug: string | null;
+    gameName: string | null;
+    status: string;
+    startsAt: string | null;
+    endsAt: string | null;
+  }[];
+}
+export interface HomepageSettingsConfig {
+  deltaMinPoints: number;
+  trendingWeights: { articles: number; sources: number; comments: number; follows: number };
+  perUserCap: number;
+  minCredibility: number;
+  maxEngagementShare: number;
+  refreshMinutes: number;
+  showUnsoldPlaceholder: boolean;
+  steamSampleEveryHours: number;
+}
+export interface HomepageConfig {
+  sections: HomepageSectionConfig[];
+  settings: HomepageSettingsConfig;
+  lastComputedAt: string | null;
+}
+export async function getHomepageConfig(): Promise<HomepageConfig> {
+  return (await adminGet<{ data: HomepageConfig }>('/homepage/config')).data;
 }
 export async function getListsSlots(): Promise<SlotPlacementRow[]> {
   return (await adminGet<{ data: SlotPlacementRow[] }>('/lists/slots')).data;

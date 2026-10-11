@@ -4,6 +4,7 @@ import { startArticlesWorker } from './articles/jobs';
 import { startRatingsWorker } from './ratings/jobs';
 import { startReputationWorker } from './reputation/jobs';
 import { armSteamSync, startSteamWorker } from './steam/jobs';
+import { startHomepageWorker } from './homepage/jobs';
 
 /**
  * Background-worker process entrypoint. Runs as its own container in compose
@@ -60,8 +61,15 @@ void armSteamSync().then((armed) =>
   log(armed ? 'steam sweep armed (production)' : 'steam sweep dormant (demo — seeded history)'),
 );
 
+// Phase P S2: homepage snapshots (config saves, boot, the periodic refresh).
+const homepage = startHomepageWorker();
+homepage.on('failed', (job, err) =>
+  log(`homepage compute ${job?.id ?? '?'} failed: ${err.message}`),
+);
+homepage.on('error', (err) => log(`homepage worker error: ${err.message}`));
+
 log(
-  'worker started — heartbeat + catalog + articles + ratings + reputation + steam processors waiting',
+  'worker started — heartbeat + catalog + articles + ratings + reputation + steam + homepage processors waiting',
 );
 
 const shutdown = async (signal: string): Promise<void> => {
@@ -73,6 +81,7 @@ const shutdown = async (signal: string): Promise<void> => {
     ratings.close(),
     reputation.close(),
     steam.close(),
+    homepage.close(),
   ]);
   process.exit(0);
 };

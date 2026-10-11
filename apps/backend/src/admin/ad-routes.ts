@@ -7,6 +7,7 @@ import {
   setPlacementStatus,
   setPromoPricing,
 } from '../ads/service';
+import { enqueueHomepageCompute } from '../homepage/jobs';
 import { actorOf, sendError } from './http';
 
 /**
@@ -64,7 +65,10 @@ export async function registerAdAdminRoutes(admin: FastifyInstance): Promise<voi
         reply.code(404).send({ error: 'not_found', message: 'Unknown placement.' });
         return;
       }
-      reply.send({ data: result });
+      // A (de)activated section placement changes a discovery section — refresh
+      // the homepage snapshots (job id returned so a caller can wait for it).
+      const jobId = (await enqueueHomepageCompute({ reason: 'placement-status' })) ?? null;
+      reply.send({ data: result, jobId });
     } catch (err) {
       sendError(reply, err);
     }

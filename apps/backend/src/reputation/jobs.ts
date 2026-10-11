@@ -2,6 +2,7 @@ import { Queue, Worker, type Job } from 'bullmq';
 import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
 import { recomputeAllReputation, type RecomputeReputationResult } from './engine';
+import { recomputeHomepageQuietly } from '../homepage/jobs';
 
 /**
  * Reputation-engine background job (SPEC I6, Slice 5; CLAUDE.md "nothing heavy
@@ -56,6 +57,8 @@ export function startReputationWorker(): Worker<ReputationJobData> {
         finishedAt: new Date().toISOString(),
       };
       await redis.set(REPUTATION_STATE_KEY, JSON.stringify(state));
+      // Credibility changed → the Trending engagement weighting changes.
+      await recomputeHomepageQuietly('reputation');
       return result;
     },
     { connection: queueConnection(), concurrency: 1 },

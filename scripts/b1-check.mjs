@@ -110,7 +110,11 @@ async function main() {
 
   const home = await getJson(`${BACK}/public/homepage`);
   const hero = home.json?.data?.hero ?? [];
-  const topicSlug = hero[0]?.slug;
+  // Phase P S2: the hero is now TRENDING (ranked by activity in the admin-set
+  // window), so its #1 can be a one-article story. These checks need a story
+  // with real multi-outlet coverage — pick the first hero story with ≥3 outlets
+  // (rewritten from "hero[0]"; the assertions themselves are unchanged).
+  const topicSlug = (hero.find((t) => (t.sourceCount ?? 0) >= 3) ?? hero[0])?.slug;
 
   // ── 2. per-source permalinks in the data ────────────────────────────────────
   const topic = (await getJson(`${BACK}/public/topic/${topicSlug}`)).json?.data;

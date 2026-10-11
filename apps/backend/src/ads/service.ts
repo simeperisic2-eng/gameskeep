@@ -1,9 +1,10 @@
-import { and, desc, eq, isNull, or, sql, gte, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import type { AdPlacementStatus } from '@gameskeep/shared/constants';
 import type { PromoPricingInput } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
 import { adPlacements, adSlots, appSettings, subjects } from '../db/schema';
 import { writeAudit, type AuditActor } from '../admin/audit';
+import { homepageSettings } from '../homepage/settings';
 
 /**
  * Ad / promotion service (SPEC I8, Slice 2). No payment gateway — `status` is
@@ -33,6 +34,11 @@ export interface SlotView {
   fallback: string; // 'ad' | 'organic' | 'hide'
   format: string;
   placement: PublicPlacement | null;
+  /**
+   * `ads.showUnsoldPlaceholder` (Phase P S2, default false): while off an UNSOLD
+   * slot renders nothing publicly, whatever its fallback; on → the fallback.
+   */
+  showPlaceholder: boolean;
 }
 
 const toPublic = (p: {
@@ -61,8 +67,10 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
     .from(adSlots)
     .where(eq(adSlots.key, slotKey))
     .limit(1);
-  // Unknown/disabled slot → the demo "AD" fallback (never an empty box).
-  if (!slot || !slot.isActive) return { slotKey, fallback: 'ad', format: 'card', placement: null };
+  const showPlaceholder = (await homepageSettings()).showUnsoldPlaceholder;
+  // Unknown/disabled slot → the "AD" fallback (rendered only if placeholders are on).
+  if (!slot || !slot.isActive)
+    return { slotKey, fallback: 'ad', format: 'card', placement: null, showPlaceholder };
 
   const [p] = await db
     .select({
@@ -82,6 +90,7 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
     fallback: slot.fallback,
     format: slot.format,
     placement: p ? toPublic(p) : null,
+    showPlaceholder,
   };
 }
 
@@ -105,20 +114,34 @@ export async function promotionForGame(
 }
 
 /**
- * Subject slugs of every game with an ACTIVE promotion right now (I8 Slice 4).
- * Feeds the homepage "auto-pin promoted games" option — a paid placement can
- * surface its game at the front of Top Rated (auto default; a manual pin still
- * overrides). Leak-proof: returns slugs only.
+ * The live Promoted item of each homepage DISCOVERY section (Phase P S2): one
+ * active, in-window placement per section (the DB allows only one active), with
+ * its game slug + advertiser display name for the render-forced label. The old
+ * "auto-pin promoted games into Top Rated" path is gone — data lists are never
+ * sold. Leak-proof: never price / contact / notes.
  */
-export async function activePromotedGameSlugs(now: Date = new Date()): Promise<string[]> {
+export async function activeSectionPromotions(
+  now: Date = new Date(),
+): Promise<Map<string, { slug: string; advertiser: string }>> {
   const rows = await db
-    .select({ slug: subjects.slug })
+    .select({
+      sectionId: adPlacements.sectionId,
+      slug: subjects.slug,
+      advertiser: adPlacements.advertiserName,
+    })
     .from(adPlacements)
-    .innerJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
-    .where(liveWindow(now));
-  const seen: string[] = [];
-  for (const r of rows) if (r.slug && !seen.includes(r.slug)) seen.push(r.slug);
-  return seen;
+    .innerJoin(
+      subjects,
+      and(eq(subjects.id, adPlacements.promotedSubjectId), eq(subjects.type, 'game')),
+    )
+    .where(and(isNotNull(adPlacements.sectionId), liveWindow(now)))
+    .orderBy(desc(adPlacements.updatedAt));
+  const out = new Map<string, { slug: string; advertiser: string }>();
+  for (const r of rows) {
+    if (r.sectionId && !out.has(r.sectionId))
+      out.set(r.sectionId, { slug: r.slug, advertiser: r.advertiser });
+  }
+  return out;
 }
 
 /**

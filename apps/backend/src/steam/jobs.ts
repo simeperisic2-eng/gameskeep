@@ -5,6 +5,8 @@ import { redis } from '../redis/client';
 import { db } from '../db/client';
 import { gameExternalRatings, gamePlayerCounts, gamePrices, games } from '../db/schema';
 import { getSteamProvider } from '../data-source/steam';
+import { homepageSettings } from '../homepage/settings';
+import { recomputeHomepageQuietly } from '../homepage/jobs';
 
 /**
  * Steam sync job (B2) — the accumulate-our-own-history sweep. In PRODUCTION a
@@ -23,8 +25,10 @@ import { getSteamProvider } from '../data-source/steam';
 export const STEAM_QUEUE = 'steam';
 export const STEAM_SWEEP_JOB = 'steam-sweep';
 export const STEAM_STATE_KEY = 'gameskeep:steam:last-sweep';
-/** 30 min — SteamCharts-style granularity without hammering the API. */
-export const STEAM_SWEEP_EVERY_MS = 30 * 60 * 1000;
+/**
+ * Sampling cadence is ADMIN-SET (`steam.sampleEveryHours`, default 24 — Phase P
+ * S2 owner decision: daily samples so a 7-day By-players Δ always has data).
+ */
 
 export interface SteamSweepResult {
   tracked: number;
@@ -47,16 +51,23 @@ export function getSteamQueue(): Queue {
 }
 
 /**
- * Arm the repeatable sweep — PRODUCTION ONLY (called at worker start; a no-op
- * in demo so the demo never even enqueues). Idempotent via the fixed job id.
+ * Arm the repeatable sweep at the admin cadence — PRODUCTION ONLY (called at
+ * worker start and after a cadence change; a no-op in demo so the demo never even
+ * enqueues). Idempotent: previous schedules are removed first, so a cadence
+ * change never leaves two sweeps running.
  */
 export async function armSteamSync(): Promise<boolean> {
   if (getSteamProvider().name !== 'live') return false;
-  await getSteamQueue().add(
+  const hours = (await homepageSettings()).steamSampleEveryHours;
+  const q = getSteamQueue();
+  for (const r of await q.getRepeatableJobs()) {
+    if (r.name === STEAM_SWEEP_JOB) await q.removeRepeatableByKey(r.key);
+  }
+  await q.add(
     STEAM_SWEEP_JOB,
     {},
     {
-      repeat: { every: STEAM_SWEEP_EVERY_MS },
+      repeat: { every: hours * 3_600_000 },
       jobId: 'steam-sweep-repeat',
       removeOnComplete: 50,
       removeOnFail: 50,
@@ -136,6 +147,8 @@ export function startSteamWorker(): Worker {
       const result = await runSteamSweep();
       const state: SteamSweepState = { ...result, finishedAt: new Date().toISOString() };
       await redis.set(STEAM_STATE_KEY, JSON.stringify(state));
+      // By players reads these samples.
+      await recomputeHomepageQuietly('steam');
       return result;
     },
     { connection: queueConnection() },

@@ -393,6 +393,8 @@ export const gamePlayerCounts = pgTable(
     currentPlayers: integer('current_players'),
     peakPlayers: integer('peak_players'),
     capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Demo mock history (S2) — never mixed with live sweep rows. */
+    demoSeed: boolean('demo_seed').notNull().default(false),
   },
   (t) => [index('game_player_counts_game_idx').on(t.gameId, t.capturedAt)],
 );

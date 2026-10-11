@@ -9,6 +9,10 @@ import { enqueueRatingRecompute } from './ratings/jobs';
 import { enqueueReputationRecompute } from './reputation/jobs';
 import { runMigrations } from './db/migrate';
 import { seedDemo } from './db/seed';
+import { ensureBuiltinSourceTypes } from './sources/rules';
+import { ensureHomepageSections } from './homepage/sections';
+import { armHomepageRefresh, enqueueHomepageCompute } from './homepage/jobs';
+import { ensureDemoPlayerHistory } from './steam/demo-history';
 
 /** API process entrypoint. */
 async function main(): Promise<void> {
@@ -19,6 +23,11 @@ async function main(): Promise<void> {
   try {
     await runMigrations();
     app.log.info('database migrations applied');
+    // Built-in rows every mode needs (S2): the Standalone source type's stable
+    // role, and the homepage section catalogue (legacy list knobs carried over).
+    await ensureBuiltinSourceTypes();
+    const created = await ensureHomepageSections();
+    if (created.length) app.log.info({ created }, 'homepage sections created');
     if (isDemo()) {
       await seedDemo();
       app.log.info('demo seed loaded');
@@ -67,6 +76,15 @@ async function main(): Promise<void> {
       app.log.error({ err }, 'demo feed date realignment failed');
     }
 
+    // Demo player history (S2): daily mock samples ending just before boot, so
+    // the By-players Δ has data in both windows.
+    try {
+      const history = await ensureDemoPlayerHistory();
+      if (history) app.log.info(history, 'demo player history ready');
+    } catch (err) {
+      app.log.error({ err }, 'demo player history failed');
+    }
+
     // Run the article pipeline (pull → embed → cluster → summarize) off the
     // request path too (I3). `skipIfPopulated` makes reboots cheap; the worker
     // owns the heavy work and readiness surfaces the last ingest.
@@ -95,6 +113,16 @@ async function main(): Promise<void> {
     } catch (err) {
       app.log.error({ err }, 'failed to enqueue reputation recompute job');
     }
+  }
+
+  // Homepage snapshots (S2): a first compute + the periodic refresh at the
+  // admin cadence. Never fatal — the homepage shows "computing" meanwhile.
+  try {
+    await enqueueHomepageCompute({ reason: 'boot' });
+    const minutes = await armHomepageRefresh();
+    app.log.info({ minutes }, 'homepage snapshots enqueued + refresh armed');
+  } catch (err) {
+    app.log.error({ err }, 'failed to enqueue homepage snapshots');
   }
 
   try {

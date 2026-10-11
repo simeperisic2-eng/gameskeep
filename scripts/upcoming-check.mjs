@@ -20,7 +20,7 @@
  * Run after `npm run demo:up`: `npm run verify:upcoming`.
  */
 import { execSync } from 'node:child_process';
-import { lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
+import { auditSql, lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
@@ -121,8 +121,32 @@ function print() {
   process.exit(pass === results.length ? 0 : 1);
 }
 
+/**
+ * Re-run safety (Phase P S2): the suggest limiter is an in-memory 10-minute
+ * per-IP window and check 8 deliberately exhausts it. A run right after another
+ * (a warm ladder takes ~8 min) would hit the previous run's burst. The burst
+ * records its window in Redis; a new run first waits out whatever is left.
+ */
+const BURST_KEY = 'gk:verify:upcoming:suggest-burst';
+function redisCli(args) {
+  try {
+    return execSync(`docker exec gameskeep-redis-1 redis-cli ${args}`, { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+async function waitOutPreviousBurst() {
+  const ttl = Number(redisCli(`TTL ${BURST_KEY}`));
+  if (Number.isFinite(ttl) && ttl > 0) {
+    process.stdout.write(`  (waiting ${ttl}s for the previous run's suggest window to close)
+`);
+    await sleep((ttl + 2) * 1000);
+  }
+}
+
 async function body() {
   if (!check('1. Stack ready (backend + SSR frontend)', await waitForReady())) return;
+  await waitOutPreviousBurst();
   const adm = await login('demo-admin');
   const mod = await login('demo-moderator');
 
@@ -300,6 +324,8 @@ async function body() {
       break;
     }
   }
+  // The window this burst filled (the limiter's 10 min) — a later run waits it out.
+  redisCli(`SET ${BURST_KEY} ${Date.now()} EX 600`);
   check(
     '8. Suggest is CSRF-gated (no token → 403) and rate-limited (burst → 429)',
     noCsrf.status === 403 && rateLimited,
@@ -382,10 +408,13 @@ async function body() {
  */
 function cleanupRun() {
   restoreSettings(SETTINGS_SNAPSHOT);
-  psql(
+  const stmts = [
     `DELETE FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)};`,
+    `DELETE FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}%`)};`,
+  ];
+  psql(
+    `BEGIN;\n${auditSql({ action: 'delete', entityType: 'verify-run', entityId: `verify-run-${RUN}`, changes: { statements: stmts }, summary: `verify cleanup removed run ${RUN}'s placements + suggestions` })}\n${stmts.join('\n')}\nCOMMIT;`,
   );
-  psql(`DELETE FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}%`)};`);
   return Number(
     psql(
       `SELECT (SELECT count(*) FROM ad_placements WHERE advertiser_name LIKE ${lit(`%${RUN}%`)} OR headline LIKE ${lit(`%${RUN}%`)}) + (SELECT count(*) FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}%`)});`,

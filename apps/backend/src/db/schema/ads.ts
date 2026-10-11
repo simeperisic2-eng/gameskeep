@@ -1,14 +1,24 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
+  foreignKey,
   index,
   integer,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { adPlacementStatusEnum, adSlotFallbackEnum } from './enums';
+import {
+  adPlacementStatusEnum,
+  adSlotFallbackEnum,
+  homepageSectionKindEnum,
+  subjectTypeEnum,
+} from './enums';
+import { homepageSections } from './homepage';
 import { subjects } from './subjects';
 import { primaryId, timestamps } from './_shared';
 
@@ -53,9 +63,12 @@ export const adPlacements = pgTable(
   'ad_placements',
   {
     id: primaryId(),
-    slotId: uuid('slot_id')
-      .notNull()
-      .references(() => adSlots.id, { onDelete: 'cascade' }),
+    // TARGET: exactly one of a page slot or a homepage DISCOVERY section (S2).
+    slotId: uuid('slot_id').references(() => adSlots.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id'),
+    /** Always 'discovery' when set — with the composite FK this makes a data
+     *  section unreferenceable: the DB rejects selling it (S2). */
+    sectionKind: homepageSectionKindEnum('section_kind'),
     advertiserName: varchar('advertiser_name', { length: 160 }).notNull(),
     advertiserContact: varchar('advertiser_contact', { length: 200 }),
     // ── UGC creative (escaped on render, validated on input) ──
@@ -67,6 +80,9 @@ export const adPlacements = pgTable(
     promotedSubjectId: uuid('promoted_subject_id').references(() => subjects.id, {
       onDelete: 'set null',
     }),
+    /** 'game' (the default) — with the composite FK only a GAME can be promoted;
+     *  stories are never promotable anywhere (S2). Unchecked while the id is null. */
+    promotedSubjectType: subjectTypeEnum('promoted_subject_type').default('game'),
     status: adPlacementStatusEnum('status').notNull().default('draft'),
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
@@ -84,5 +100,33 @@ export const adPlacements = pgTable(
     index('ad_placements_slot_idx').on(t.slotId),
     index('ad_placements_status_idx').on(t.status),
     index('ad_placements_subject_idx').on(t.promotedSubjectId),
+    index('ad_placements_section_idx').on(t.sectionId),
+    // Paid placements may target DISCOVERY sections only: (section, kind) must
+    // exist in homepage_sections AND kind must be 'discovery'.
+    foreignKey({
+      name: 'ad_placements_section_discovery_fk',
+      columns: [t.sectionId, t.sectionKind],
+      foreignColumns: [homepageSections.id, homepageSections.kind],
+    }), // no cascade: a section is never deleted, and its billing records must not be
+    check(
+      'ad_placements_section_kind_discovery',
+      sql`section_kind IS NULL OR section_kind = 'discovery'`,
+    ),
+    check('ad_placements_section_pair', sql`(section_id IS NULL) = (section_kind IS NULL)`),
+    check('ad_placements_one_target', sql`num_nonnulls(slot_id, section_id) = 1`),
+    // Only a GAME can be promoted: (subject, type) must exist with type = game.
+    foreignKey({
+      name: 'ad_placements_promoted_game_fk',
+      columns: [t.promotedSubjectId, t.promotedSubjectType],
+      foreignColumns: [subjects.id, subjects.type],
+    }).onDelete('set null'),
+    check(
+      'ad_placements_promoted_game',
+      sql`promoted_subject_type IS NULL OR promoted_subject_type = 'game'`,
+    ),
+    // At most ONE active Promoted item per discovery section.
+    uniqueIndex('ad_placements_one_active_per_section')
+      .on(t.sectionId)
+      .where(sql`section_id IS NOT NULL AND status = 'active'`),
   ],
 );

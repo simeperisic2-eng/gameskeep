@@ -17,6 +17,7 @@ import { registerListAdminRoutes } from './list-routes';
 import { registerDisplayAdminRoutes } from './display-routes';
 import { registerIntegrityAdminRoutes } from './integrity-routes';
 import { registerJobAdminRoutes } from './job-routes';
+import { registerHomepageAdminRoutes } from './homepage-routes';
 import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
@@ -398,6 +399,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── background job state by id (hygiene 3: wait for YOUR run) ────────────
       await registerJobAdminRoutes(admin);
+      // Phase P S2: homepage sections (order / config / pins / promotions / switches).
+      await registerHomepageAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

@@ -16,7 +16,7 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
-import { lit, psql, waitForJob } from './lib/fixtures.mjs';
+import { auditSql, lit, psql, waitForJob } from './lib/fixtures.mjs';
 
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
 const BASE = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
@@ -190,8 +190,9 @@ async function main() {
   );
 
   // Hygiene 3: leave nothing behind — this run's queue entries go.
+  const purge = `DELETE FROM unmatched_games WHERE raw_name IN (${lit(unknownName)}, ${lit(`Spam Title ${RUN}`)});`;
   psql(
-    `DELETE FROM unmatched_games WHERE raw_name IN (${lit(unknownName)}, ${lit(`Spam Title ${RUN}`)});`,
+    `BEGIN;\n${auditSql({ action: 'delete', entityType: 'unmatched-games', entityId: `verify-run-${RUN}`, changes: { statements: [purge] }, summary: `verify cleanup removed run ${RUN}'s queue entries` })}\n${purge}\nCOMMIT;`,
   );
   const left = Number(
     psql(`SELECT count(*) FROM unmatched_games WHERE raw_name LIKE ${lit(`%${RUN}`)};`),

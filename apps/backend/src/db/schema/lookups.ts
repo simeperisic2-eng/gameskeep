@@ -46,6 +46,12 @@ export const sourceTypes = pgTable('source_types', {
   // mainstream / independent / industry / blog (BLUEPRINT 2.5).
   key: varchar('key', { length: 80 }).notNull().unique(),
   label: varchar('label', { length: 300 }).notNull(),
+  /**
+   * Built-in ROLE (S2) — the stable identity a data rule keys on ('standalone'
+   * = the type shown as "Standalone"). Set by the seed/migration, never by the
+   * admin CRUD, so renaming the key or the label cannot detach a rule.
+   */
+  role: varchar('role', { length: 40 }).unique(),
   sort: integer('sort').notNull().default(0),
   isActive: boolean('is_active').notNull().default(true),
   ...timestamps(),

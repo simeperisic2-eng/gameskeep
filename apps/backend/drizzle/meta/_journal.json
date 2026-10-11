@@ -134,6 +134,13 @@
       "when": 1791700456610,
       "tag": "0018_hygiene3_identity_status",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791734323518,
+      "tag": "0019_s2_homepage_sections",
+      "breakpoints": true
     }
   ]
 }

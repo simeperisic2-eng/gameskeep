@@ -10,6 +10,10 @@
  * audit trail keeps its rows (actor ids go NULL, labels stay — audit is never
  * deleted). Afterwards the derived layers (rating summaries, reputation) are
  * recomputed and AWAITED by job id, so seeded games a fixture voted on read true.
+ *
+ * Every cleanup write is itself AUDITED (actor `verify:cleanup`, old → new): a
+ * restore that changed real state through SQL without a row would leave the
+ * trail saying something the data no longer shows (the S1 → hygiene-3 lesson).
  */
 import { execFileSync } from 'node:child_process';
 
@@ -42,6 +46,13 @@ export function psql(query) {
 
 /** A SQL string literal ('' escaped). */
 export const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
+
+export const CLEANUP_ACTOR = 'verify:cleanup';
+
+/** The SQL that writes one cleanup audit row (run inside the same transaction). */
+export function auditSql({ action = 'update', entityType, entityId, changes = null, summary }) {
+  return `INSERT INTO audit_logs (action, entity_type, entity_id, changes, summary, actor_label) VALUES (${lit(action)}, ${lit(entityType)}, ${lit(String(entityId).slice(0, 80))}, ${changes == null ? 'NULL' : `${lit(JSON.stringify(changes))}::jsonb`}, ${lit(summary)}, ${lit(CLEANUP_ACTOR)});`;
+}
 
 /** Every pattern must carry the run token (≥ 5 chars) — a guard against a broad sweep. */
 function guard(run, patterns) {
@@ -106,13 +117,49 @@ export async function purgeFixtures({
     if (tombstonesSince) {
       conds.push(`(username LIKE 'deleted\\_%' AND created_at >= ${lit(tombstonesSince)})`);
     }
-    stmts.push(`DELETE FROM users WHERE ${conds.join(' OR ')};`);
+    const where = conds.join(' OR ');
+    const ids = psql(`SELECT coalesce(string_agg(username, ','), '') FROM users WHERE ${where};`);
+    if (ids) {
+      stmts.push(
+        auditSql({
+          action: 'delete',
+          entityType: 'users',
+          entityId: `verify-run-${run}`,
+          changes: { deleted: ids.split(',') },
+          summary: `verify cleanup removed ${ids.split(',').length} fixture account(s) of run ${run}`,
+        }),
+      );
+    }
+    stmts.push(`DELETE FROM users WHERE ${where};`);
   }
   if (subjectSlugs.length) {
-    const conds = subjectSlugs.map((p) => `slug LIKE ${lit(p)}`);
-    stmts.push(`DELETE FROM subjects WHERE ${conds.join(' OR ')};`);
+    const where = subjectSlugs.map((p) => `slug LIKE ${lit(p)}`).join(' OR ');
+    const slugs = psql(`SELECT coalesce(string_agg(slug, ','), '') FROM subjects WHERE ${where};`);
+    if (slugs) {
+      stmts.push(
+        auditSql({
+          action: 'delete',
+          entityType: 'subjects',
+          entityId: `verify-run-${run}`,
+          changes: { deleted: slugs.split(',') },
+          summary: `verify cleanup removed ${slugs.split(',').length} fixture game(s) of run ${run}`,
+        }),
+      );
+    }
+    stmts.push(`DELETE FROM subjects WHERE ${where};`);
   }
-  stmts.push(...extra);
+  if (extra.length) {
+    stmts.push(
+      auditSql({
+        action: 'delete',
+        entityType: 'verify-run',
+        entityId: `verify-run-${run}`,
+        changes: { statements: extra },
+        summary: `verify cleanup removed run ${run}'s other fixtures (${extra.length} statement(s))`,
+      }),
+      ...extra,
+    );
+  }
   if (stmts.length) psql(`BEGIN;\n${stmts.join('\n')}\nCOMMIT;`);
   const out = { ok: true, detail: [] };
   if (recompute) {
@@ -137,12 +184,34 @@ export function snapshotSettings(keys) {
   return { keys, map };
 }
 
-/** Restore a snapshot: rows that existed get their value back; rows that didn't are removed. */
+/**
+ * Restore a snapshot: rows that existed get their value back; rows that didn't
+ * are removed. Only keys whose value actually changed are written — each with an
+ * audit row (old → new).
+ */
 export function restoreSettings(snap) {
-  const stmts = snap.keys.map((k) =>
-    snap.map.has(k)
-      ? `INSERT INTO app_settings (key, value) VALUES (${lit(k)}, ${lit(snap.map.get(k))}::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;`
-      : `DELETE FROM app_settings WHERE key = ${lit(k)};`,
-  );
-  psql(`BEGIN;\n${stmts.join('\n')}\nCOMMIT;`);
+  const current = snapshotSettings(snap.keys).map;
+  const stmts = [];
+  for (const k of snap.keys) {
+    const was = snap.map.get(k) ?? null;
+    const now = current.get(k) ?? null;
+    if (was === now) continue;
+    stmts.push(
+      was !== null
+        ? `INSERT INTO app_settings (key, value) VALUES (${lit(k)}, ${lit(was)}::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();`
+        : `DELETE FROM app_settings WHERE key = ${lit(k)};`,
+      auditSql({
+        entityType: 'app-settings',
+        entityId: k,
+        changes: {
+          value: {
+            from: now === null ? null : JSON.parse(now),
+            to: was === null ? null : JSON.parse(was),
+          },
+        },
+        summary: `verify cleanup restored app setting "${k}"`,
+      }),
+    );
+  }
+  if (stmts.length) psql(`BEGIN;\n${stmts.join('\n')}\nCOMMIT;`);
 }

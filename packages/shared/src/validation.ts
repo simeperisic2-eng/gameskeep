@@ -13,6 +13,8 @@ import {
   INTEGRITY_SIGNAL_KINDS,
   EXTERNAL_RATING_KINDS,
   GAME_STATUSES,
+  HOMEPAGE_MAX_ITEMS,
+  HOMEPAGE_SECTION_MODES,
   LAUNCH_STATE_FLAGS,
   NEWSLETTER_CAMPAIGN_KINDS,
   SOURCE_STATUSES,
@@ -657,34 +659,116 @@ export const newsletterCampaignCreate = z.object({
 });
 
 // ── homepage list / ranking config (I8 Slice 4) ───────────────────────────────
-/** A slug pin list — each entry a lowercase slug; the backend dedupes + clamps. */
-const pinSlugList = z
-  .array(
-    z
-      .string()
-      .trim()
-      .min(1)
-      .max(160)
-      .regex(/^[a-z0-9-]+$/, 'lowercase slug (a-z, 0-9, hyphens)'),
-  )
-  .max(50);
-
 /**
- * Admin edits the homepage rail sizes + pins (all in `app_settings.lists`).
- * Every field optional (PATCH-merge); the backend clamps + audits. Nothing here
- * is hardcoded at the render site.
+ * The `lists` app_setting (Upcoming enrichment): the "New" window in days. The
+ * homepage rail sizes + pins moved to the homepage SECTIONS (Phase P S2), and
+ * `pinPromotedGames` is gone for good (data lists are never sold) — STRICT, so
+ * a client still sending a removed field gets a 400 instead of a silent no-op.
  */
-export const listsConfigInput = z.object({
-  heroCount: z.number().int().min(1).max(24).optional(),
-  feedCount: z.number().int().min(1).max(60).optional(),
-  topRatedCount: z.number().int().min(1).max(24).optional(),
-  focusCount: z.number().int().min(1).max(24).optional(),
-  pinnedTopicSlugs: pinSlugList.optional(),
-  pinnedGameSlugs: pinSlugList.optional(),
-  pinPromotedGames: z.boolean().optional(),
-  // Upcoming enrichment: "New" (recently-released) window, in days.
-  newWindowDays: z.number().int().min(1).max(365).optional(),
+export const listsConfigInput = z
+  .object({
+    newWindowDays: z.number().int().min(1).max(365).optional(),
+  })
+  .strict();
+
+// ── Phase P S2: homepage sections ────────────────────────────────────────────
+const ruleList = z.array(z.string().trim().min(1).max(80)).max(50);
+const ruleSide = z
+  .object({
+    categories: ruleList.optional(),
+    tags: ruleList.optional(),
+    genres: ruleList.optional(),
+    sources: ruleList.optional(),
+  })
+  .strict();
+
+/** One section's editable config (PATCH-merge; validated per kind in the service). */
+export const homepageSectionPatch = z
+  .object({
+    title: z.string().trim().min(1).max(80).optional(),
+    enabled: z.boolean().optional(),
+    mode: z.enum(HOMEPAGE_SECTION_MODES).optional(),
+    itemCount: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS).optional(),
+    deltaWindowHours: z.number().int().min(1).max(2160).nullable().optional(),
+    cardTagFamilies: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+    cardTagCount: z.number().int().min(0).max(10).optional(),
+    rules: z
+      .object({ include: ruleSide.optional(), exclude: ruleSide.optional() })
+      .strict()
+      .optional(),
+    promotedPosition: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS).nullable().optional(),
+  })
+  .strict();
+export type HomepageSectionPatch = z.infer<typeof homepageSectionPatch>;
+
+/** The full page order (every section key exactly once). */
+export const homepageOrderInput = z.object({
+  keys: z.array(z.string().trim().min(1).max(40)).min(1).max(40),
 });
+
+const pinSlug = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[a-z0-9-]+$/, 'lowercase slug (a-z, 0-9, hyphens)');
+
+/** Replace a section's pins: each holds an explicit position; a story OR a game. */
+export const homepagePinsInput = z.object({
+  pins: z
+    .array(
+      z
+        .object({
+          position: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS),
+          topicSlug: pinSlug.optional(),
+          gameSlug: pinSlug.optional(),
+        })
+        .strict()
+        .refine((p) => Boolean(p.topicSlug) !== Boolean(p.gameSlug), {
+          message: 'each pin is a story (topicSlug) OR a game (gameSlug)',
+        }),
+    )
+    .max(HOMEPAGE_MAX_ITEMS),
+});
+export type HomepagePinsInput = z.infer<typeof homepagePinsInput>;
+
+/** Homepage / ads / Steam-cadence switches (PATCH-merge; audited per key). */
+export const homepageSettingsPatch = z
+  .object({
+    deltaMinPoints: z.number().int().min(1).max(50).optional(),
+    trendingWeights: z
+      .object({
+        articles: z.number().min(0).max(10).optional(),
+        sources: z.number().min(0).max(10).optional(),
+        comments: z.number().min(0).max(10).optional(),
+        follows: z.number().min(0).max(10).optional(),
+      })
+      .strict()
+      .optional(),
+    perUserCap: z.number().int().min(1).max(10).optional(),
+    minCredibility: z.number().min(0).max(1).optional(),
+    maxEngagementShare: z.number().min(0).max(5).optional(),
+    refreshMinutes: z.number().int().min(5).max(1440).optional(),
+    showUnsoldPlaceholder: z.boolean().optional(),
+    steamSampleEveryHours: z.number().int().min(1).max(168).optional(),
+  })
+  .strict();
+
+/** A paid placement for a DISCOVERY section (only a game can be promoted). */
+export const homepagePromotionCreate = z
+  .object({
+    advertiserName: z.string().trim().min(1).max(160),
+    advertiserContact: z.string().trim().max(200).optional(),
+    gameSlug: pinSlug,
+    headline: z.string().trim().min(1).max(120).optional(),
+    startsAt: z.coerce.date().optional(),
+    endsAt: z.coerce.date().optional(),
+    priceCents: z.number().int().min(0).max(100_000_000).optional(),
+    currency: z.string().trim().length(3).optional(),
+    notes: z.string().trim().max(2000).optional(),
+  })
+  .strict();
+export type HomepagePromotionCreate = z.infer<typeof homepagePromotionCreate>;
 
 // ── Phase P S1: public display switches + review integrity ───────────────────
 const lexiconList = z.array(z.string().trim().min(2).max(80)).max(60);

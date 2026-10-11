@@ -33,8 +33,10 @@ import {
   topicTypes,
   users,
 } from '../db/schema';
-import { activeGamePromotions, activePromotedGameSlugs } from '../ads/service';
-import { applyPins, listsSettings } from '../lists/settings';
+import { activeGamePromotions } from '../ads/service';
+import { listSections } from '../homepage/sections';
+import { readSnapshots } from '../homepage/snapshots';
+import type { Delta } from '../homepage/rules';
 import {
   flagsFromBreakdown,
   publicFlags,
@@ -158,7 +160,49 @@ export interface RankedGame {
   disconnectBand: string | null;
 }
 
+/** A game as a homepage section card (identity + the two public score layers). */
+export interface HomepageGameCard {
+  slug: string;
+  name: string;
+  coverUrl: string | null;
+  status: string;
+  releaseDate: string | null;
+  genres: string[];
+  /** Effective critic / community layers, 0..100 (null = no data). */
+  critics: number | null;
+  community: number | null;
+}
+
+export interface HomepageSectionItem {
+  type: 'topic' | 'game';
+  /** An editorial pin (never paid — pins carry no label). */
+  pinned: boolean;
+  /** A PAID placement (discovery sections only): the label is render-forced. */
+  promoted: { advertiser: string } | null;
+  /** Trending / By players: vs the previous window of equal length. */
+  delta: Delta | null;
+  /** The section's ranking metric (score / average players / mean / gap). */
+  metric: number | null;
+  topic: TopicCard | null;
+  game: HomepageGameCard | null;
+}
+
+/** One enabled homepage section, in the admin's page order. */
+export interface HomepageSection {
+  key: string;
+  kind: string;
+  title: string;
+  /** The Δ window in hours (Trending / By players), else null. */
+  windowHours: number | null;
+  items: HomepageSectionItem[];
+}
+
 export interface HomepageData {
+  /** Phase P S2: the admin-configured sections, in page order (enabled only). */
+  sections: HomepageSection[];
+  /** When the snapshots job last stored the sections (null = not yet computed). */
+  computedAt: string | null;
+  // The rails below are views of the same snapshots (kept for the current page).
   hero: TopicCard[];
   feed: TopicCard[];
   latest: LatestArticle[];
@@ -337,10 +381,6 @@ async function loadTopicCards(
       lastActivityAt: t.lastActivityAt ? t.lastActivityAt.toISOString() : null,
     };
   });
-}
-
-function activityTime(c: TopicCard): number {
-  return c.lastActivityAt ? new Date(c.lastActivityAt).getTime() : 0;
 }
 
 /**
@@ -533,13 +573,6 @@ async function loadRankedGames(): Promise<RankedGame[]> {
   }));
 }
 
-/** Combined display strength for "Top Rated" (critics + our + community, where present). */
-function topScore(g: RankedGame): number {
-  const parts = [g.critics, g.our, g.community].filter((n): n is number => n != null);
-  if (parts.length === 0) return -1;
-  return parts.reduce((a, b) => a + b, 0) / parts.length;
-}
-
 /**
  * Today's briefing (Phase P S1): sources · topics · reviews in the window — never
  * a percentage. The window is `windowHours` up to NOW when coverage arrived in
@@ -593,67 +626,121 @@ async function buildBriefing(windowHours: number): Promise<Briefing> {
   };
 }
 
+/** Section game cards for a set of slugs (identity + the two public layers). */
+async function loadHomepageGameCards(slugs: string[]): Promise<Map<string, HomepageGameCard>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db
+    .select({
+      slug: subjects.slug,
+      name: subjects.name,
+      coverUrl: games.coverUrl,
+      status: games.status,
+      releaseDate: games.releaseDate,
+      genres: games.genres,
+      criticsAuto: gameRatingSummaries.criticsScore,
+      criticsOverride: gameRatingSummaries.criticsOverride,
+      communityAuto: gameRatingSummaries.communityOurScore,
+      communityOverride: gameRatingSummaries.communityOverride,
+    })
+    .from(games)
+    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+    .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id))
+    .where(inArray(subjects.slug, slugs));
+  return new Map(
+    rows.map((r) => [
+      r.slug,
+      {
+        slug: r.slug,
+        name: r.name,
+        coverUrl: publicAssetUrl(r.coverUrl),
+        status: r.status,
+        releaseDate: r.releaseDate ?? null,
+        genres: r.genres ?? [],
+        critics: effective(r.criticsAuto, r.criticsOverride),
+        community: effective(r.communityAuto, r.communityOverride),
+      },
+    ]),
+  );
+}
+
 /**
- * Compose the homepage payload from stored data. The hero leads with the most-
- * covered multi-source stories; the main feed is the rest, newest-first.
+ * The homepage payload (Phase P S2). The section CONTENTS are read from the
+ * stored snapshots (ranking, Δ windows, pins and the Promoted item were decided
+ * by the snapshots job) and only hydrated here; display shaping (bias scope)
+ * still applies per request. A snapshot that names a story or game that no
+ * longer exists is skipped — never a broken card.
  */
 export async function getHomepageData(): Promise<HomepageData> {
   const settings = await displaySettings();
   const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
-  // AUTO + MANUAL: rail sizes + pins come from the admin `lists` config (nothing
-  // hardcoded); the automatic ordering runs underneath and pins float on top.
-  const [cards, latest, ranked, genres, cfg, briefing] = await Promise.all([
+  const [cards, latest, ranked, genres, briefing, sections, snapshots] = await Promise.all([
     loadTopicCards(settings, evidence),
     loadLatestArticles(10, settings, evidence),
     loadRankedGames(),
     loadGenres(),
-    listsSettings(),
     buildBriefing(settings.briefingWindowHours),
+    listSections(),
+    readSnapshots(),
   ]);
-  const promotedSlugs = cfg.pinPromotedGames ? await activePromotedGameSlugs() : [];
+  const cardBySlug = new Map(cards.map((c) => [c.slug, c]));
+  const rankedBySlug = new Map(ranked.map((g) => [g.slug, g]));
+  const gameSlugs = new Set<string>();
+  for (const snap of snapshots.values()) {
+    for (const it of snap.payload.items ?? []) if (it.type === 'game') gameSlugs.add(it.slug);
+  }
+  const gameCards = await loadHomepageGameCards([...gameSlugs]);
 
-  // Hero: lead with the most-covered, multi-source stories (newspaper front
-  // page), then float any manually-pinned topics to the very front.
-  const byCoverage = [...cards].sort(
-    (a, b) =>
-      b.sourceCount - a.sourceCount ||
-      b.articleCount - a.articleCount ||
-      activityTime(b) - activityTime(a),
-  );
-  const hero = applyPins(byCoverage, (c) => c.slug, cfg.pinnedTopicSlugs).slice(0, cfg.heroCount);
-  const heroIds = new Set(hero.map((c) => c.id));
+  let computedAt: string | null = null;
+  const out: HomepageSection[] = [];
+  for (const sec of sections) {
+    if (!sec.enabled) continue;
+    const snap = snapshots.get(sec.key);
+    if (snap && (!computedAt || snap.computedAt.toISOString() > computedAt)) {
+      computedAt = snap.computedAt.toISOString();
+    }
+    const items: HomepageSectionItem[] = [];
+    for (const it of snap?.payload.items ?? []) {
+      const topic = it.type === 'topic' ? (cardBySlug.get(it.slug) ?? null) : null;
+      const game = it.type === 'game' ? (gameCards.get(it.slug) ?? null) : null;
+      if (!topic && !game) continue;
+      items.push({
+        type: it.type,
+        pinned: it.pinned === true,
+        // Only a discovery section can carry a paid item (the job never writes
+        // one elsewhere; this is the read-side belt to that DB brace).
+        promoted:
+          sec.kind === 'discovery' && it.promoted ? { advertiser: it.promoted.advertiser } : null,
+        delta: it.delta ?? null,
+        metric: typeof it.metric === 'number' ? it.metric : null,
+        topic,
+        game,
+      });
+    }
+    out.push({
+      key: sec.key,
+      kind: sec.kind,
+      title: sec.title,
+      windowHours: sec.delta ? sec.deltaWindowHours : null,
+      items,
+    });
+  }
 
-  // Main feed: everything else, newest-active first.
-  const feed = cards
-    .filter((c) => !heroIds.has(c.id))
-    .sort((a, b) => activityTime(b) - activityTime(a))
-    .slice(0, cfg.feedCount);
-
-  // Games-in-focus (disconnect) and Top-rated must show DIFFERENT games: the
-  // focus set is the biggest gaps; Top-rated then EXCLUDES those.
-  const controversial = ranked
-    .filter((g) => g.disconnectValue != null)
-    .sort((a, b) => (b.disconnectValue ?? 0) - (a.disconnectValue ?? 0))
-    .slice(0, cfg.focusCount);
-  const focusSlugs = new Set(controversial.slice(0, 3).map((g) => g.slug));
-  // Auto-pin: promoted games first (if enabled), then explicit manual pins win
-  // (manual override). Both float above the automatic score order.
-  const gamePins = [
-    ...cfg.pinnedGameSlugs,
-    ...promotedSlugs.filter((s) => !cfg.pinnedGameSlugs.includes(s)),
-  ];
-  const topRated = applyPins(
-    ranked.filter((g) => !focusSlugs.has(g.slug)).sort((a, b) => topScore(b) - topScore(a)),
-    (g) => g.slug,
-    gamePins,
-  ).slice(0, cfg.topRatedCount);
+  const sectionOf = (key: string): HomepageSection | undefined => out.find((x) => x.key === key);
+  const topicCardsOf = (key: string): TopicCard[] =>
+    (sectionOf(key)?.items ?? []).map((i) => i.topic).filter((t): t is TopicCard => t !== null);
+  const rankedOf = (key: string): RankedGame[] =>
+    (sectionOf(key)?.items ?? [])
+      .map((i) => (i.game ? (rankedBySlug.get(i.game.slug) ?? null) : null))
+      .filter((g): g is RankedGame => g !== null);
 
   return {
-    hero,
-    feed,
+    sections: out,
+    computedAt,
+    hero: topicCardsOf('trending'),
+    feed: topicCardsOf('latest'),
     latest,
-    topRated,
-    controversial,
+    topRated: rankedOf('top_rated'),
+    controversial: rankedOf('focus'),
     genres,
     briefing,
     display: publicDisplay(settings),
@@ -1527,18 +1614,10 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       })
       .from(gameDlc)
       .where(eq(gameDlc.gameId, g.gameId)),
-    db
-      .select({
-        current: gamePlayerCounts.currentPlayers,
-        peak: gamePlayerCounts.peakPlayers,
-        capturedAt: gamePlayerCounts.capturedAt,
-      })
-      .from(gamePlayerCounts)
-      .where(eq(gamePlayerCounts.gameId, g.gameId))
-      .orderBy(desc(gamePlayerCounts.capturedAt))
-      // B2: ~6 months of weekly history for the dated chart (seeded 26 points;
-      // in production the sweep appends and this window slides).
-      .limit(40),
+    // B2 chart: ONE point per week over ~6 months (the latest sample of each
+    // 7-day bucket, counted back from the newest) — the sampling cadence (daily
+    // since Phase P S2, admin-set) never changes the chart's shape or cost.
+    weeklyPlayerHistory(g.gameId),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(gameUserRatings)
@@ -1587,6 +1666,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   }
 
   const player = playerRows[0];
+  const recordedPeak = await recordedPlayerPeak(g.gameId);
 
   return {
     id: g.gameId, // I6 Slice 8: the community write components address the game by id
@@ -1656,7 +1736,8 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     playerCount: player
       ? {
           current: player.current ?? null,
-          peak: player.peak ?? null,
+          // "Peak (recorded)": the highest number in the WHOLE recorded history.
+          peak: recordedPeak ?? player.peak ?? null,
           capturedAt: player.capturedAt.toISOString(),
         }
       : null,
@@ -1666,6 +1747,56 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       .map((p) => ({ capturedAt: p.capturedAt.toISOString(), current: p.current ?? null })),
     relatedGames,
   };
+}
+
+/** Rows of a raw `db.execute` result (the driver returns an array or { rows }). */
+function execRows<T>(res: unknown): T[] {
+  const raw = res as { rows?: T[] } | T[];
+  return Array.isArray(raw) ? raw : (raw.rows ?? []);
+}
+
+/** Newest-first weekly buckets of a game's player counts (≤ 27 rows, ~6 months). */
+async function weeklyPlayerHistory(
+  gameId: string,
+): Promise<{ current: number | null; peak: number | null; capturedAt: Date }[]> {
+  const res = await db.execute(sql`
+    WITH newest AS (
+      SELECT max(captured_at) AS m FROM game_player_counts WHERE game_id = ${gameId}
+    ), b AS (
+      SELECT floor(extract(epoch FROM (n.m - p.captured_at)) / 604800)::int AS bucket,
+             p.captured_at, p.current_players, p.peak_players
+      FROM game_player_counts p, newest n
+      WHERE p.game_id = ${gameId} AND p.captured_at > n.m - interval '189 days'
+    )
+    SELECT DISTINCT ON (bucket) bucket, captured_at, current_players, peak_players
+    FROM b ORDER BY bucket ASC, captured_at DESC
+  `);
+  const rows = execRows<{
+    captured_at: string | Date;
+    current_players: number | null;
+    peak_players: number | null;
+  }>(res);
+  return rows
+    .map((r) => ({
+      current: r.current_players == null ? null : Number(r.current_players),
+      peak: r.peak_players == null ? null : Number(r.peak_players),
+      capturedAt: r.captured_at instanceof Date ? r.captured_at : new Date(r.captured_at),
+    }))
+    .filter((r) => Number.isFinite(r.capturedAt.getTime()));
+}
+
+/** The highest player count ever recorded for a game (current or stored peak). */
+async function recordedPlayerPeak(gameId: string): Promise<number | null> {
+  const [row] = await db
+    .select({
+      peak: sql<
+        number | null
+      >`max(greatest(coalesce(${gamePlayerCounts.currentPlayers}, 0), coalesce(${gamePlayerCounts.peakPlayers}, 0)))`,
+    })
+    .from(gamePlayerCounts)
+    .where(eq(gamePlayerCounts.gameId, gameId));
+  const n = row?.peak == null ? null : Number(row.peak);
+  return n != null && Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // ── catalog / browse (SPEC I5b; BLUEPRINT 2.4) ───────────────────────────────
@@ -1755,8 +1886,13 @@ function normFilter(v: string | null | undefined): string | null {
 }
 
 /** Combined display strength (critics + our + community, where present). */
+/**
+ * Ranking strength for "Top rated" lists and the rating sort: the critic +
+ * community layers only (owner decision, applied with Phase P S2 — the team score
+ * stays out of every Top Rated ranking until S5 switches it on).
+ */
 function catalogStrength(g: CatalogGame): number {
-  const parts = [g.critics, g.our, g.community].filter((n): n is number => n != null);
+  const parts = [g.critics, g.community].filter((n): n is number => n != null);
   if (parts.length === 0) return -1;
   return parts.reduce((a, b) => a + b, 0) / parts.length;
 }
@@ -1953,7 +2089,7 @@ function todayIso(): string {
 }
 
 /** Sort helper: dated soonest→latest first; undated (TBA) last, alphabetical. */
-function byReleaseThenName(
+export function byReleaseThenName(
   a: { releaseDate: string | null; name: string },
   b: { releaseDate: string | null; name: string },
 ): number {
@@ -1965,7 +2101,11 @@ function byReleaseThenName(
 }
 
 /** A pre-release game is "upcoming" by status: announced / in-dev / not-yet-out EA. */
-function isPreReleaseByStatus(status: string, releaseDate: string | null, today: string): boolean {
+export function isPreReleaseByStatus(
+  status: string,
+  releaseDate: string | null,
+  today: string,
+): boolean {
   if (status === 'announced' || status === 'in_development') return true;
   // early-access is already playable — keep it only while its 1.0 is still ahead
   // (or undated); never a years-old EA launch.
