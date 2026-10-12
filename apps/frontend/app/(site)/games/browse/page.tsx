@@ -21,6 +21,12 @@ function first(v: string | string[] | undefined): string | null {
   return v ?? null;
 }
 
+/** A repeatable param (`tag=a&tag=b`) as a list. */
+function all(v: string | string[] | undefined): string[] {
+  if (v === undefined) return [];
+  return (Array.isArray(v) ? v : [v]).filter(Boolean);
+}
+
 /** Title-case a filter value for the heading/meta ("rpg" → "RPG" kept as-is). */
 function pretty(v: string | null): string | null {
   if (!v) return null;
@@ -48,6 +54,8 @@ export async function generateMetadata({
   const platform = pretty(first(sp.platform));
   const pageNum = Math.max(1, Number.parseInt(first(sp.page) ?? '1', 10) || 1);
   const parts = [genre, platform].filter(Boolean);
+  // Phase P S3: a tag-filtered combination is noindex,follow (canonical → hub).
+  const tagFiltered = all(sp.tag).length > 0 || all(sp.xtag).length > 0;
   const scope = parts.length > 0 ? `${parts.join(' · ')} games` : 'All games';
   const title =
     (parts.length > 0 ? `${parts.join(' · ')} games` : 'Browse all games') +
@@ -60,8 +68,11 @@ export async function generateMetadata({
     title,
     description,
     alternates: {
-      canonical: canonicalFor({ genre: first(sp.genre), platform: first(sp.platform) }, pageNum),
+      canonical: tagFiltered
+        ? `${siteUrl}/games/browse`
+        : canonicalFor({ genre: first(sp.genre), platform: first(sp.platform) }, pageNum),
     },
+    ...(tagFiltered ? { robots: { index: false, follow: true } } : {}),
     openGraph: { type: 'website', url: `${siteUrl}/games/browse`, title, description },
     twitter: { card: 'summary_large_image', title, description },
   };
@@ -78,13 +89,23 @@ export default async function BrowsePage({
     platform: first(sp.platform),
     sort: first(sp.sort),
     page: first(sp.page),
+    tags: all(sp.tag),
+    xtags: all(sp.xtag),
   });
 
   const genreLabel = pretty(data.applied.genre);
   const platformLabel = pretty(data.applied.platform);
   const activeParts = [genreLabel, platformLabel].filter(Boolean);
   // Filtered views re-title + re-count ("RPG games — 47 of 199").
-  const heading = activeParts.length > 0 ? `${activeParts.join(' · ')} games` : 'Every game';
+  // Phase P S3: name the tag filters too ("Story-rich games, excluding Open world").
+  const tagName = (slug: string): string =>
+    data.tagFacets.find((f) => f.slug === slug)?.name ?? slug;
+  const included = data.applied.tags.map(tagName);
+  const excluded = data.applied.xtags.map(tagName);
+  const headParts = [...activeParts, ...included];
+  const heading =
+    (headParts.length > 0 ? `${headParts.join(' · ')} games` : 'Every game') +
+    (excluded.length > 0 ? `, excluding ${excluded.join(', ')}` : '');
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -126,7 +147,12 @@ export default async function BrowsePage({
           </span>
         </header>
 
-        <CatalogControls genres={data.genres} platforms={data.platforms} applied={data.applied} />
+        <CatalogControls
+          genres={data.genres}
+          platforms={data.platforms}
+          tagFacets={data.tagFacets}
+          applied={data.applied}
+        />
 
         {data.games.length > 0 ? (
           <>

@@ -61,9 +61,7 @@ export async function registerListAdminRoutes(admin: FastifyInstance): Promise<v
             items: sec.items.map((it) => ({
               label: it.topic?.title ?? it.game?.name ?? '?',
               pinned: it.pinned,
-              promoted: it.paid
-                ? `${it.paid.kind === 'story' ? 'Sponsored' : 'Promoted'} · ${it.paid.advertiser}`
-                : null,
+              promoted: it.paid ? `Promoted (${it.paid.kind}) · ${it.paid.advertiser}` : null,
               delta: deltaLabel(it.delta),
             })),
           })),

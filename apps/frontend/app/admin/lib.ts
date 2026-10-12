@@ -202,6 +202,66 @@ export async function getHomepagePreview(): Promise<HomepagePreview> {
   return (await adminGet<{ data: HomepagePreview }>('/lists/preview')).data;
 }
 
+// ── Phase P S3: tags ──────────────────────────────────────────────────────────
+export interface TagQueueRow {
+  id: string;
+  game: { slug: string; name: string };
+  tag: { slug: string; name: string; family: 'content' | 'issue' };
+  state: 'pending' | 'published' | 'rejected';
+  source: 'import' | 'players' | 'editors';
+  weightedScore: number;
+  voteCount: number;
+  thresholdReached: boolean;
+  flagged: boolean;
+  flagInfo: { windowCount?: number; lowShare?: number; historicalRate?: number } | null;
+  firstSeenAt: string;
+  lastVoteAt: string | null;
+  lastConfirmedAt: string | null;
+  confirmedBy: string | null;
+  resolvedAt: string | null;
+  patchRef: string | null;
+  issueStatus: 'active' | 'past' | 'resolved' | null;
+}
+export interface TagSuggestionRow {
+  id: string;
+  rawName: string;
+  normalized: string;
+  source: 'import' | 'user';
+  game: { slug: string; name: string } | null;
+  attempts: number;
+  createdAt: string;
+}
+export interface TagQueue {
+  threshold: number;
+  pending: TagQueueRow[];
+  published: TagQueueRow[];
+  suggestions: TagSuggestionRow[];
+}
+export interface TagSettingsConfig {
+  publishThreshold: number;
+  minCredibility: number;
+  issueExpiryDays: number;
+  indexMinGames: number;
+  showAnomalyLabel: boolean;
+  catalogCardCount: number;
+  burstWindowHours: number;
+  burstMinVotes: number;
+  burstMultiplier: number;
+  lowCredibilityShare: number;
+  quickViewCacheSeconds: number;
+}
+export async function getTagQueue(): Promise<TagQueue> {
+  return (await adminGet<{ data: TagQueue }>('/tag-queue')).data;
+}
+/** Admin-only (ADMIN 40): null for a moderator. */
+export async function getTagSettings(): Promise<TagSettingsConfig | null> {
+  try {
+    return (await adminGet<{ data: TagSettingsConfig }>('/tag-settings')).data;
+  } catch {
+    return null;
+  }
+}
+
 // ── S2 review: the public suggest form's rate limits ─────────────────────────
 export interface SuggestLimits {
   perIpMax: number;
@@ -249,6 +309,8 @@ export interface HomepageSectionConfig {
     gameName: string | null;
     topicSlug: string | null;
     topicTitle: string | null;
+    /** Set on create when the item already ranks organically in the section. */
+    warning?: string | null;
     status: string;
     startsAt: string | null;
     endsAt: string | null;
@@ -519,7 +581,6 @@ export interface AdminGameRating {
       microtransactions: boolean;
       battlePass: boolean;
       lootBoxesOrGacha: boolean;
-      payToWinPredatory: boolean;
     };
     complexity: number | null;
     dlc: { name: string; priceCents: number | null; currency: string }[];

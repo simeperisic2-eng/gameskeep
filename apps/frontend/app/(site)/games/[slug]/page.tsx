@@ -26,6 +26,8 @@ import { GameMedia } from '../../_components/GameMedia';
 import { RelatedGames } from '../../_components/RelatedGames';
 import { PlayerActivity } from '../../_components/PlayerActivity';
 import { AdSlot } from '../../_components/AdSlot';
+import { GameTags } from '../../_components/GameTags';
+import { TagVoting } from '../../_components/TagVoting';
 
 // Render per request so crawlers always get the full hub (SSR), not a shell.
 export const dynamic = 'force-dynamic';
@@ -279,6 +281,9 @@ export default async function GamePage({
             steamAppId={game.steamAppId}
           />
 
+          {/* Phase P S3: published tags — Content / Issues with provenance. */}
+          <GameTags groups={game.tagGroups ?? { content: [], issues: [] }} />
+
           {contentFlags ? <ContentFlags flags={contentFlags} /> : null}
 
           {game.review ? <OurReview review={game.review} name={game.name} /> : null}
@@ -310,6 +315,7 @@ export default async function GamePage({
               <h2 className="gk-panel-title">Community</h2>
             </div>
             <RatingInput gameId={game.id} />
+            <TagVoting gameSlug={game.slug} />
             <Comments
               entityType="game"
               entityId={game.id}

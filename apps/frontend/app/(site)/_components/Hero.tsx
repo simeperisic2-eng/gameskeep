@@ -15,6 +15,7 @@ import { compactTopicToken } from '@/lib/bias';
 import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
 import { PaidLabel } from './PaidLabel';
+import { TagChips } from './TagChips';
 
 /**
  * The homepage HERO (SPEC I5a) — the "wow".
@@ -174,6 +175,7 @@ export function Hero({
                       {g.name}
                     </a>
                   </h3>
+                  <TagChips tags={r.tags ?? []} />
                   {critics || community ? (
                     <p className="gk-spot-summary">
                       {critics ? `Critics ${critics}` : ''}
@@ -235,6 +237,7 @@ export function Hero({
                     {t.title}
                   </a>
                 </h3>
+                <TagChips tags={r.tags ?? []} />
 
                 {summary ? (
                   <div>

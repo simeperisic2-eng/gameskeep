@@ -21,6 +21,7 @@ import { Newsletter } from './_components/Newsletter';
 import { AdSlot } from './_components/AdSlot';
 import { HomeGameCard } from './_components/HomeGameCard';
 import { PaidLabel } from './_components/PaidLabel';
+import { TagChips } from './_components/TagChips';
 
 // Trending is live state + server-rotated — render per request (also guarantees
 // crawlers get full SSR content, not a cached shell).
@@ -101,6 +102,7 @@ function RankCard({
         <span className="gk-score-of">/ 10</span>
       </span>
       <span className="gk-rankcard-sub">Critics + community</span>
+      <TagChips tags={item.tags ?? []} asLinks={false} />
     </a>
   );
 }
@@ -149,6 +151,7 @@ function renderSection(
                   display={data.display}
                   layout="stacked"
                   paid={it.paid}
+                  tags={it.tags}
                 />
               ))}
             </div>
@@ -186,6 +189,7 @@ function renderSection(
             // when it also ranks, else its two public layers — never invented).
             return {
               paid: i.paid,
+              tags: i.tags,
               game: ranked ?? {
                 slug: i.game.slug,
                 name: i.game.name,
@@ -199,7 +203,7 @@ function renderSection(
             };
           }
           if (i.paid) return { paidItem: i };
-          return ranked ? { game: ranked } : null;
+          return ranked ? { game: ranked, tags: i.tags } : null;
         })
         .filter((e): e is FocusEntry => e !== null);
       return <GamesInFocus entries={entries} display={data.display} title={sec.title} />;
@@ -278,6 +282,7 @@ function renderSection(
                   display={data.display}
                   layout="stacked"
                   paid={item.paid}
+                  tags={item.tags}
                 />
               ) : (
                 <HomeGameCard

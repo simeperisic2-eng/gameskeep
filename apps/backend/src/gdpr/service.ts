@@ -7,6 +7,7 @@ import {
   comments,
   follows,
   gameHypeVotes,
+  gameTagVotes,
   gameUserRatings,
   games,
   newsletterSubscriptions,
@@ -14,6 +15,8 @@ import {
   roles,
   sessions,
   subjects,
+  tagSuggestions,
+  tags,
   topicBiasVotes,
   topics,
   userBadges,
@@ -112,6 +115,9 @@ export interface AccountExport {
   trustVotes: unknown[];
   biasVotes: unknown[];
   hype: unknown[];
+  /** Phase P S3: the tags this user voted for, and the names they suggested. */
+  tagVotes: unknown[];
+  tagSuggestions: unknown[];
   reactions: unknown[];
   comments: unknown[];
   follows: unknown[];
@@ -241,6 +247,22 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
     .from(newsletterSubscriptions)
     .where(eq(newsletterSubscriptions.userId, userId));
 
+  const tagVoteRows = await db
+    .select({ game: subjects.slug, tag: tags.slug, createdAt: gameTagVotes.createdAt })
+    .from(gameTagVotes)
+    .innerJoin(games, eq(games.id, gameTagVotes.gameId))
+    .innerJoin(subjects, eq(subjects.id, games.subjectId))
+    .innerJoin(tags, eq(tags.id, gameTagVotes.tagId))
+    .where(eq(gameTagVotes.userId, userId));
+  const tagSuggestionRows = await db
+    .select({
+      name: tagSuggestions.rawName,
+      status: tagSuggestions.status,
+      createdAt: tagSuggestions.createdAt,
+    })
+    .from(tagSuggestions)
+    .where(eq(tagSuggestions.userId, userId));
+
   return {
     profile: {
       id: profile.id,
@@ -259,6 +281,8 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
     trustVotes,
     biasVotes,
     hype,
+    tagVotes: tagVoteRows,
+    tagSuggestions: tagSuggestionRows,
     reactions: reactionRows,
     comments: commentRows,
     follows: followRows,

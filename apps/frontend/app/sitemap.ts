@@ -3,6 +3,7 @@ import {
   getAwardsArchive,
   getSitemapGames,
   getSitemapSources,
+  getSitemapTags,
   getSitemapTopics,
 } from '@/lib/public-api';
 
@@ -18,11 +19,12 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 export const dynamic = 'force-dynamic';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [topics, games, sources, awards] = await Promise.all([
+  const [topics, games, sources, awards, tagPages] = await Promise.all([
     getSitemapTopics(),
     getSitemapGames(),
     getSitemapSources(),
     getAwardsArchive(),
+    getSitemapTags(),
   ]);
   const now = new Date();
 
@@ -71,6 +73,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: g.lastModified ? new Date(g.lastModified) : now,
       changeFrequency: 'weekly',
       priority: 0.6,
+    });
+  }
+  // Phase P S3: tag pages — only the indexable ones (≥ the admin-set minimum of
+  // published games); thinner tag pages are noindex and stay out.
+  for (const t of tagPages) {
+    entries.push({
+      url: `${siteUrl}/games/tag/${t.slug}`,
+      lastModified: t.lastModified ? new Date(t.lastModified) : now,
+      changeFrequency: 'weekly',
+      priority: 0.5,
     });
   }
   for (const s of sources) {

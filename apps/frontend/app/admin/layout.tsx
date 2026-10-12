@@ -34,6 +34,8 @@ const NAV: {
       { label: 'Topics & clustering', href: '/admin/clustering', minRank: 30 },
       { label: 'Relations', href: '/admin/relations', minRank: 30 },
       { label: 'Review integrity', href: '/admin/integrity', minRank: 30 },
+      { label: 'Tags · queue', href: '/admin/tags', minRank: 30 },
+      { label: 'Tag taxonomy', href: '/admin/tag-taxonomy', minRank: 30 },
     ],
   },
   {

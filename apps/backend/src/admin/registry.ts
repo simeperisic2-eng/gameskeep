@@ -15,6 +15,7 @@ import {
   LAUNCH_STATE_FLAGS,
   SOURCE_STATUSES,
   SUBJECT_TYPES,
+  TAG_FAMILIES,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
   UPCOMING_OVERRIDES,
@@ -48,6 +49,7 @@ import {
   sourceCreate,
   sourceTypeCreate,
   subjectCreate,
+  tagCreate,
   topicCreate,
   topicTypeCreate,
   unmatchedGameCreate,
@@ -588,6 +590,27 @@ export const RESOURCES: ResourceDef[] = [
     ],
   },
   {
+    // Phase P S3: the tag taxonomy — editors own it entirely; no built-in
+    // restriction (owner). Retire with `active` off; history stays.
+    name: 'tag-taxonomy',
+    label: 'Tag taxonomy',
+    table: schema.tags,
+    create: tagCreate,
+    update: tagCreate.partial(),
+    labelColumn: 'name',
+    hasSlug: true,
+    slugFrom: 'name',
+    fields: [
+      F.enum('family', TAG_FAMILIES, true),
+      F.text('name', true),
+      F.text('slug'),
+      F.area('intro'),
+      F.json('aliases'),
+      F.bool('active'),
+      F.num('sort'),
+    ],
+  },
+  {
     name: 'ad-placements',
     label: 'Ad placements',
     table: schema.adPlacements,
@@ -698,7 +721,7 @@ export const RESOURCES: ResourceDef[] = [
       F.bool('hasMicrotransactions'),
       F.bool('hasBattlePass'),
       F.bool('hasLootBoxesOrGacha'),
-      F.bool('predatoryMonetization'),
+      // predatoryMonetization: became the Pay-to-win ISSUE tag (owner, S3) — not edited here.
       F.num('complexityRating'),
       F.area('notes'),
     ],

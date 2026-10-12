@@ -36,7 +36,7 @@ export function MainFeed({
           style={i < shown ? undefined : { display: 'none' }}
         >
           {it.topic ? (
-            <TopicCard topic={it.topic} display={display} paid={it.paid} />
+            <TopicCard topic={it.topic} display={display} paid={it.paid} tags={it.tags} />
           ) : (
             <HomeGameCard item={it} layout="row" />
           )}

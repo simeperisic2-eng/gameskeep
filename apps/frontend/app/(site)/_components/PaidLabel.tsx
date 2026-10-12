@@ -1,8 +1,13 @@
 import type { PaidInfo } from '@/lib/public-api';
 
-/** The label word for a paid item: a story is "Sponsored", a game (or a plain ad) "Promoted". */
-export function paidWord(kind: PaidInfo['kind'] | 'creative'): 'Sponsored' | 'Promoted' {
-  return kind === 'story' ? 'Sponsored' : 'Promoted';
+/**
+ * The label word for ANY paid item — game, story or plain creative — is
+ * "Promoted" (owner, S2 review). "Sponsored" is reserved for an outlet's own
+ * sponsored article (the bias signal), so a reader can tell whether WE or the
+ * OUTLET were paid. The kind stays in the data; it no longer changes the word.
+ */
+export function paidWord(_kind: PaidInfo['kind'] | 'creative'): 'Promoted' {
+  return 'Promoted';
 }
 
 /**

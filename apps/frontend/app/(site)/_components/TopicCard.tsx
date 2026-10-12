@@ -1,5 +1,7 @@
 import type { PaidInfo, PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
 import { PaidLabel } from './PaidLabel';
+import { TagChips } from './TagChips';
+import type { CardTag } from '@/lib/public-api';
 import { distinctSubtitle, relativeTime } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { BiasMini } from './BiasBar';
@@ -20,6 +22,7 @@ export function TopicCard({
   display,
   layout = 'row',
   paid = null,
+  tags = [],
 }: {
   topic: TopicCardData;
   display: PublicDisplay;
@@ -29,8 +32,10 @@ export function TopicCard({
    * no cramped two-line truncation beside a 172px cover.
    */
   layout?: 'row' | 'stacked';
-  /** A PAID insert (owner decision B) — the "Sponsored" label is render-forced. */
+  /** A PAID insert (owner decision B) — the "Promoted" label is render-forced. */
   paid?: PaidInfo | null;
+  /** Phase P S3: the primary game's tags, as the section configures them. */
+  tags?: CardTag[];
 }): React.JSX.Element {
   const time = relativeTime(topic.lastActivityAt);
   const hasCover = topic.primaryGame != null;
@@ -61,6 +66,7 @@ export function TopicCard({
           sourceCount={topic.sourceCount}
           display={display}
         />
+        <TagChips tags={tags} />
         <div className="gk-topiccard-foot">
           <span className="gk-meta">
             <span>

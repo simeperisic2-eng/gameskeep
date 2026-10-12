@@ -3,6 +3,7 @@ import { queueConnection } from '../queue/connection';
 import { redis } from '../redis/client';
 import { recomputeAllReputation, type RecomputeReputationResult } from './engine';
 import { recomputeHomepageQuietly } from '../homepage/jobs';
+import { recomputeAllTagScores } from '../tags/service';
 
 /**
  * Reputation-engine background job (SPEC I6, Slice 5; CLAUDE.md "nothing heavy
@@ -57,7 +58,8 @@ export function startReputationWorker(): Worker<ReputationJobData> {
         finishedAt: new Date().toISOString(),
       };
       await redis.set(REPUTATION_STATE_KEY, JSON.stringify(state));
-      // Credibility changed → the Trending engagement weighting changes.
+      // Credibility changed → tag scores (S3) and the Trending engagement weighting change.
+      await recomputeAllTagScores().catch(() => undefined);
       await recomputeHomepageQuietly('reputation');
       return result;
     },

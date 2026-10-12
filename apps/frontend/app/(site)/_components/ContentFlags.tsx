@@ -22,7 +22,6 @@ const MONETIZATION: { key: keyof PublicContentFlags['monetization']; label: stri
   { key: 'microtransactions', label: 'Microtransactions' },
   { key: 'battlePass', label: 'Battle pass' },
   { key: 'lootBoxesOrGacha', label: 'Loot boxes / gacha' },
-  { key: 'payToWinPredatory', label: 'Predatory monetization' },
 ];
 
 /** True when a content-flags row carries at least one renderable value. */
@@ -90,10 +89,7 @@ export function ContentFlags({ flags }: { flags: PublicContentFlags }): React.JS
           <Row label="Monetization">
             <span className="gk-flagtags">
               {MONETIZATION.filter((m) => flags.monetization[m.key]).map((m) => (
-                <span
-                  key={m.key}
-                  className={`gk-flagtag ${m.key === 'payToWinPredatory' ? 'warn' : 'neutral'}`}
-                >
+                <span key={m.key} className="gk-flagtag neutral">
                   {m.label}
                 </span>
               ))}

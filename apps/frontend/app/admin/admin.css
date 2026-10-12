@@ -602,3 +602,10 @@
   flex: 1 1 200px;
   min-width: 0;
 }
+.gk-adstate.is-flagged {
+  color: var(--gk-accent);
+  border-color: rgba(245, 179, 1, 0.5);
+  display: inline-block;
+  margin-top: 4px;
+  text-transform: none;
+}

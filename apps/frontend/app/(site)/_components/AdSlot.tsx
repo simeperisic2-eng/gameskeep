@@ -11,9 +11,9 @@ import { paidWord } from './PaidLabel';
  * and the CTA is `rel="nofollow sponsored noopener"`. UNSOLD (Phase P S2): the slot
  * renders NOTHING unless `ads.showUnsoldPlaceholder` is on (default off) — then
  * its fallback: the "AD" box, or nothing (`hide`). Never an empty ad box.
- * Owner decision B: a placement may promote a story ("Sponsored") or a game
- * ("Promoted"); the label is render-forced either way, and the headline links to
- * the promoted page.
+ * Owner decision B: a placement may promote a story or a game; the label is
+ * "Promoted" either way ("Sponsored" is the outlet's own signal), render-forced,
+ * and the headline links to the promoted page.
  */
 export async function AdSlot({ slotKey }: { slotKey: string }): Promise<React.JSX.Element | null> {
   const view = await getAdSlot(slotKey);

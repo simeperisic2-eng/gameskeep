@@ -20,6 +20,7 @@ import {
   appSettings,
   auditLogs,
   homepageSectionPins,
+  homepageSectionSnapshots,
   homepageSections,
   subjects,
   topics,
@@ -325,6 +326,11 @@ export interface SectionPromotion {
   /** A promoted story (labeled "Sponsored"); a game is labeled "Promoted". */
   topicSlug: string | null;
   topicTitle: string | null;
+  /**
+   * Create only: set when the promoted item already ranks ORGANICALLY in this
+   * section (owner, S2 review) — it will then appear twice, once labeled.
+   */
+  warning?: string | null;
   status: string;
   startsAt: string | null;
   endsAt: string | null;
@@ -642,5 +648,30 @@ export async function createSectionPromotion(
     actor,
   });
   const all = await promotionsFor(section.id);
-  return all.find((x) => x.id === row!.id)!;
+  const created = all.find((x) => x.id === row!.id)!;
+  return { ...created, warning: await organicDuplicateWarning(key, input) };
+}
+
+/**
+ * "This item already ranks organically here" (owner, S2 review): read from the
+ * section's stored snapshot — what the homepage shows right now.
+ */
+async function organicDuplicateWarning(
+  key: string,
+  input: HomepagePromotionCreate,
+): Promise<string | null> {
+  const [snap] = await db
+    .select({ payload: homepageSectionSnapshots.payload })
+    .from(homepageSectionSnapshots)
+    .where(eq(homepageSectionSnapshots.sectionKey, key))
+    .limit(1);
+  const items =
+    (snap?.payload as { items?: { type: string; slug: string; paid: unknown }[] } | null)?.items ??
+    [];
+  const type = input.gameSlug ? 'game' : 'topic';
+  const slug = input.gameSlug ?? input.topicSlug;
+  const organic = items.filter((i) => !i.paid);
+  const at = organic.findIndex((i) => i.type === type && i.slug === slug);
+  if (at < 0) return null;
+  return `This ${type === 'game' ? 'game' : 'story'} already ranks organically in this section (#${at + 1}) — once active it appears twice: at #${at + 1} unlabeled and at its paid position labeled "Promoted".`;
 }

@@ -1,5 +1,12 @@
-import type { HomepageSectionItem, PaidInfo, PublicDisplay, RankedGame } from '@/lib/public-api';
+import type {
+  CardTag,
+  HomepageSectionItem,
+  PaidInfo,
+  PublicDisplay,
+  RankedGame,
+} from '@/lib/public-api';
 import { PaidLabel } from './PaidLabel';
+import { TagChips } from './TagChips';
 import { HomeGameCard } from './HomeGameCard';
 import { TopicCard } from './TopicCard';
 import { scoreToTen } from '@/lib/format';
@@ -50,7 +57,7 @@ function ScoreCol({
  * its render-forced label), or a paid STORY (a story card with its label).
  */
 export type FocusEntry =
-  | { game: RankedGame; paid?: PaidInfo | null }
+  | { game: RankedGame; paid?: PaidInfo | null; tags?: CardTag[] }
   | { paidItem: HomepageSectionItem };
 
 export function GamesInFocus({
@@ -88,6 +95,7 @@ export function GamesInFocus({
                 display={display}
                 layout="stacked"
                 paid={e.paidItem.paid}
+                tags={e.paidItem.tags}
               />
             ) : (
               <HomeGameCard key={`paid:${i}`} item={e.paidItem} />
@@ -108,6 +116,8 @@ export function GamesInFocus({
               {e.game.disconnectValue != null ? (
                 <Disconnect value={e.game.disconnectValue} band={e.game.disconnectBand} />
               ) : null}
+              {/* the whole card is one link → tags as text, never nested anchors */}
+              <TagChips tags={e.tags ?? []} asLinks={false} />
             </a>
           ),
         )}

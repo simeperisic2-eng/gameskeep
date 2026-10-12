@@ -19,6 +19,7 @@ import {
   NEWSLETTER_CAMPAIGN_KINDS,
   SOURCE_STATUSES,
   SUBJECT_TYPES,
+  TAG_FAMILIES,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
   UPCOMING_OVERRIDES,
@@ -720,7 +721,8 @@ export const homepageSectionPatch = z
     mode: z.enum(HOMEPAGE_SECTION_MODES).optional(),
     itemCount: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS).optional(),
     deltaWindowHours: z.number().int().min(1).max(2160).nullable().optional(),
-    cardTagFamilies: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+    // Phase P S3: the tag FAMILIES a card shows, in order (content / issue).
+    cardTagFamilies: z.array(z.enum(TAG_FAMILIES)).max(TAG_FAMILIES.length).optional(),
     cardTagCount: z.number().int().min(0).max(10).optional(),
     rules: z
       .object({ include: ruleSide.optional(), exclude: ruleSide.optional() })
@@ -1110,3 +1112,58 @@ export const articleTopicLink = z.object({
   isPrimary: z.boolean().default(false),
 });
 export const articleSubjectLink = z.object({ articleId: uuid, subjectId: uuid });
+
+// ── Phase P S3: tags ───────────────────────────────────────────────────────────
+/** Taxonomy CRUD (editors): no built-in content restriction (owner, S3 (a)). */
+export const tagCreate = z.object({
+  family: z.enum(TAG_FAMILIES),
+  name: z.string().trim().min(1).max(80),
+  slug: slug.optional(),
+  /** Short intro shown on the tag page. */
+  intro: z.string().trim().max(2000).nullable().optional(),
+  /** Other spellings that map onto this tag (imports, suggestions). */
+  aliases: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  active: z.boolean().optional(),
+  sort: z.number().int().min(0).max(10_000).optional(),
+});
+
+/** tags app_setting — every knob with a bounded range (owner: everything admin-set). */
+export const tagSettingsPatch = z
+  .object({
+    publishThreshold: z.number().min(0.5).max(1000).optional(),
+    minCredibility: z.number().min(0).max(1).optional(),
+    issueExpiryDays: z.number().int().min(1).max(3650).optional(),
+    indexMinGames: z.number().int().min(1).max(1000).optional(),
+    showAnomalyLabel: z.boolean().optional(),
+    catalogCardCount: z.number().int().min(0).max(10).optional(),
+    burstWindowHours: z.number().int().min(1).max(720).optional(),
+    burstMinVotes: z.number().int().min(2).max(1000).optional(),
+    burstMultiplier: z.number().min(1).max(100).optional(),
+    lowCredibilityShare: z.number().min(0).max(1).optional(),
+    quickViewCacheSeconds: z.number().int().min(0).max(86_400).optional(),
+  })
+  .strict();
+export type TagSettingsPatch = z.infer<typeof tagSettingsPatch>;
+
+/** A reader's new tag NAME (never live — it goes to the suggestion queue). */
+export const tagSuggestInput = z.object({ name: z.string().trim().min(2).max(60) }).strict();
+
+/** Editor: publish a taxonomy tag on a game directly ("Added by editors"). */
+export const tagPublishDirectInput = z.object({ gameSlug: slug, tagSlug: slug }).strict();
+
+/** Editor: resolve an issue tag — the patch / version reference is required. */
+export const tagResolveInput = z.object({ patchRef: z.string().trim().min(1).max(120) }).strict();
+
+/** Editor: decide a suggestion — a new tag, an alias of an existing one, or no. */
+export const tagSuggestionDecision = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('accept'),
+      family: z.enum(TAG_FAMILIES),
+      name: z.string().trim().min(1).max(80).optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal('merge'), tagSlug: slug }).strict(),
+  z.object({ action: z.literal('reject') }).strict(),
+]);
+export type TagSuggestionDecision = z.infer<typeof tagSuggestionDecision>;

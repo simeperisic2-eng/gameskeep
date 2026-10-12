@@ -5,18 +5,24 @@
  * game in the catalog. Numbered window (1 … p−1 p p+1 … T) + prev/next, and a
  * "Showing X–Y of N · page P of T" range line for humans.
  */
-type Applied = { genre: string | null; platform: string | null; sort: string };
+type Applied = {
+  genre: string | null;
+  platform: string | null;
+  sort: string;
+  tags?: string[];
+  xtags?: string[];
+};
 
-const BASE = '/games/browse';
-
-function hrefFor(applied: Applied, page: number): string {
+function hrefFor(base: string, applied: Applied, page: number): string {
   const qs = new URLSearchParams();
   if (applied.genre) qs.set('genre', applied.genre);
   if (applied.platform) qs.set('platform', applied.platform);
+  for (const t of applied.tags ?? []) qs.append('tag', t);
+  for (const t of applied.xtags ?? []) qs.append('xtag', t);
   if (applied.sort && applied.sort !== 'rating') qs.set('sort', applied.sort);
   if (page > 1) qs.set('page', String(page));
   const s = qs.toString();
-  return s ? `${BASE}?${s}` : BASE;
+  return s ? `${base}?${s}` : base;
 }
 
 /** The page numbers to render: 1 + a window around the current page + the last. */
@@ -39,12 +45,15 @@ export function Pagination({
   total,
   perPage,
   applied,
+  basePath = '/games/browse',
 }: {
   page: number;
   totalPages: number;
   total: number;
   perPage: number;
   applied: Applied;
+  /** The listing's path (the catalog, or a tag page). */
+  basePath?: string;
 }): React.JSX.Element | null {
   if (total <= 0) return null;
   const start = (page - 1) * perPage + 1;
@@ -59,7 +68,7 @@ export function Pagination({
       {totalPages > 1 ? (
         <nav className="gk-pagination" aria-label="Catalog pages">
           {page > 1 ? (
-            <a className="gk-pagechip" href={hrefFor(applied, page - 1)} rel="prev">
+            <a className="gk-pagechip" href={hrefFor(basePath, applied, page - 1)} rel="prev">
               ← Prev
             </a>
           ) : (
@@ -76,7 +85,7 @@ export function Pagination({
               <a
                 key={p}
                 className={`gk-pagechip num${p === page ? ' is-active' : ''}`}
-                href={hrefFor(applied, p)}
+                href={hrefFor(basePath, applied, p)}
                 aria-current={p === page ? 'page' : undefined}
               >
                 {p}
@@ -84,7 +93,7 @@ export function Pagination({
             ),
           )}
           {page < totalPages ? (
-            <a className="gk-pagechip" href={hrefFor(applied, page + 1)} rel="next">
+            <a className="gk-pagechip" href={hrefFor(basePath, applied, page + 1)} rel="next">
               Next →
             </a>
           ) : (

@@ -15,7 +15,7 @@ import type {
  * card tags, feed rules, pins, minimum items and PAID placements. Owner decision
  * B: any section with a list can carry paid items (games or stories) at the
  * positions set here. Two things never change: every paid item renders its label
- * ("Promoted" for a game, "Sponsored" for a story), and a paid item is INSERTED —
+ * ("Promoted", for games and stories alike), and a paid item is INSERTED —
  * the organic list and everyone's numbers stay exactly as computed. Every save is
  * audited and refreshes the stored snapshots (the homepage reads only those).
  */
@@ -183,9 +183,10 @@ function SectionEditor({
     if (promo.endsAt) body.endsAt = promo.endsAt;
     const r = await send(`/admin/api/homepage/sections/${section.key}/promotions`, 'POST', body);
     setBusy(false);
+    const warning = (r.json.data as { warning?: string | null } | undefined)?.warning;
     flash(
       r.ok
-        ? 'Promotion created as a draft — activate it after payment.'
+        ? `Promotion created as a draft — activate it after payment.${warning ? ` ⚠ ${warning}` : ''}`
         : `Not created: ${errorOf(r.json)}`,
     );
     if (r.ok) onSaved();
@@ -267,7 +268,7 @@ function SectionEditor({
             <label className="gk-nl-field">
               <span>
                 Card tag families{' '}
-                <span className="gk-cp-dim">· comma-separated (rendered once tags exist, S3)</span>
+                <span className="gk-cp-dim">· content, issue (in this order on the card)</span>
               </span>
               <input
                 value={listText(d.cardTagFamilies)}
@@ -428,8 +429,8 @@ function SectionEditor({
       {!isBlock && (
         <div className="gk-hp-sub">
           <h3 className="gk-lists-preview-h">
-            Paid placements · always labeled (game “Promoted”, story “Sponsored”) · inserted at the
-            paid positions, never changing the organic list
+            Paid placements · always labeled “Promoted” · inserted at the paid positions, never
+            changing the organic list
           </h3>
           {section.promotions.length === 0 ? (
             <p className="gk-cp-dim">None yet.</p>
@@ -494,8 +495,8 @@ function SectionEditor({
                 value={promo.kind}
                 onChange={(e) => setPromo({ ...promo, kind: e.target.value })}
               >
-                <option value="game">a game (“Promoted”)</option>
-                <option value="story">a story (“Sponsored”)</option>
+                <option value="game">a game</option>
+                <option value="story">a story</option>
               </select>
             </label>
             <label className="gk-nl-field">

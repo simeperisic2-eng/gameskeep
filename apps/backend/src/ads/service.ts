@@ -29,7 +29,7 @@ export interface PublicPlacement {
   ctaLabel: string | null;
   advertiser: string;
   /** What is promoted, if anything — drives the render-forced label:
-   *  a story → "Sponsored"; a game or a plain creative → "Promoted". */
+   *  "Promoted" for all of them ("Sponsored" is the outlet's own signal). */
   game: { slug: string; name: string } | null;
   story: { slug: string; title: string } | null;
 }

@@ -11,6 +11,8 @@ import { runMigrations } from './db/migrate';
 import { seedDemo } from './db/seed';
 import { ensureBuiltinSourceTypes } from './sources/rules';
 import { applyDemoSectionDefaults, ensureHomepageSections } from './homepage/sections';
+import { ensureTagTaxonomy, migratePayToWin, syncImportedTags } from './tags/service';
+import { seedDemoTagActivity } from './tags/demo';
 import { armHomepageRefresh, enqueueHomepageCompute } from './homepage/jobs';
 import { ensureDemoPlayerHistory } from './steam/demo-history';
 
@@ -28,6 +30,9 @@ async function main(): Promise<void> {
     await ensureBuiltinSourceTypes();
     const created = await ensureHomepageSections();
     if (created.length) app.log.info({ created }, 'homepage sections created');
+    // Phase P S3: a fresh install gets the seed tag taxonomy (data editors own).
+    const seededTags = await ensureTagTaxonomy();
+    if (seededTags) app.log.info({ seededTags }, 'tag taxonomy seeded');
     if (isDemo()) {
       await seedDemo();
       app.log.info('demo seed loaded');
@@ -38,6 +43,20 @@ async function main(): Promise<void> {
   } catch (err) {
     app.log.error({ err }, 'database init (migrate/seed) failed');
     process.exit(1);
+  }
+
+  // Phase P S3: imported free-form tags → the taxonomy (or the suggestion queue),
+  // the legacy predatory flag → the Pay-to-win issue tag, demo tag activity. All
+  // idempotent; a hiccup must not stop the API (the catalog job re-syncs).
+  try {
+    const synced = await syncImportedTags();
+    const payToWin = await migratePayToWin();
+    const demoTags = await seedDemoTagActivity();
+    if (synced.mapped || synced.queued || payToWin || demoTags) {
+      app.log.info({ ...synced, payToWin, demoTags }, 'tags synced');
+    }
+  } catch (err) {
+    app.log.error({ err }, 'tag sync failed');
   }
 
   // Game status derived from release dates (hygiene 3) — at boot and daily. A

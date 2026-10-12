@@ -7,7 +7,10 @@ import {
   getHomepageData,
   getSitemapGames,
   getSitemapSources,
+  getSitemapTags,
   getSitemapTopics,
+  getQuickView,
+  getTagPageData,
   getSourceDetail,
   getSourcesData,
   getTopicDetail,
@@ -79,26 +82,72 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
         }
       });
 
-      // The browsable catalog (BLUEPRINT 2.4; paginated in A1) — filtered/sorted/
-      // paged server-side from pre-computed scores; facets travel with the payload.
-      pub.get<{ Querystring: { genre?: string; platform?: string; sort?: string; page?: string } }>(
-        '/catalog',
+      // Quick view (Phase P S3): the card dialog's data — stored summaries +
+      // samples, cached (x-cache tells hit/miss). 404 on an unknown slug.
+      pub.get<{ Params: { slug: string } }>('/game/:slug/quick', async (req, reply) => {
+        try {
+          const q = await getQuickView(req.params.slug);
+          if (!q) {
+            reply.code(404).send({ error: 'not_found' });
+            return;
+          }
+          reply.header('x-cache', q.cache).send({ data: q.data });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // A tag page (Phase P S3): the published games carrying an active tag.
+      pub.get<{ Params: { slug: string }; Querystring: { page?: string } }>(
+        '/tag/:slug',
         async (req, reply) => {
           try {
             const parsed = Number.parseInt(req.query.page ?? '', 10);
-            reply.send({
-              data: await getCatalogData({
-                genre: req.query.genre ?? null,
-                platform: req.query.platform ?? null,
-                sort: req.query.sort ?? null,
-                page: Number.isFinite(parsed) ? parsed : null,
-              }),
-            });
+            const data = await getTagPageData(
+              req.params.slug,
+              Number.isFinite(parsed) ? parsed : null,
+            );
+            if (!data) {
+              reply.code(404).send({ error: 'not_found' });
+              return;
+            }
+            reply.send({ data });
           } catch (err) {
             sendError(reply, err);
           }
         },
       );
+
+      // The browsable catalog (BLUEPRINT 2.4; paginated in A1) — filtered/sorted/
+      // paged server-side from pre-computed scores; facets travel with the payload.
+      pub.get<{
+        Querystring: {
+          genre?: string;
+          platform?: string;
+          sort?: string;
+          page?: string;
+          tag?: string | string[];
+          xtag?: string | string[];
+        };
+      }>('/catalog', async (req, reply) => {
+        try {
+          const parsed = Number.parseInt(req.query.page ?? '', 10);
+          const list = (v: string | string[] | undefined): string[] =>
+            v === undefined ? [] : Array.isArray(v) ? v : [v];
+          reply.send({
+            data: await getCatalogData({
+              genre: req.query.genre ?? null,
+              platform: req.query.platform ?? null,
+              sort: req.query.sort ?? null,
+              page: Number.isFinite(parsed) ? parsed : null,
+              tags: list(req.query.tag),
+              xtags: list(req.query.xtag),
+            }),
+          });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
 
       // The /games discovery composition (A1) — curated entry into the catalog:
       // top rated + most discussed + genres + coming soon + the browse-all count.
@@ -246,12 +295,13 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
       // Sitemap source — topic + game + source slugs + lastmod for sitemap.xml.
       pub.get('/sitemap', async (_req, reply) => {
         try {
-          const [topics, games, sources] = await Promise.all([
+          const [topics, games, sources, tags] = await Promise.all([
             getSitemapTopics(),
             getSitemapGames(),
             getSitemapSources(),
+            getSitemapTags(),
           ]);
-          reply.send({ data: { topics, games, sources } });
+          reply.send({ data: { topics, games, sources, tags } });
         } catch (err) {
           sendError(reply, err);
         }

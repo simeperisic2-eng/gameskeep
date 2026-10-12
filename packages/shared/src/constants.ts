@@ -828,3 +828,66 @@ export type HomepageRuleDimension = (typeof HOMEPAGE_RULE_DIMENSIONS)[number];
 /** Built-in source-type ROLES — the stable identity a rule keys on (S2). */
 export const SOURCE_TYPE_ROLES = ['standalone'] as const;
 export type SourceTypeRole = (typeof SOURCE_TYPE_ROLES)[number];
+
+// ── Phase P S3: tags ───────────────────────────────────────────────────────────
+/**
+ * Tag FAMILIES are structural (they behave differently): CONTENT describes the
+ * game (no provenance line, never expires); ISSUE reports a problem (provenance,
+ * first-seen / last-confirmed dates, expiry for vote-driven ones, resolve with a
+ * patch reference). The taxonomy inside each family is whatever editors create.
+ */
+export const TAG_FAMILIES = ['content', 'issue'] as const;
+export type TagFamily = (typeof TAG_FAMILIES)[number];
+
+/** A game↔tag instance: waiting in the queue, public, or removed (a tombstone). */
+export const GAME_TAG_STATES = ['pending', 'published', 'rejected'] as const;
+export type GameTagState = (typeof GAME_TAG_STATES)[number];
+
+/** Where an instance came from — drives the truthful provenance line. */
+export const GAME_TAG_SOURCES = ['import', 'players', 'editors'] as const;
+export type GameTagSource = (typeof GAME_TAG_SOURCES)[number];
+
+export const TAG_SUGGESTION_STATUSES = ['pending', 'accepted', 'merged', 'rejected'] as const;
+export const TAG_SUGGESTION_SOURCES = ['import', 'user'] as const;
+
+/**
+ * The fresh-install taxonomy (the spec's seed). DATA, not a rule: editors add,
+ * rename, retire or delete any of it; nothing is restricted.
+ */
+export const TAG_SEED: readonly {
+  family: TagFamily;
+  slug: string;
+  name: string;
+  aliases: readonly string[];
+}[] = [
+  { family: 'content', slug: 'co-op', name: 'Co-op', aliases: ['coop', 'co op', 'cooperative'] },
+  { family: 'content', slug: 'local-co-op', name: 'Local co-op', aliases: ['couch co-op'] },
+  { family: 'content', slug: 'pvp', name: 'PvP', aliases: ['player vs player'] },
+  {
+    family: 'content',
+    slug: 'single-player',
+    name: 'Single-player',
+    aliases: ['singleplayer', 'single player'],
+  },
+  { family: 'content', slug: 'story-rich', name: 'Story-rich', aliases: ['story rich'] },
+  { family: 'content', slug: 'open-world', name: 'Open world', aliases: ['open-world'] },
+  { family: 'content', slug: 'roguelike', name: 'Roguelike', aliases: ['rogue-like'] },
+  { family: 'content', slug: 'horror', name: 'Horror', aliases: [] },
+  { family: 'content', slug: 'mature-themes', name: 'Mature themes', aliases: [] },
+  { family: 'content', slug: 'lgbtq-content', name: 'LGBTQ+ content', aliases: ['lgbtq'] },
+  { family: 'content', slug: 'religious-themes', name: 'Religious themes', aliases: [] },
+  { family: 'issue', slug: 'bugs', name: 'Bugs', aliases: ['buggy'] },
+  { family: 'issue', slug: 'server-problems', name: 'Server problems', aliases: [] },
+  { family: 'issue', slug: 'cheaters', name: 'Cheaters', aliases: [] },
+  { family: 'issue', slug: 'pay-to-win', name: 'Pay-to-win', aliases: ['p2w'] },
+  { family: 'issue', slug: 'always-online-drm', name: 'Always-online DRM', aliases: [] },
+  {
+    family: 'issue',
+    slug: 'aggressive-monetization',
+    name: 'Aggressive monetization',
+    aliases: [],
+  },
+];
+
+/** The issue tag the legacy "predatory monetization" content flag became (owner, S3). */
+export const PAY_TO_WIN_TAG_SLUG = 'pay-to-win';

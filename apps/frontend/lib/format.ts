@@ -113,3 +113,16 @@ export function stripLeadingTitle(
   if (!m) return s;
   return headlineKey(m[1]!) === titleKey ? m[2]!.trim() : s;
 }
+
+/** "Oct 3, 2026" in UTC (stable across server + client). Null-safe → null. */
+export function shortDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}

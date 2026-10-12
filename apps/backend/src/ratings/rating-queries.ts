@@ -67,7 +67,6 @@ export interface ContentFlagsDTO {
     microtransactions: boolean;
     battlePass: boolean;
     lootBoxesOrGacha: boolean;
-    payToWinPredatory: boolean;
   };
   complexity: number | null;
   notes: string | null;
@@ -99,7 +98,7 @@ async function contentFlagsFor(gameId: string): Promise<ContentFlagsDTO | null> 
       microtransactions: row.hasMicrotransactions,
       battlePass: row.hasBattlePass,
       lootBoxesOrGacha: row.hasLootBoxesOrGacha,
-      payToWinPredatory: row.predatoryMonetization,
+      // predatory monetization → the Pay-to-win issue tag (Phase P S3)
     },
     complexity: row.complexityRating ?? null,
     notes: row.notes ?? null,

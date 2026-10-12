@@ -6569,3 +6569,278 @@ a.gk-spot-cov-title:focus-visible {
     grid-template-columns: minmax(0, 1fr) 104px;
   }
 }
+
+/* ── Phase P S3: tags ────────────────────────────────────────────────────────
+   One neutral basket for content tags; issue tags read as issues by SHAPE (a
+   small "!" mark, dashed edge) — never green/red (reserved for bias + the
+   disconnect). */
+.gk-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.gk-tagchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--s2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.gk-tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--gk-text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-decoration: none;
+}
+a.gk-tagchip:hover,
+a.gk-tagchip:focus-visible {
+  color: var(--gk-text);
+  border-color: var(--gk-card-border-hi);
+}
+.gk-tagchip.is-issue {
+  border-style: dashed;
+  border-color: rgba(var(--gk-amber), 0.45);
+}
+.gk-tagchip-mark {
+  font-family: var(--gk-font-num);
+  font-weight: 700;
+  color: rgba(var(--gk-amber), 0.9);
+}
+.gk-gametags-group + .gk-gametags-group {
+  margin-top: var(--s4);
+}
+.gk-gametags-h {
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+}
+.gk-issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--s3);
+}
+.gk-issue {
+  padding: var(--s3) var(--s4);
+  border: 1px dashed rgba(var(--gk-amber), 0.35);
+  border-radius: var(--r-md);
+}
+.gk-issue.is-past,
+.gk-issue.is-resolved {
+  border-color: var(--gk-card-border);
+  opacity: 0.72;
+}
+.gk-issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2) var(--s3);
+}
+.gk-issue-name {
+  font-weight: 700;
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-issue-name:hover {
+  color: var(--gk-accent);
+}
+.gk-issue-state {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gk-text-dim);
+}
+.gk-issue-prov,
+.gk-issue-dates {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-tagvote {
+  margin-top: var(--s5);
+  display: grid;
+  gap: var(--s3);
+}
+.gk-tagvote-group {
+  display: grid;
+  gap: 6px;
+}
+.gk-tagvote-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gk-text-dim);
+}
+.gk-tagvote-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gk-tagvote-btn {
+  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  background: transparent;
+  color: var(--gk-text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.gk-tagvote-btn:hover:not(:disabled) {
+  color: var(--gk-text);
+  border-color: var(--gk-card-border-hi);
+}
+.gk-tagvote-btn.is-on {
+  color: var(--gk-accent);
+  border-color: rgba(var(--gk-amber), 0.5);
+  background: rgba(var(--gk-amber), 0.08);
+}
+.gk-tagvote-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.gk-tagvote-suggest input {
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--gk-card-border);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--gk-text);
+  font: inherit;
+  font-size: 13px;
+}
+/* tri-state catalog chips: + required, − excluded (neutral colours) */
+.gk-tristate.is-include {
+  color: var(--gk-accent);
+  border-color: rgba(var(--gk-amber), 0.45);
+  background: rgba(var(--gk-amber), 0.08);
+}
+.gk-tristate.is-exclude {
+  color: var(--gk-text-dim);
+  border-style: dashed;
+  text-decoration: line-through;
+  text-decoration-color: rgba(var(--gk-amber), 0.6);
+}
+.gk-tristate.is-issue:not(.is-include):not(.is-exclude) {
+  border-style: dashed;
+}
+.gk-tristate-mark {
+  font-family: var(--gk-font-num);
+  font-weight: 700;
+}
+.gk-tristate-mark:empty {
+  display: none;
+}
+
+/* Quick view — a button beside the card links; a native modal dialog. */
+.gk-qv-btn {
+  align-self: flex-start;
+  margin-top: var(--s2);
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-card-border);
+  background: transparent;
+  color: var(--gk-text-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gk-qv-btn:hover,
+.gk-qv-btn:focus-visible {
+  color: var(--gk-accent);
+  border-color: rgba(var(--gk-amber), 0.45);
+}
+.gk-qv {
+  width: min(460px, calc(100vw - 32px));
+  padding: var(--s5);
+  border: 1px solid var(--gk-card-border-hi);
+  border-radius: var(--r-md);
+  background: var(--gk-card-bg);
+  color: var(--gk-text);
+  box-shadow: var(--gk-shadow-hi);
+}
+.gk-qv::backdrop {
+  background: rgba(8, 6, 3, 0.7);
+}
+.gk-qv-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.gk-qv-title {
+  margin: 0;
+  font-family: var(--gk-font-head);
+  font-size: 20px;
+}
+.gk-qv-close {
+  border: 0;
+  background: transparent;
+  color: var(--gk-text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.gk-qv-close:hover,
+.gk-qv-close:focus-visible {
+  color: var(--gk-text);
+}
+.gk-qv-body {
+  display: grid;
+  gap: var(--s3);
+  margin-top: var(--s4);
+}
+.gk-qv-layers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+}
+.gk-qv-layer {
+  display: grid;
+  gap: 2px;
+}
+.gk-qv-layer-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+}
+.gk-qv-layer-val {
+  font-family: var(--gk-font-num);
+  font-size: 22px;
+  font-weight: 600;
+}
+.gk-qv-layer-val.amber {
+  color: var(--gk-accent);
+}
+.gk-qv-line {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--gk-text-dim);
+}
+.gk-qv-k {
+  font-weight: 700;
+  color: var(--gk-text);
+}

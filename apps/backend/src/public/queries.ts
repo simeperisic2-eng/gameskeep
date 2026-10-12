@@ -34,7 +34,22 @@ import {
   users,
 } from '../db/schema';
 import { activeGamePromotions } from '../ads/service';
-import { listSections } from '../homepage/sections';
+import {
+  cardTags,
+  gameSlugsByTag,
+  publicTag,
+  publicTagGroups,
+  sitemapTags,
+  tagFacets,
+  type CardTag,
+  type GameTagGroups,
+  type TagFacet,
+} from '../tags/service';
+import { tagSettings } from '../tags/settings';
+import { redis } from '../redis/client';
+import { homepageSettings } from '../homepage/settings';
+import { playersDelta } from '../homepage/rules';
+import { listSections, sectionByKey } from '../homepage/sections';
 import { readSnapshots } from '../homepage/snapshots';
 import type { Delta } from '../homepage/rules';
 import {
@@ -188,6 +203,11 @@ export interface HomepageSectionItem {
   metric: number | null;
   topic: TopicCard | null;
   game: HomepageGameCard | null;
+  /**
+   * Phase P S3: the card's tags — the section's configured families + count. A
+   * story card shows its primary game's tags.
+   */
+  tags: CardTag[];
   /** Trending only: up to three outlets' headlines (excerpt + link posture). */
   coverage: HomepageCoverageRow[] | null;
 }
@@ -734,6 +754,20 @@ export async function getHomepageData(): Promise<HomepageData> {
     for (const it of snap.payload.items ?? []) if (it.type === 'game') gameSlugs.add(it.slug);
   }
   const gameCards = await loadHomepageGameCards([...gameSlugs]);
+  // Card tags (S3): the games shown + every story's primary game.
+  const tagSlugs = new Set<string>(gameSlugs);
+  for (const c of cards) if (c.primaryGame) tagSlugs.add(c.primaryGame.slug);
+  const gameIdRows = tagSlugs.size
+    ? await db
+        .select({ id: games.id, slug: subjects.slug })
+        .from(games)
+        .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+        .where(inArray(subjects.slug, [...tagSlugs]))
+    : [];
+  const gameIdBySlug = new Map(gameIdRows.map((r) => [r.slug, r.id]));
+  const tagGroupsById = await publicTagGroups(gameIdRows.map((r) => r.id));
+  const groupsOfSlug = (slug: string | null | undefined): GameTagGroups | undefined =>
+    slug ? tagGroupsById.get(gameIdBySlug.get(slug) ?? '') : undefined;
   const trendingIds = (snapshots.get('trending')?.payload.items ?? [])
     .map((it) => cardBySlug.get(it.slug)?.id)
     .filter((id): id is string => Boolean(id));
@@ -763,6 +797,11 @@ export async function getHomepageData(): Promise<HomepageData> {
         metric: typeof it.metric === 'number' ? it.metric : null,
         topic,
         game,
+        tags: cardTags(
+          groupsOfSlug(game ? game.slug : topic?.primaryGame?.slug),
+          sec.cardTagFamilies,
+          sec.cardTagCount,
+        ),
         coverage: sec.key === 'trending' && topic ? (coverage.get(topic.id) ?? []) : null,
       });
     }
@@ -1155,7 +1194,6 @@ export interface PublicContentFlags {
     microtransactions: boolean;
     battlePass: boolean;
     lootBoxesOrGacha: boolean;
-    payToWinPredatory: boolean;
   };
   /** True only when at least one monetization signal is present. */
   hasMonetization: boolean;
@@ -1265,6 +1303,8 @@ export interface GameDetail {
   steamCompletionRate: number | null;
   rating: PublicGameRating | null;
   contentFlags: PublicContentFlags | null;
+  /** Published tags, grouped Content / Issues (Phase P S3). */
+  tagGroups: GameTagGroups;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
   /** Outlet review articles — their own block, pinned above the news (Phase P S1). */
@@ -1360,7 +1400,8 @@ async function contentFlagsFor(gameId: string): Promise<PublicContentFlags | nul
     microtransactions: row.hasMicrotransactions,
     battlePass: row.hasBattlePass,
     lootBoxesOrGacha: row.hasLootBoxesOrGacha,
-    payToWinPredatory: row.predatoryMonetization,
+    // "predatory monetization" is no longer a content flag — it became the
+    // Pay-to-win ISSUE tag (owner, S3), shown in the Issues group with provenance.
   };
   const hasMonetization = Object.values(monetization).some(Boolean);
   return {
@@ -1609,6 +1650,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     dlcRows,
     playerRows,
     communityCount,
+    tagGroupMap,
   ] = await Promise.all([
     criticEntriesFor(g.gameId),
     webRatingsFor(g.gameId),
@@ -1677,6 +1719,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       .select({ n: sql<number>`count(*)::int` })
       .from(gameUserRatings)
       .where(eq(gameUserRatings.gameId, g.gameId)),
+    publicTagGroups([g.gameId]),
   ]);
 
   // ── shape the leak-proof rating block (effective values only) ───────────────
@@ -1749,6 +1792,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     steamCompletionRate: g.steamCompletionRate ?? null,
     rating,
     contentFlags,
+    tagGroups: tagGroupMap.get(g.gameId) ?? { content: [], issues: [] },
     review,
     relatedTopics,
     reviews: gameArticles.reviews,
@@ -1870,6 +1914,8 @@ export interface CatalogGame {
   community: number | null;
   disconnectValue: number | null;
   disconnectBand: DisconnectBand | null;
+  /** Card tags (Phase P S3): content, then CURRENT issues — `tags.catalogCardCount`. */
+  tags: CardTag[];
 }
 
 /** A filter option with how many catalog games carry it. */
@@ -1884,6 +1930,10 @@ export interface CatalogFilters {
   sort?: string | null;
   /** 1-based page (A1). Out-of-range values clamp into [1..totalPages]. */
   page?: number | null;
+  /** Phase P S3: games must carry EVERY included published tag … */
+  tags?: string[] | null;
+  /** … and NONE of the excluded ones. */
+  xtags?: string[] | null;
 }
 
 export interface CatalogData {
@@ -1893,8 +1943,16 @@ export interface CatalogData {
   catalogTotal: number;
   genres: CatalogFacet[];
   platforms: CatalogFacet[];
+  /** Published tags with their game counts (tri-state chips). */
+  tagFacets: TagFacet[];
   /** Echoes the APPLIED filters (normalized) so the page can mark them active. */
-  applied: { genre: string | null; platform: string | null; sort: string };
+  applied: {
+    genre: string | null;
+    platform: string | null;
+    sort: string;
+    tags: string[];
+    xtags: string[];
+  };
   /** Server-side pagination (A1): `games` is THIS page's slice, never the full set. */
   page: number;
   perPage: number;
@@ -1970,6 +2028,7 @@ function sortCatalog(list: CatalogGame[], sort: string): CatalogGame[] {
 async function loadCatalogRows(): Promise<CatalogGame[]> {
   const rows = await db
     .select({
+      gameId: games.id,
       slug: subjects.slug,
       name: subjects.name,
       status: games.status,
@@ -1989,6 +2048,10 @@ async function loadCatalogRows(): Promise<CatalogGame[]> {
     .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
     .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id));
 
+  const [groups, { catalogCardCount }] = await Promise.all([
+    publicTagGroups(rows.map((r) => r.gameId)),
+    tagSettings(),
+  ]);
   return rows.map((r) => ({
     slug: r.slug,
     name: r.name,
@@ -2002,7 +2065,21 @@ async function loadCatalogRows(): Promise<CatalogGame[]> {
     community: effective(r.communityAuto, r.communityOverride),
     disconnectValue: r.disconnectValue ?? null,
     disconnectBand: (r.disconnectBand as DisconnectBand) ?? null,
+    tags: cardTags(groups.get(r.gameId), ['content', 'issue'], catalogCardCount),
   }));
+}
+
+/** Tag slugs from a query: lowercase slug charset only, de-duplicated, at most 10. */
+const TAG_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+function normTagList(v: string[] | null | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of v ?? []) {
+    for (const part of String(raw).split(',')) {
+      const t = part.trim().toLowerCase();
+      if (t && t.length <= 160 && TAG_SLUG_RE.test(t) && !out.includes(t)) out.push(t);
+    }
+  }
+  return out.slice(0, 10);
 }
 
 /**
@@ -2021,10 +2098,21 @@ export async function getCatalogData(filters: CatalogFilters = {}): Promise<Cata
 
   const genre = normFilter(filters.genre);
   const platform = normFilter(filters.platform);
+  // Phase P S3: tri-state tag filters. A slug in both lists counts as excluded.
+  const xtags = normTagList(filters.xtags);
+  const tagsIn = normTagList(filters.tags).filter((t) => !xtags.includes(t));
   let filtered = all;
   if (genre) filtered = filtered.filter((g) => g.genres.some((x) => x.toLowerCase() === genre));
   if (platform)
     filtered = filtered.filter((g) => g.platforms.some((x) => x.toLowerCase() === platform));
+  if (tagsIn.length || xtags.length) {
+    const sets = await gameSlugsByTag([...tagsIn, ...xtags]);
+    filtered = filtered.filter(
+      (g) =>
+        tagsIn.every((t) => sets.get(t)?.has(g.slug)) &&
+        !xtags.some((t) => sets.get(t)?.has(g.slug)),
+    );
+  }
 
   const sort = CATALOG_SORTS.has(filters.sort ?? '') ? (filters.sort as string) : 'rating';
   const sorted = sortCatalog(filtered, sort);
@@ -2047,11 +2135,170 @@ export async function getCatalogData(filters: CatalogFilters = {}): Promise<Cata
     catalogTotal: all.length,
     genres,
     platforms,
-    applied: { genre, platform, sort },
+    tagFacets: await tagFacets(),
+    applied: { genre, platform, sort, tags: tagsIn, xtags },
     page,
     perPage,
     totalPages,
   };
+}
+
+// ── tag pages (Phase P S3) ────────────────────────────────────────────────────
+export interface TagPageData {
+  tag: { slug: string; name: string; family: string; intro: string | null };
+  games: CatalogGame[];
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+  /** Indexable (and in the sitemap) only with ≥ `tags.indexMinGames` published games. */
+  indexable: boolean;
+  indexMinGames: number;
+}
+
+/** /games/tag/[slug]: the published games carrying an ACTIVE tag (null → 404). */
+export async function getTagPageData(
+  slug: string,
+  page: number | null,
+): Promise<TagPageData | null> {
+  if (!TAG_SLUG_RE.test(slug)) return null;
+  const tag = await publicTag(slug);
+  if (!tag) return null;
+  const [all, sets, settings, perPage] = await Promise.all([
+    loadCatalogRows(),
+    gameSlugsByTag([slug]),
+    tagSettings(),
+    catalogPageSize(),
+  ]);
+  const members = sets.get(slug) ?? new Set<string>();
+  const list = sortCatalog(
+    all.filter((g) => members.has(g.slug)),
+    'rating',
+  );
+  const totalPages = Math.max(1, Math.ceil(list.length / perPage));
+  const requested = typeof page === 'number' && Number.isFinite(page) ? Math.trunc(page) : 1;
+  const current = Math.min(totalPages, Math.max(1, requested));
+  return {
+    tag,
+    games: list.slice((current - 1) * perPage, current * perPage),
+    total: list.length,
+    page: current,
+    perPage,
+    totalPages,
+    indexable: list.length >= settings.indexMinGames,
+    indexMinGames: settings.indexMinGames,
+  };
+}
+
+export { sitemapTags as getSitemapTags };
+
+// ── quick view (Phase P S3) ───────────────────────────────────────────────────
+export interface QuickViewData {
+  slug: string;
+  name: string;
+  coverUrl: string | null;
+  /** The public rating layers, effective values (override ?? auto), 0..100. */
+  layers: { critics: number | null; our: number | null; community: number | null };
+  disconnect: { value: number | null; band: string | null };
+  tags: { content: CardTag[]; issues: CardTag[] };
+  /** Steam only (no public console counts) — current + Δ over the By-players window. */
+  players: {
+    current: number | null;
+    capturedAt: string;
+    delta: Delta | null;
+    windowHours: number;
+  } | null;
+}
+
+/** The quick-view payload — built from stored summaries + samples, cached in Redis. */
+export async function getQuickView(
+  slug: string,
+): Promise<{ data: QuickViewData; cache: 'hit' | 'miss' | 'off' } | null> {
+  if (!TAG_SLUG_RE.test(slug)) return null;
+  const { quickViewCacheSeconds } = await tagSettings();
+  const key = `gk:quickview:v1:${slug}`;
+  if (quickViewCacheSeconds > 0) {
+    try {
+      const hit = await redis.get(key);
+      if (hit) return { data: JSON.parse(hit) as QuickViewData, cache: 'hit' };
+    } catch {
+      /* cache unavailable — compute */
+    }
+  }
+  const [g] = await db
+    .select({
+      gameId: games.id,
+      slug: subjects.slug,
+      name: subjects.name,
+      coverUrl: games.coverUrl,
+      our: gameRatingSummaries.ourScore,
+      criticsAuto: gameRatingSummaries.criticsScore,
+      criticsOverride: gameRatingSummaries.criticsOverride,
+      communityAuto: gameRatingSummaries.communityOurScore,
+      communityOverride: gameRatingSummaries.communityOverride,
+      disconnectValue: gameRatingSummaries.disconnectValue,
+      disconnectBand: gameRatingSummaries.disconnectBand,
+    })
+    .from(games)
+    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+    .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id))
+    .where(eq(subjects.slug, slug))
+    .limit(1);
+  if (!g) return null;
+  const [groupMap, byPlayers, hp] = await Promise.all([
+    publicTagGroups([g.gameId]),
+    sectionByKey('by_players'),
+    homepageSettings(),
+  ]);
+  const groups = groupMap.get(g.gameId);
+  const windowHours = byPlayers?.deltaWindowHours ?? 168;
+  const since = new Date(Date.now() - 2 * windowHours * 3_600_000);
+  const samples = await db
+    .select({ current: gamePlayerCounts.currentPlayers, at: gamePlayerCounts.capturedAt })
+    .from(gamePlayerCounts)
+    .where(
+      and(eq(gamePlayerCounts.gameId, g.gameId), sql`${gamePlayerCounts.capturedAt} >= ${since}`),
+    )
+    .orderBy(desc(gamePlayerCounts.capturedAt));
+  const cut = Date.now() - windowHours * 3_600_000;
+  const nowS = samples
+    .filter((x) => x.at.getTime() > cut && x.current != null)
+    .map((x) => x.current!);
+  const prevS = samples
+    .filter((x) => x.at.getTime() <= cut && x.current != null)
+    .map((x) => x.current!);
+  const latest = samples[0];
+  const data: QuickViewData = {
+    slug: g.slug,
+    name: g.name,
+    coverUrl: publicAssetUrl(g.coverUrl),
+    layers: {
+      critics: effective(g.criticsAuto, g.criticsOverride),
+      our: g.our ?? null,
+      community: effective(g.communityAuto, g.communityOverride),
+    },
+    disconnect: { value: g.disconnectValue ?? null, band: g.disconnectBand ?? null },
+    tags: {
+      content: cardTags(groups, ['content'], 50),
+      issues: cardTags(groups, ['issue'], 50),
+    },
+    players: latest
+      ? {
+          current: latest.current ?? null,
+          capturedAt: latest.at.toISOString(),
+          delta: playersDelta(nowS, prevS, hp.deltaMinPoints),
+          windowHours,
+        }
+      : null,
+  };
+  if (quickViewCacheSeconds > 0) {
+    try {
+      await redis.set(key, JSON.stringify(data), 'EX', quickViewCacheSeconds);
+    } catch {
+      /* best-effort */
+    }
+  }
+  return { data, cache: quickViewCacheSeconds > 0 ? 'miss' : 'off' };
 }
 
 // ── discovery (A1) — the curated /games entry (Steam/IMDb model) ─────────────

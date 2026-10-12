@@ -41,6 +41,10 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
   comments: RANK.moderator, // soft-remove / restore reported comments (Slice 4)
   integrity: RANK.moderator, // review-integrity signals: confirm / dismiss / add (Phase P S1)
   'game-flag-reports': RANK.moderator,
+  // Phase P S3: tags — editors (moderator+) moderate the queue and own the
+  // taxonomy; `tag-settings` falls through to ADMIN.
+  'tag-queue': RANK.moderator,
+  'tag-taxonomy': RANK.moderator,
   _meta: RANK.moderator,
   // NOTE: `bias` is deliberately NOT here — bias weights tune the engine behind
   // every public number on the site (system tuning, not day-to-day content

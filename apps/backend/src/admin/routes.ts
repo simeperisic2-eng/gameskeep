@@ -21,6 +21,7 @@ import { registerHomepageAdminRoutes } from './homepage-routes';
 import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
+import { registerTagAdminRoutes } from './tag-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
@@ -365,6 +366,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       // ── catalog + unmatched-queue routes (before generic so they win) ───────
       await registerCatalogAdminRoutes(admin);
+      await registerTagAdminRoutes(admin);
 
       // ── clustering engine routes (before generic so they win) ───────────────
       await registerArticleAdminRoutes(admin);

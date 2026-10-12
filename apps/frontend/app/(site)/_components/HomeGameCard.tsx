@@ -3,6 +3,8 @@ import { scoreToTen } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { DeltaChip } from './DeltaChip';
 import { PaidLabel } from './PaidLabel';
+import { TagChips } from './TagChips';
+import { QuickView } from './QuickView';
 
 const STATUS_LABEL: Record<string, string> = {
   announced: 'Announced',
@@ -97,6 +99,8 @@ export function HomeGameCard({
             <DeltaChip delta={item.delta} windowHours={windowHours} />
           </div>
         ) : null}
+        <TagChips tags={item.tags ?? []} />
+        <QuickView slug={g.slug} name={g.name} />
       </div>
     </article>
   );

@@ -9,7 +9,9 @@ import {
   communityTrustVoteInput,
   followEntityParam,
   reactionEntityParam,
+  tagSuggestInput,
 } from '@gameskeep/shared/validation';
+import { readerTagState, suggestTag, TagError, voteTag, withdrawTagVote } from '../tags/service';
 import { CSRF_HEADER, csrfOk } from '../auth/session';
 import { requireAuth, requireVerified, sessionFromRequest } from '../auth/guards';
 import { sendError } from '../admin/http';
@@ -89,6 +91,72 @@ export async function registerCommunityRoutes(app: FastifyInstance): Promise<voi
             error: 'csrf',
             message: `Missing or mismatched ${CSRF_HEADER} header (fetch /auth/csrf first).`,
           });
+        }
+      });
+
+      // ── tags (Phase P S3): vote on a TAXONOMY tag, withdraw, suggest a name ──
+      // One vote per user per tag per game (unique index); verified + CSRF +
+      // per-user limit like every community write. New names go to a queue.
+      const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+      const tagError = (reply: FastifyReply, err: unknown): void => {
+        if (err instanceof TagError) {
+          reply.code(err.status).send({ error: 'tags', message: err.message });
+          return;
+        }
+        sendError(reply, err);
+      };
+      const slugsOk = (reply: FastifyReply, ...slugs: string[]): boolean => {
+        if (slugs.every((x) => SLUG.test(x) && x.length <= 160)) return true;
+        reply.code(400).send({ error: 'bad_slug', message: 'Invalid game or tag.' });
+        return false;
+      };
+      c.get<{ Params: { gameSlug: string } }>('/tags/:gameSlug', async (req, reply) => {
+        try {
+          if (!slugsOk(reply, req.params.gameSlug)) return;
+          reply.send({
+            data: await readerTagState(await optionalUserId(req), req.params.gameSlug),
+          });
+        } catch (err) {
+          tagError(reply, err);
+        }
+      });
+      c.post<{ Params: { gameSlug: string; tagSlug: string } }>(
+        '/tags/:gameSlug/:tagSlug/vote',
+        async (req, reply) => {
+          try {
+            if (!slugsOk(reply, req.params.gameSlug, req.params.tagSlug)) return;
+            const actor = await writer(req, reply);
+            if (!actor) return;
+            reply.send({ data: await voteTag(actor, req.params.gameSlug, req.params.tagSlug) });
+          } catch (err) {
+            tagError(reply, err);
+          }
+        },
+      );
+      c.delete<{ Params: { gameSlug: string; tagSlug: string } }>(
+        '/tags/:gameSlug/:tagSlug/vote',
+        async (req, reply) => {
+          try {
+            if (!slugsOk(reply, req.params.gameSlug, req.params.tagSlug)) return;
+            const actor = await writer(req, reply);
+            if (!actor) return;
+            reply.send({
+              data: await withdrawTagVote(actor, req.params.gameSlug, req.params.tagSlug),
+            });
+          } catch (err) {
+            tagError(reply, err);
+          }
+        },
+      );
+      c.post<{ Params: { gameSlug: string } }>('/tags/:gameSlug/suggest', async (req, reply) => {
+        try {
+          if (!slugsOk(reply, req.params.gameSlug)) return;
+          const actor = await writer(req, reply);
+          if (!actor) return;
+          const { name } = tagSuggestInput.parse(req.body);
+          reply.send({ data: await suggestTag(actor, req.params.gameSlug, name) });
+        } catch (err) {
+          tagError(reply, err);
         }
       });
 

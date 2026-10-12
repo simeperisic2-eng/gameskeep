@@ -132,8 +132,8 @@ function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
 
 /**
  * A PAID row in the coverage list (owner decision B): the slot's live placement,
- * inserted at the slot's admin-set row. The label is render-forced ("Sponsored"
- * for a story, "Promoted" for a game or a plain creative); it is never an outlet
+ * inserted at the slot's admin-set row. The label is render-forced ("Promoted"
+ * for every paid row — "Sponsored" stays the outlet's own signal); it is never an outlet
  * article, never counted, and the outlet rows around it are unchanged.
  */
 function PaidRow({ slot }: { slot: AdSlotView }): React.JSX.Element | null {

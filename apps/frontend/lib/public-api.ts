@@ -155,6 +155,8 @@ export interface HomepageSectionItem {
   metric: number | null;
   topic: TopicCard | null;
   game: HomepageGameCard | null;
+  /** Phase P S3: the section's configured tag families + count. */
+  tags: CardTag[];
   coverage: HomepageCoverageRow[] | null;
 }
 
@@ -339,7 +341,6 @@ export interface PublicContentFlags {
     microtransactions: boolean;
     battlePass: boolean;
     lootBoxesOrGacha: boolean;
-    payToWinPredatory: boolean;
   };
   hasMonetization: boolean;
   complexity: number | null;
@@ -438,6 +439,8 @@ export interface GameDetail {
   steamCompletionRate: number | null;
   rating: PublicGameRating | null;
   contentFlags: PublicContentFlags | null;
+  /** Published tags, grouped Content / Issues (Phase P S3). */
+  tagGroups: GameTagGroups;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
   /** Outlet review articles — own block, pinned above the news (Phase P S1). */
@@ -470,6 +473,42 @@ export async function getGame(slug: string): Promise<GameDetail | null> {
 
 // ── catalog / upcoming / sources (mirror apps/backend/src/public/queries.ts) ──
 
+// ── Phase P S3: tags ───────────────────────────────────────────────────────────
+export type TagFamily = 'content' | 'issue';
+/** A tag on a card (the section / catalog decides which and how many). */
+export interface CardTag {
+  family: TagFamily;
+  slug: string;
+  name: string;
+}
+export interface PublicTag {
+  slug: string;
+  name: string;
+  family: TagFamily;
+  /** "Unusual voting activity" — only when the admin switch is on (default off). */
+  unusual: boolean;
+}
+export interface PublicIssueTag extends PublicTag {
+  status: 'active' | 'past' | 'resolved';
+  /** Truthful provenance — issue tags only ("Added by editors" / "Reported by players · …"). */
+  provenance: string | null;
+  firstSeen: string;
+  lastConfirmed: string | null;
+  resolvedAt: string | null;
+  patchRef: string | null;
+  pastUntil: string | null;
+}
+export interface GameTagGroups {
+  content: PublicTag[];
+  issues: PublicIssueTag[];
+}
+export interface TagFacet {
+  slug: string;
+  name: string;
+  family: TagFamily;
+  count: number;
+}
+
 export interface CatalogGame {
   slug: string;
   name: string;
@@ -483,6 +522,7 @@ export interface CatalogGame {
   community: number | null;
   disconnectValue: number | null;
   disconnectBand: string | null;
+  tags: CardTag[];
 }
 export interface CatalogFacet {
   value: string;
@@ -494,7 +534,14 @@ export interface CatalogData {
   catalogTotal: number;
   genres: CatalogFacet[];
   platforms: CatalogFacet[];
-  applied: { genre: string | null; platform: string | null; sort: string };
+  tagFacets: TagFacet[];
+  applied: {
+    genre: string | null;
+    platform: string | null;
+    sort: string;
+    tags: string[];
+    xtags: string[];
+  };
   /** Server-side pagination (A1): `games` is this page's slice, never the full set. */
   page: number;
   perPage: number;
@@ -507,7 +554,8 @@ const EMPTY_CATALOG: CatalogData = {
   catalogTotal: 0,
   genres: [],
   platforms: [],
-  applied: { genre: null, platform: null, sort: 'rating' },
+  tagFacets: [],
+  applied: { genre: null, platform: null, sort: 'rating', tags: [], xtags: [] },
   page: 1,
   perPage: 36,
   totalPages: 1,
@@ -519,6 +567,8 @@ export async function getCatalog(filters: {
   platform?: string | null;
   sort?: string | null;
   page?: string | null;
+  tags?: string[];
+  xtags?: string[];
 }): Promise<CatalogData> {
   try {
     const qs = new URLSearchParams();
@@ -526,6 +576,8 @@ export async function getCatalog(filters: {
     if (filters.platform) qs.set('platform', filters.platform);
     if (filters.sort) qs.set('sort', filters.sort);
     if (filters.page) qs.set('page', filters.page);
+    for (const t of filters.tags ?? []) qs.append('tag', t);
+    for (const t of filters.xtags ?? []) qs.append('xtag', t);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const res = await fetch(`${backendUrl}/public/catalog${suffix}`, { cache: 'no-store' });
     if (!res.ok) return EMPTY_CATALOG;
@@ -534,6 +586,46 @@ export async function getCatalog(filters: {
   } catch {
     return EMPTY_CATALOG;
   }
+}
+
+// ── tag pages + quick view (Phase P S3) ───────────────────────────────────────
+export interface TagPageData {
+  tag: { slug: string; name: string; family: TagFamily; intro: string | null };
+  games: CatalogGame[];
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+  indexable: boolean;
+  indexMinGames: number;
+}
+/** A tag page; null = unknown / retired tag (→ 404). Never throws. */
+export async function getTagPage(slug: string, page: string | null): Promise<TagPageData | null> {
+  try {
+    const qs = page ? `?page=${encodeURIComponent(page)}` : '';
+    const res = await fetch(`${backendUrl}/public/tag/${encodeURIComponent(slug)}${qs}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: TagPageData };
+    return body.data ?? null;
+  } catch {
+    return null;
+  }
+}
+export interface QuickViewData {
+  slug: string;
+  name: string;
+  coverUrl: string | null;
+  layers: { critics: number | null; our: number | null; community: number | null };
+  disconnect: { value: number | null; band: string | null };
+  tags: { content: CardTag[]; issues: CardTag[] };
+  players: {
+    current: number | null;
+    capturedAt: string;
+    delta: Delta | null;
+    windowHours: number;
+  } | null;
 }
 
 // ── discovery (A1) — the curated /games entry ────────────────────────────────
@@ -721,20 +813,28 @@ async function getSitemap(): Promise<{
   topics: SitemapTopic[];
   games: SitemapTopic[];
   sources: SitemapTopic[];
+  tags: SitemapTopic[];
 }> {
+  const empty = { topics: [], games: [], sources: [], tags: [] };
   try {
     const res = await fetch(`${backendUrl}/public/sitemap`, { cache: 'no-store' });
-    if (!res.ok) return { topics: [], games: [], sources: [] };
+    if (!res.ok) return empty;
     const body = (await res.json()) as {
-      data?: { topics?: SitemapTopic[]; games?: SitemapTopic[]; sources?: SitemapTopic[] };
+      data?: {
+        topics?: SitemapTopic[];
+        games?: SitemapTopic[];
+        sources?: SitemapTopic[];
+        tags?: SitemapTopic[];
+      };
     };
     return {
       topics: body.data?.topics ?? [],
       games: body.data?.games ?? [],
       sources: body.data?.sources ?? [],
+      tags: body.data?.tags ?? [],
     };
   } catch {
-    return { topics: [], games: [], sources: [] };
+    return empty;
   }
 }
 
@@ -813,6 +913,11 @@ export async function getSitemapGames(): Promise<SitemapTopic[]> {
 
 export async function getSitemapSources(): Promise<SitemapTopic[]> {
   return (await getSitemap()).sources;
+}
+
+/** Indexable tag pages only (≥ the admin-set minimum of published games). */
+export async function getSitemapTags(): Promise<SitemapTopic[]> {
+  return (await getSitemap()).tags;
 }
 
 // ── awards (I7) ──────────────────────────────────────────────────────────────

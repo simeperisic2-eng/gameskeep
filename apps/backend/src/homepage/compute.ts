@@ -38,6 +38,7 @@ import {
   type EngagementByUser,
   type RuleLists,
 } from './rules';
+import { publishedTagSlugsByGame } from '../tags/service';
 
 /**
  * The homepage snapshots job (Phase P S2). Ranks every enabled section by its
@@ -112,10 +113,11 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
       if (a.sourceSlug) win.sources.add(a.sourceSlug);
     }
   }
-  // Genres / tags of the games the story's articles are about.
+  // Genres / PUBLISHED taxonomy tags (Phase P S3) of the games the story's articles are about.
   if (topicOfArticle.size) {
+    const tagsByGame = await publishedTagSlugsByGame();
     const gameRows = await db
-      .select({ articleId: articleSubjects.articleId, genres: games.genres, tags: games.tags })
+      .select({ articleId: articleSubjects.articleId, gameId: games.id, genres: games.genres })
       .from(articleSubjects)
       .innerJoin(games, eq(games.subjectId, articleSubjects.subjectId))
       .where(inArray(articleSubjects.articleId, [...topicOfArticle.keys()]));
@@ -123,7 +125,7 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
       const t = out.get(topicOfArticle.get(g.articleId) ?? '');
       if (!t) continue;
       t.attrs.genres!.push(...(g.genres ?? []));
-      t.attrs.tags!.push(...(g.tags ?? []));
+      t.attrs.tags!.push(...(tagsByGame.get(g.gameId) ?? []));
     }
   }
   return out;
@@ -276,7 +278,6 @@ async function loadGames(): Promise<GameRow[]> {
       upcomingOverride: games.upcomingOverride,
       upcomingFeatured: games.upcomingFeatured,
       genres: games.genres,
-      tags: games.tags,
       criticsAuto: gameRatingSummaries.criticsScore,
       criticsOverride: gameRatingSummaries.criticsOverride,
       communityAuto: gameRatingSummaries.communityOurScore,
@@ -286,6 +287,9 @@ async function loadGames(): Promise<GameRow[]> {
     .from(games)
     .innerJoin(subjects, and(eq(subjects.id, games.subjectId), eq(subjects.type, 'game')))
     .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id));
+  // The rules' `tags` dimension reads PUBLISHED taxonomy tags (Phase P S3), not
+  // the raw imported names.
+  const tagsByGame = await publishedTagSlugsByGame();
   return rows.map((r) => ({
     subjectId: r.subjectId,
     gameId: r.gameId,
@@ -295,7 +299,7 @@ async function loadGames(): Promise<GameRow[]> {
     releaseDate: r.releaseDate ?? null,
     upcomingOverride: r.upcomingOverride ?? null,
     upcomingFeatured: r.upcomingFeatured,
-    attrs: { genres: r.genres ?? [], tags: r.tags ?? [] },
+    attrs: { genres: r.genres ?? [], tags: tagsByGame.get(r.gameId) ?? [] },
     critics: r.criticsOverride ?? r.criticsAuto ?? null,
     community: r.communityOverride ?? r.communityAuto ?? null,
     disconnect: r.disconnect ?? null,

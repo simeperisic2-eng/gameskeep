@@ -69,7 +69,8 @@
  *  S2 — commit 2 (homepage layout + copy, SSR)
  *   S2.13 (acc. 1) the rendered page follows the saved section order
  *   S2.14 (decision B, rewritten) with a paid game + a paid story in EVERY section
- *         that shows a list, each section renders "Promoted" and "Sponsored" with
+ *         that shows a list, each section renders "Promoted" for both (never
+ *         "Sponsored" — that word is the outlet's own signal) with
  *         the advertiser under every switch combination
  *   S2.15 Δ on cards with its window (Trending: the configured one, 7d in demo; By
  *         players 7d), New / — / ±%, never "−100%" in Trending; neutral colours
@@ -96,6 +97,21 @@
  *         60 overall per 10 min by default): applied live, validated, audited
  *   S2.26 (fix 4) every suite routes fetch through netdiag: a connection reset is
  *         never retried and is logged with time, URL, cause, compose ps + logs
+ *
+ *  S3 — tags
+ *   S3.1  (acc. 1) above the threshold but unconfirmed → not public; editor confirms
+ *   S3.2  (acc. 2) a brigade of fresh accounts can't publish and raises the flag
+ *         (always in the admin queue; publicly only with the switch on)
+ *   S3.3  (acc. 3) include / exclude (DB truth), the URL round-trips, noindex
+ *   S3.4  (acc. 4) an expired vote-driven issue renders "Past issue" with dates
+ *   S3.5  (acc. 5) tag pages: indexable + sitemap only from N games; no nested anchors
+ *   S3.6  provenance: "Added by editors" / "Reported by players · confirmed by
+ *         editors"; content tags none; editor issues never expire; resolve + patch
+ *   S3.7  homepage cards render the S2 tag families + count
+ *   S3.8  quick view: data, cache, BFF, accessible dialog
+ *   S3.9  the owner's migration decisions; an editor's removal sticks
+ *   S3.10 reader vote rules, suggestions, GDPR export
+ *   S3.11 RBAC + audit
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -1211,7 +1227,9 @@ async function fixtureCrawl() {
       "UNION ALL SELECT 'sources:' || count(*) FROM sources WHERE name ~ '^(Verify Source|H3 (Src|Owned)) '",
       "UNION ALL SELECT 'topics:' || count(*) FROM topics WHERE title ~ '^(Verify Topic|Typed Topic) '",
       "UNION ALL SELECT 'queue:' || count(*) FROM unmatched_games WHERE raw_name ~ '^(Phantom Title|Spam Title|Verify Suggest|Burst|NoCsrf) ' OR raw_name LIKE '%<script>%'",
-      "UNION ALL SELECT 'badges:' || count(*) FROM badges WHERE key LIKE 'i8\\_%';",
+      "UNION ALL SELECT 'badges:' || count(*) FROM badges WHERE key LIKE 'i8\\_%'",
+      "UNION ALL SELECT 'tag-suggestions:' || count(*) FROM tag_suggestions WHERE raw_name LIKE 'Verify Tag %'",
+      "UNION ALL SELECT 'tag-patches:' || count(*) FROM game_tags WHERE patch_ref LIKE 'Verify %';",
     ].join(' '),
   )
     .split('\n')
@@ -1495,6 +1513,13 @@ async function s2a() {
     advertiserName: `S2 Promo B ${RUN}`,
     topicSlug: storyB,
   });
+  // Owner (S2 review): a placement for an item that already ranks organically in
+  // the section returns a warning; hades-ii is pinned at #3 here.
+  const dupe = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+    advertiserName: `S2 Promo D ${RUN}`,
+    gameSlug: 'hades-ii',
+  });
+  if (dupe.json?.data?.id) s2Restore.placements.push(dupe.json.data.id);
   const s23Ids = [pg.json?.data?.id, pt.json?.data?.id].filter(Boolean);
   s2Restore.placements.push(...s23Ids);
   const actG = await adminApi(`/ads/placements/${s23Ids[0]}/status`, 'POST', { status: 'active' });
@@ -1510,7 +1535,7 @@ async function s2a() {
   const paidG = featuredItems[1];
   const paidS = featuredItems[Math.min(3, featuredItems.length - 1)];
   check(
-    'S2.3 (decision B) a section carries several paid items at its admin-set positions (2 and 4), a game ("Promoted") and a story ("Sponsored"), each with its advertiser; the organic list is exactly what it was without them',
+    'S2.3 (decision B) a section carries several paid items at its admin-set positions (2 and 4), a game and a story (both "Promoted"), each with its advertiser; the organic list is exactly what it was without them; creating a placement for an item that already ranks organically there returns a warning (the others none)',
     pg.status === 201 &&
       pt.status === 201 &&
       actG.status === 200 &&
@@ -1521,8 +1546,12 @@ async function s2a() {
       paidS?.paid?.kind === 'story' &&
       paidS?.paid?.advertiser === `S2 Promo B ${RUN}` &&
       featuredItems.filter((i) => i.paid).length === 2 &&
-      organicAfter.join(',') === organicBefore.join(','),
-    `served=${featuredItems.map((i) => `${itemSlug(i)}${i.paid ? `[${i.paid.kind}]` : ''}`).join(',')} organic kept=${organicAfter.join(',') === organicBefore.join(',')}`,
+      organicAfter.join(',') === organicBefore.join(',') &&
+      dupe.status === 201 &&
+      /already ranks organically/.test(dupe.json?.data?.warning ?? '') &&
+      !pg.json?.data?.warning &&
+      !pt.json?.data?.warning,
+    `warning(dupe)=${Boolean(dupe.json?.data?.warning)} · served=${featuredItems.map((i) => `${itemSlug(i)}${i.paid ? `[${i.paid.kind}]` : ''}`).join(',')} organic kept=${organicAfter.join(',') === organicBefore.join(',')}`,
   );
   // End both so later groups start from organic lists.
   for (const id of s23Ids)
@@ -1978,8 +2007,8 @@ async function s2b() {
 
   // S2.14: the labels render in every one of those sections under every switch.
   const labelsIn = (h) =>
-    (h ?? '').includes('>Promoted<') &&
-    (h ?? '').includes('>Sponsored<') &&
+    count(h ?? '', 'class="gk-slot-flag">Promoted<') >= 2 &&
+    !(h ?? '').includes('class="gk-slot-flag">Sponsored<') &&
     paidByRe(`S2 Promo G ${RUN}`).test(h ?? '') &&
     paidByRe(`S2 Promo S ${RUN}`).test(h ?? '');
   const missing = [];
@@ -2000,7 +2029,7 @@ async function s2b() {
     sweep(await html('/'), n + 1);
   }
   check(
-    `S2.14 (decision B) with a paid game + a paid story in every section that shows a list (${shownLists.length}: ${shownLists.join(', ')}), each section renders "Promoted" and "Sponsored" with the advertiser in SSR under every switch combination (5 states)`,
+    `S2.14 (decision B) with a paid game + a paid story in every section that shows a list (${shownLists.length}: ${shownLists.join(', ')}), each section renders the "Promoted" label (game and story alike, never "Sponsored") with the advertiser in SSR under every switch combination (5 states)`,
     shownLists.length >= 6 &&
       shownLists.includes('trending') &&
       shownLists.includes('top_rated') &&
@@ -2158,14 +2187,14 @@ async function s2b() {
   if (covSale.json?.data?.id) await adminApi(`/ad-placements/${covSale.json.data.id}`, 'DELETE');
   const pageC = await html(`/topics/${covTopic}`);
   check(
-    `S2.17 (decision B) story coverage list: no paid row while the 'topic-coverage' slot is unsold (${topicSlugs.length} story pages); sold → ONE row labeled "Sponsored" + advertiser at the slot's position (${covPos}), linking to the promoted story; the outlet rows and the count are unchanged; a placement for a missing story → 400`,
+    `S2.17 (decision B) story coverage list: no paid row while the 'topic-coverage' slot is unsold (${topicSlugs.length} story pages); sold → ONE row labeled "Promoted" + advertiser at the slot's position (${covPos}), linking to the promoted story; the outlet rows and the count are unchanged; a placement for a missing story → 400`,
     topicSlugs.length >= 3 &&
       unsoldRows.length === 0 &&
       Boolean(covTopic) &&
       covSale.status < 300 &&
       rowsB2.filter((r) => r.paid).length === 1 &&
       paidIdx === Math.min(covPos, rowsA2.length + 1) - 1 &&
-      paidRow?.body.includes('>Sponsored<') &&
+      paidRow?.body.includes('class="gk-slot-flag">Promoted<') &&
       paidByRe(`S2 Promo Cov ${RUN}`).test(paidRow?.body ?? '') &&
       paidRow?.body.includes(`href="/topics/${paidStory}"`) &&
       outletA === outletB &&
@@ -2419,6 +2448,598 @@ COMMIT;`,
   );
 }
 
+// ═══════════════════════ Phase P S3 — tags ═══════════════════════════════════
+// Fixture pairs (game × tag) this group creates — removed in restoreS3 (audited).
+const S3_PAIRS = [
+  ['hades-ii', 'horror'],
+  ['hades-ii', 'bugs'],
+  ['hades-ii', 'always-online-drm'],
+  ['stellar-drifter', 'cheaters'],
+  ['stellar-drifter', 'pay-to-win'],
+];
+const s3Restore = {
+  settings: null,
+  pairs: [],
+  section: null, // by_players card-tag config
+  predatoryWas: null,
+  reopenImport: null, // { id, state } of the import row the sticky-removal check touched
+};
+const tagRow = (game, tag) => {
+  const r = psql(
+    `SELECT gt.id || '|' || gt.state || '|' || gt.source || '|' || gt.weighted_score || '|' || gt.vote_count || '|' || gt.flagged FROM game_tags gt JOIN tags t ON t.id = gt.tag_id JOIN games g ON g.id = gt.game_id JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(game)} AND t.slug = ${lit(tag)};`,
+  );
+  if (!r) return null;
+  const [id, state, source, score, count, flagged] = r.split('|');
+  return {
+    id,
+    state,
+    source,
+    score: Number(score),
+    count: Number(count),
+    flagged: flagged === 'true' || flagged === 't', // boolean || text → 'true'
+  };
+};
+const tagVote = (u, game, tag, method = 'POST') =>
+  api(BACK, `/community/tags/${game}/${tag}/vote`, { method, jar: u.jar, csrf: u.csrf });
+const tagGroupsOf = async (slug) =>
+  (await api(BACK, `/public/game/${slug}`)).json?.data?.tagGroups ?? { content: [], issues: [] };
+// React separates adjacent SSR text nodes with <!-- -->; compare the text as read.
+const tagsPanel = (h) =>
+  (h.match(/<section class="gk-panel gk-gametags"[\s\S]*?<\/section>/)?.[0] ?? '').replace(
+    /<!-- -->/g,
+    '',
+  );
+const contentGroupOf = (panel) => {
+  const a = panel.indexOf('>Content</h3>');
+  const b = panel.indexOf('>Issues</h3>');
+  return a < 0 ? '' : panel.slice(a, b < 0 ? undefined : b);
+};
+const issuesGroupOf = (panel) => {
+  const b = panel.indexOf('>Issues</h3>');
+  return b < 0 ? '' : panel.slice(b);
+};
+async function credibleUser(tag) {
+  const u = await makeVerified(tag);
+  // Aged + reputable → credibility 1.0 (email 0.45 + activity 0.35 + age 0.2).
+  psql(
+    `UPDATE users SET reputation = 80, created_at = now() - interval '60 days' WHERE id = ${lit(u.id)};`,
+  );
+  return u;
+}
+/** `<button class="gk-qv-btn">` occurrences that sit INSIDE an <a> (must be 0). */
+function buttonsInsideAnchors(h, cls) {
+  let depth = 0;
+  let inside = 0;
+  let total = 0;
+  const re = new RegExp(`<a[\\s>]|</a>|<button[^>]*class="${cls}"`, 'gi');
+  let m;
+  while ((m = re.exec(h)) !== null) {
+    if (m[0].startsWith('</')) depth = Math.max(0, depth - 1);
+    else if (m[0].startsWith('<a')) depth += 1;
+    else {
+      total += 1;
+      if (depth > 0) inside += 1;
+    }
+  }
+  return { inside, total };
+}
+const modAct = (mod, path, body) =>
+  api(BACK, `/admin/api/${path}`, { method: 'POST', jar: mod.jar, csrf: mod.csrf, body });
+
+async function s3() {
+  s3Restore.settings = snapshotSettings(['tags']);
+  const taken = S3_PAIRS.filter(([g, t]) => tagRow(g, t));
+  if (
+    !check(
+      'S3.0 the S3 fixture pairs (game × tag) are free before the run',
+      taken.length === 0,
+      taken.map((p) => p.join('/')).join(' ') || 'all free',
+    )
+  )
+    return;
+  s3Restore.pairs = S3_PAIRS;
+  // A lower bar keeps the gate test independent of a reputation recompute that
+  // could land mid-run (fresh accounts still score 0 — the floor, not the bar).
+  await adminApi('/tag-settings', 'PATCH', { publishThreshold: 2 });
+  const mod = await login('demo-moderator', DEMO_PW);
+  clearOwnEmailThrottle();
+  const voters = [];
+  for (let i = 0; i < 4; i += 1) voters.push(await credibleUser(`tv${i}`));
+
+  // ── S3.1 (acc.1) above the threshold but unconfirmed → not public ───────────
+  const votes = [];
+  for (const u of voters) votes.push((await tagVote(u, 'hades-ii', 'horror')).status);
+  const again = (await tagVote(voters[0], 'hades-ii', 'horror')).status;
+  const r1 = tagRow('hades-ii', 'horror');
+  const q1 = ((await adminApi('/tag-queue')).json?.data?.pending ?? []).find(
+    (x) => x.game.slug === 'hades-ii' && x.tag.slug === 'horror',
+  );
+  const pubBefore = (await tagGroupsOf('hades-ii')).content.some((t) => t.slug === 'horror');
+  const panelBefore = tagsPanel(await html('/games/hades-ii'));
+  const catBefore = ((await api(BACK, '/public/catalog?tag=horror')).json?.data?.games ?? []).some(
+    (g) => g.slug === 'hades-ii',
+  );
+  const anonConfirm = await api(BACK, `/admin/api/tag-queue/${q1?.id}/confirm`, { method: 'POST' });
+  const regConfirm = await api(BACK, `/admin/api/tag-queue/${q1?.id}/confirm`, {
+    method: 'POST',
+    jar: voters[0].jar,
+    csrf: voters[0].csrf,
+  });
+  const modConfirm = await modAct(mod, `tag-queue/${q1?.id}/confirm`);
+  const pubAfter = (await tagGroupsOf('hades-ii')).content.find((t) => t.slug === 'horror');
+  const panelAfter = tagsPanel(await html('/games/hades-ii'));
+  check(
+    'S3.1 (acc.1) a tag whose credibility-weighted score is above the threshold is NOT public until an editor confirms (API, game page, catalog filter); one vote per user (a repeat changes nothing); anon 401 / reader 403 / moderator confirms → public; a content tag shows no provenance line',
+    votes.every((s) => s === 200) &&
+      again === 200 &&
+      r1?.state === 'pending' &&
+      r1?.count === 4 &&
+      r1?.score >= 2 &&
+      q1?.thresholdReached === true &&
+      !pubBefore &&
+      !panelBefore.includes('/games/tag/horror') &&
+      !catBefore &&
+      anonConfirm.status === 401 &&
+      regConfirm.status === 403 &&
+      modConfirm.status === 200 &&
+      Boolean(pubAfter) &&
+      panelAfter.includes('/games/tag/horror') &&
+      !/Reported by players|Added by editors/.test(contentGroupOf(panelAfter)),
+    `votes=${votes.join(',')} repeat=${again} → ${r1?.state} score=${r1?.score} votes=${r1?.count} reached=${q1?.thresholdReached} · public before=${pubBefore}/${panelBefore.includes('/games/tag/horror')}/${catBefore} · anon=${anonConfirm.status} reader=${regConfirm.status} mod=${modConfirm.status} → public=${Boolean(pubAfter)}`,
+  );
+
+  // ── S3.2 (acc.2) a brigade of fresh accounts can't publish; flag raised ─────
+  clearOwnEmailThrottle();
+  const ring = [];
+  for (let i = 0; i < 8; i += 1) ring.push(await makeVerified(`tr${i}`));
+  const ringVotes = [];
+  for (const u of ring) ringVotes.push((await tagVote(u, 'stellar-drifter', 'cheaters')).status);
+  const r2 = tagRow('stellar-drifter', 'cheaters');
+  const q2 = ((await adminApi('/tag-queue')).json?.data?.pending ?? []).find(
+    (x) => x.game.slug === 'stellar-drifter' && x.tag.slug === 'cheaters',
+  );
+  const brigadeConfirm = await modAct(mod, `tag-queue/${q2?.id}/confirm`);
+  const issuesHidden = !(await tagGroupsOf('stellar-drifter')).issues.some(
+    (t) => t.slug === 'cheaters',
+  );
+  // Editors may still publish it themselves; the public label follows the switch.
+  const direct = await modAct(mod, 'tag-queue/publish', {
+    gameSlug: 'stellar-drifter',
+    tagSlug: 'cheaters',
+  });
+  const labelOff = tagsPanel(await html('/games/stellar-drifter')).includes(
+    'Unusual voting activity',
+  );
+  const on = await adminApi('/tag-settings', 'PATCH', { showAnomalyLabel: true });
+  const labelOn = issuesGroupOf(tagsPanel(await html('/games/stellar-drifter'))).includes(
+    'Unusual voting activity',
+  );
+  await adminApi('/tag-settings', 'PATCH', { showAnomalyLabel: false });
+  check(
+    'S3.2 (acc.2) a brigade of 8 fresh verified accounts adds NOTHING to the score (below the credibility floor) — confirm → 409, nothing public — and raises the anomaly flag, always shown in the admin queue; publicly "Unusual voting activity" shows only with the switch on (default OFF)',
+    ringVotes.every((s) => s === 200) &&
+      r2?.count === 8 &&
+      r2?.score === 0 &&
+      r2?.flagged === true &&
+      q2?.flagged === true &&
+      q2?.thresholdReached === false &&
+      brigadeConfirm.status === 409 &&
+      issuesHidden &&
+      direct.status === 201 &&
+      !labelOff &&
+      on.status === 200 &&
+      labelOn,
+    `ring votes=${r2?.count} score=${r2?.score} flagged=${r2?.flagged} queue flag=${q2?.flagged} · confirm=${brigadeConfirm.status} hidden=${issuesHidden} · direct=${direct.status} label off=${labelOff} on=${labelOn}`,
+  );
+
+  // ── S3.3 (acc.3) include / exclude; the URL round-trips; filtered = noindex ─
+  const truth = new Set(
+    psql(
+      "SELECT string_agg(s.slug, ',') FROM game_tags gt JOIN tags t ON t.id = gt.tag_id JOIN games g ON g.id = gt.game_id JOIN subjects s ON s.id = g.subject_id WHERE t.slug = 'story-rich' AND gt.state = 'published' AND t.active;",
+    )
+      .split(',')
+      .filter(Boolean),
+  );
+  const big = async (qs) => {
+    const all = [];
+    for (let page = 1; page < 30; page += 1) {
+      const d = (await api(BACK, `/public/catalog?${qs}&page=${page}`)).json?.data;
+      all.push(...(d?.games ?? []).map((g) => g.slug));
+      if (!d || page >= d.totalPages) return { slugs: all, total: d?.total ?? 0 };
+    }
+    return { slugs: all, total: -1 };
+  };
+  const inc = await big('tag=story-rich');
+  const exc = await big('xtag=story-rich');
+  const catalogTotal = (await api(BACK, '/public/catalog')).json?.data?.total ?? -1;
+  const browse = await html('/games/browse?tag=story-rich&xtag=open-world');
+  const includeChip = browse.match(
+    /class="gk-facetchip gk-tristate is-include[^"]*" href="([^"]+)"/,
+  );
+  const nextHref = (includeChip?.[1] ?? '').replace(/&amp;/g, '&');
+  const nextData = (await api(BACK, `/public/catalog${nextHref.replace('/games/browse', '')}`)).json
+    ?.data?.applied;
+  check(
+    'S3.3 (acc.3) include keeps exactly the games carrying the published tag, exclude removes every one of them (DB truth); a chip link round-trips its state through the URL; a tag-filtered page is noindex,follow with canonical to /games/browse',
+    truth.size >= 2 &&
+      inc.slugs.length === truth.size &&
+      inc.slugs.every((s) => truth.has(s)) &&
+      exc.slugs.every((s) => !truth.has(s)) &&
+      exc.total === catalogTotal - truth.size &&
+      /<meta name="robots" content="noindex, ?follow"/.test(browse) &&
+      /<link rel="canonical" href="[^"]*\/games\/browse"/.test(browse) &&
+      nextHref.includes('xtag=story-rich') &&
+      nextData?.xtags?.includes('story-rich') &&
+      !nextData?.tags?.includes('story-rich'),
+    `story-rich=${truth.size} include=${inc.slugs.length} exclude=${exc.total} (catalog ${catalogTotal}) noindex=${/noindex/.test(browse)} include-chip → ${nextHref || 'none'} → applied xtags=${JSON.stringify(nextData?.xtags)}`,
+  );
+
+  // ── S3.4 (acc.4) an expired vote-driven issue → "Past issue" with dates ─────
+  for (const u of voters) await tagVote(u, 'hades-ii', 'bugs');
+  const bugs = tagRow('hades-ii', 'bugs');
+  const bugsConfirm = await modAct(mod, `tag-queue/${bugs?.id}/confirm`);
+  const activeFirst = (await tagGroupsOf('hades-ii')).issues.find((t) => t.slug === 'bugs')?.status;
+  psql(
+    `BEGIN;
+UPDATE game_tag_votes SET created_at = now() - interval '100 days' WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'hades-ii') AND tag_id = (SELECT id FROM tags WHERE slug = 'bugs');
+UPDATE game_tags SET first_seen_at = now() - interval '110 days', last_vote_at = now() - interval '100 days', last_confirmed_at = now() - interval '100 days' WHERE id = ${lit(bugs?.id ?? '00000000-0000-0000-0000-000000000000')};
+${auditSql({ entityType: 'game-tag', entityId: bugs?.id ?? 'none', summary: 'verify fixture: backdated a test issue tag 100 days (expiry check)' })}
+COMMIT;`,
+  );
+  const past = (await tagGroupsOf('hades-ii')).issues.find((t) => t.slug === 'bugs');
+  const issuesHtml = issuesGroupOf(tagsPanel(await html('/games/hades-ii')));
+  check(
+    'S3.4 (acc.4) a vote-driven issue with no fresh signal past the expiry (60 days) renders "Past issue" with its date range, muted, with its provenance + first-seen / last-confirmed dates',
+    bugsConfirm.status === 200 &&
+      activeFirst === 'active' &&
+      past?.status === 'past' &&
+      Boolean(past?.pastUntil) &&
+      /Past issue · [A-Z][a-z]{2} \d{1,2}, \d{4} – [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(issuesHtml) &&
+      issuesHtml.includes('gk-issue is-past') &&
+      issuesHtml.includes('Reported by players · confirmed by editors') &&
+      /First seen [A-Z][a-z]{2} \d/.test(issuesHtml),
+    `confirm=${bugsConfirm.status} fresh=${activeFirst} → backdated=${past?.status} until=${past?.pastUntil?.slice(0, 10)}`,
+  );
+
+  // ── S3.6 provenance: editor-added issue; resolve with a patch reference ─────
+  const ed = await modAct(mod, 'tag-queue/publish', {
+    gameSlug: 'hades-ii',
+    tagSlug: 'always-online-drm',
+  });
+  const edRow = tagRow('hades-ii', 'always-online-drm');
+  psql(
+    `BEGIN;
+UPDATE game_tags SET first_seen_at = now() - interval '400 days', last_confirmed_at = now() - interval '400 days' WHERE id = ${lit(edRow?.id ?? '00000000-0000-0000-0000-000000000000')};
+${auditSql({ entityType: 'game-tag', entityId: edRow?.id ?? 'none', summary: 'verify fixture: backdated an editor-added test issue 400 days (no-expiry check)' })}
+COMMIT;`,
+  );
+  const edStatus = (await tagGroupsOf('hades-ii')).issues.find(
+    (t) => t.slug === 'always-online-drm',
+  );
+  const noPatch = await modAct(mod, `tag-queue/${edRow?.id}/resolve`, {});
+  let dbCheck = 'ACCEPTED';
+  try {
+    psql(
+      `UPDATE game_tags SET resolved_at = now(), patch_ref = NULL WHERE id = ${lit(edRow?.id)};`,
+    );
+  } catch (e) {
+    dbCheck = /check constraint/i.test(String(e.stderr ?? e.message)) ? 'rejected' : 'error';
+  }
+  const resolved = await modAct(mod, `tag-queue/${edRow?.id}/resolve`, {
+    patchRef: `Verify ${RUN}`,
+  });
+  const resolvedHtml = issuesGroupOf(tagsPanel(await html('/games/hades-ii')));
+  check(
+    'S3.6 provenance is truthful: an editor-added issue reads "Added by editors" (a voted one "Reported by players · confirmed by editors", S3.4) and never expires, even 400 days old; resolving needs a patch reference (API 400 + DB CHECK) and then shows "Resolved in <patch>"',
+    ed.status === 201 &&
+      edStatus?.provenance === 'Added by editors' &&
+      edStatus?.status === 'active' &&
+      noPatch.status === 400 &&
+      dbCheck === 'rejected' &&
+      resolved.status === 200 &&
+      resolvedHtml.includes(`Resolved in Verify ${RUN}`) &&
+      resolvedHtml.includes('Added by editors'),
+    `publish=${ed.status} provenance="${edStatus?.provenance}" 400d-old status=${edStatus?.status} · resolve w/o patch=${noPatch.status} db=${dbCheck} · resolve=${resolved.status} shown=${resolvedHtml.includes(`Resolved in Verify ${RUN}`)}`,
+  );
+
+  // ── S3.5 (acc.5) tag pages: indexable ≥ N games, sitemap, no nested anchors ─
+  const settingsNow = (await adminApi('/tag-settings')).json?.data;
+  const minN = settingsNow?.indexMinGames ?? 5;
+  const bigTag = psql(
+    `SELECT t.slug FROM game_tags gt JOIN tags t ON t.id = gt.tag_id WHERE gt.state = 'published' AND t.active GROUP BY t.slug HAVING count(*) >= ${minN} ORDER BY count(*) DESC LIMIT 1;`,
+  );
+  const smallTag = psql(
+    `SELECT t.slug FROM game_tags gt JOIN tags t ON t.id = gt.tag_id WHERE gt.state = 'published' AND t.active GROUP BY t.slug HAVING count(*) BETWEEN 1 AND ${minN - 1} ORDER BY count(*) DESC LIMIT 1;`,
+  );
+  const smallCount = Number(
+    psql(
+      `SELECT count(*) FROM game_tags gt JOIN tags t ON t.id = gt.tag_id WHERE gt.state = 'published' AND t.slug = ${lit(smallTag)};`,
+    ),
+  );
+  const sitemap1 = await html('/sitemap.xml');
+  const bigPage = await html(`/games/tag/${bigTag}`);
+  const smallPage = await html(`/games/tag/${smallTag}`);
+  await adminApi('/tag-settings', 'PATCH', { indexMinGames: Math.max(1, smallCount) });
+  const sitemap2 = await html('/sitemap.xml');
+  const smallPage2 = await html(`/games/tag/${smallTag}`);
+  await adminApi('/tag-settings', 'PATCH', { indexMinGames: minN });
+  const missing404 = (await api(FRONT, '/games/tag/no-such-tag-zz')).status;
+  const browseHtml = await html('/games/browse');
+  const qvBrowse = buttonsInsideAnchors(browseHtml, 'gk-qv-btn');
+  const qvHome = buttonsInsideAnchors(await html('/'), 'gk-qv-btn');
+  const qvTag = buttonsInsideAnchors(bigPage, 'gk-qv-btn');
+  check(
+    `S3.5 (acc.5) tag pages: SSR CollectionPage; indexable + in the sitemap only with ≥ ${minN} published games (admin-set) — a thinner one is noindex and out, and lowering the minimum brings it in; unknown tag 404; zero nested anchors on catalog / tag / home cards with quick view (the button is outside every link)`,
+    Boolean(bigTag) &&
+      Boolean(smallTag) &&
+      sitemap1.includes(`/games/tag/${bigTag}<`) &&
+      !sitemap1.includes(`/games/tag/${smallTag}<`) &&
+      bigPage.includes('"@type":"CollectionPage"') &&
+      !/<meta name="robots" content="noindex/.test(bigPage) &&
+      /<meta name="robots" content="noindex/.test(smallPage) &&
+      sitemap2.includes(`/games/tag/${smallTag}<`) &&
+      !/<meta name="robots" content="noindex/.test(smallPage2) &&
+      missing404 === 404 &&
+      maxAnchorDepth(browseHtml) === 1 &&
+      maxAnchorDepth(bigPage) === 1 &&
+      qvBrowse.total > 0 &&
+      qvBrowse.inside === 0 &&
+      qvHome.inside === 0 &&
+      qvTag.inside === 0,
+    `big=${bigTag} small=${smallTag}(${smallCount}) sitemap big=${sitemap1.includes(`/games/tag/${bigTag}<`)} small=${sitemap1.includes(`/games/tag/${smallTag}<`)}→${sitemap2.includes(`/games/tag/${smallTag}<`)} · quick view buttons browse ${qvBrowse.total} (inside links ${qvBrowse.inside}) home inside ${qvHome.inside} · 404=${missing404}`,
+  );
+
+  // ── S3.7 homepage cards render the S2 tag families + count ─────────────────
+  const bp0 = (await sectionsConfig()).find((x) => x.key === 'by_players');
+  s3Restore.section = {
+    cardTagFamilies: bp0?.cardTagFamilies ?? [],
+    cardTagCount: bp0?.cardTagCount ?? 0,
+  };
+  await waitHomepage(
+    await adminApi('/homepage/sections/by_players', 'PATCH', {
+      cardTagFamilies: ['issue', 'content'],
+      cardTagCount: 2,
+    }),
+  );
+  const bp = (await homeSections()).find((x) => x.key === 'by_players');
+  const expectFor = async (slug) => {
+    const g = await tagGroupsOf(slug);
+    return [...g.issues.filter((t) => t.status === 'active'), ...g.content]
+      .slice(0, 2)
+      .map((t) => t.slug)
+      .join(',');
+  };
+  let cardsOk = (bp?.items ?? []).length > 0;
+  for (const it of bp?.items ?? []) {
+    if (!it.game) continue;
+    if ((it.tags ?? []).map((t) => t.slug).join(',') !== (await expectFor(it.game.slug))) {
+      cardsOk = false;
+    }
+  }
+  const hd = (bp?.items ?? []).find((i) => i.game?.slug === 'helldivers-2');
+  const bpHtml = ssrSections(await html('/')).byKey.get('by_players') ?? '';
+  const badFamily = await adminApi('/homepage/sections/by_players', 'PATCH', {
+    cardTagFamilies: ['ideology'],
+  });
+  await waitHomepage(await adminApi('/homepage/sections/by_players', 'PATCH', s3Restore.section));
+  check(
+    'S3.7 homepage cards render the S2-stored tag families + count: By players set to [issue, content] × 2 → every game card shows exactly its first 2 (current issues first), rendered as tag chips; an unknown family → 400',
+    cardsOk &&
+      (hd ? hd.tags?.[0]?.family === 'issue' : true) &&
+      bpHtml.includes('gk-tagchip') &&
+      badFamily.status === 400,
+    `cards follow config=${cardsOk} helldivers=${(hd?.tags ?? []).map((t) => t.slug).join('+') || 'n/a'} chips in SSR=${bpHtml.includes('gk-tagchip')} bad family=${badFamily.status}`,
+  );
+
+  // ── S3.8 quick view: data, cache, BFF, accessible dialog markup ────────────
+  const qv1 = await api(BACK, '/public/game/helldivers-2/quick');
+  const qv2 = await api(BACK, '/public/game/helldivers-2/quick');
+  const qvBff = await api(FRONT, '/api/public/game/helldivers-2/quick');
+  const qvMissing = await api(BACK, '/public/game/no-such-game-zz/quick');
+  const d = qv1.json?.data;
+  const dialogOk =
+    /<button[^>]*class="gk-qv-btn"[^>]*aria-haspopup="dialog"/.test(browseHtml) &&
+    /<dialog[^>]*class="gk-qv"[^>]*aria-labelledby="[^"]+"/.test(browseHtml);
+  check(
+    'S3.8 quick view: the three rating layers, the disconnect, grouped tags and Steam players (current + Δ) from the cached public endpoint (miss → hit), reachable through the public BFF; unknown game 404; the button opens a native modal <dialog> labelled by its title',
+    qv1.status === 200 &&
+      d &&
+      'critics' in d.layers &&
+      'our' in d.layers &&
+      'community' in d.layers &&
+      d.disconnect &&
+      Array.isArray(d.tags?.content) &&
+      Array.isArray(d.tags?.issues) &&
+      d.tags.issues.some((t) => t.slug === 'server-problems') &&
+      d.players &&
+      typeof d.players.current === 'number' &&
+      qv2.res.headers.get('x-cache') === 'hit' &&
+      qvBff.status === 200 &&
+      qvMissing.status === 404 &&
+      dialogOk,
+    `layers=${JSON.stringify(d?.layers)} players=${d?.players?.current} Δ=${JSON.stringify(d?.players?.delta)} cache=${qv1.res.headers.get('x-cache')}→${qv2.res.headers.get('x-cache')} bff=${qvBff.status} 404=${qvMissing.status} dialog=${dialogOk}`,
+  );
+
+  // ── S3.9 the owner's migration decisions + an editor's removal sticks ──────
+  const importRow = psql(
+    "SELECT s.slug || '|' || gt.source FROM game_tags gt JOIN tags t ON t.id = gt.tag_id JOIN games g ON g.id = gt.game_id JOIN subjects s ON s.id = g.subject_id WHERE t.slug = 'story-rich' AND gt.source = 'import' LIMIT 1;",
+  ).split('|');
+  const queuedUnmatched = Number(
+    psql(
+      "SELECT count(*) FROM tag_suggestions WHERE source = 'import' AND status = 'pending' AND normalized = 'metroidvania';",
+    ),
+  );
+  const indieTouched = Number(
+    psql(
+      "SELECT (SELECT count(*) FROM tag_suggestions WHERE normalized = 'indie') + (SELECT count(*) FROM tags WHERE slug = 'indie');",
+    ),
+  );
+  // Editor removal sticks through a re-sync.
+  const rogue = tagRow('hades-ii', 'roguelike');
+  s3Restore.reopenImport = rogue ? { id: rogue.id, state: rogue.state } : null;
+  const removed = rogue ? await modAct(mod, `tag-queue/${rogue.id}/reject`) : { status: 0 };
+  // Pay-to-win: the legacy predatory flag becomes the issue tag on (re-)sync.
+  s3Restore.predatoryWas = psql(
+    "SELECT f.predatory_monetization::text FROM game_content_flags f JOIN games g ON g.id = f.game_id JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter';",
+  );
+  psql(
+    `BEGIN;
+UPDATE game_content_flags SET predatory_monetization = true WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter');
+${auditSql({ entityType: 'game-content-flags', entityId: 'stellar-drifter', summary: 'verify fixture: set the legacy predatory flag (Pay-to-win migration check)' })}
+COMMIT;`,
+  );
+  const sync = await adminApi('/tag-queue/sync', 'POST', {});
+  const rogueAfter = tagRow('hades-ii', 'roguelike');
+  const sd = await api(BACK, '/public/game/stellar-drifter');
+  const p2w = (sd.json?.data?.tagGroups?.issues ?? []).find((t) => t.slug === 'pay-to-win');
+  check(
+    'S3.9 owner migration decisions: a matching imported tag is published (source import, no provenance claim); an unmatched one waits as a suggestion; "indie" is never a tag (is_indie stays a property); the predatory content flag becomes the Pay-to-win ISSUE tag ("Added by editors", no expiry) and leaves the public content flags; an editor\'s removal survives a re-sync',
+    importRow[1] === 'import' &&
+      queuedUnmatched >= 1 &&
+      indieTouched === 0 &&
+      sync.status === 200 &&
+      (sync.json?.data?.payToWin ?? 0) >= 1 &&
+      p2w?.provenance === 'Added by editors' &&
+      p2w?.status === 'active' &&
+      !('payToWinPredatory' in (sd.json?.data?.contentFlags?.monetization ?? {})) &&
+      removed.status === 200 &&
+      rogueAfter?.state === 'rejected',
+    `import=${importRow.join('/')} unmatched queued=${queuedUnmatched} indie=${indieTouched} · sync=${sync.status} p2w=${sync.json?.data?.payToWin} "${p2w?.provenance}" · removal ${rogue?.state}→${rogueAfter?.state}`,
+  );
+
+  // ── S3.10 reader vote rules + suggestions + GDPR export ─────────────────────
+  const unv = {
+    username: `p_tunv_${RUN}`,
+    email: `p_tunv_${RUN}@example.test`,
+    password: 'Str0ng-pass-tunv9!',
+  };
+  const reg = await withCsrf();
+  await api(BACK, '/auth/register', { method: 'POST', jar: reg.jar, csrf: reg.csrf, body: unv });
+  const unvLogin = await login(unv.username, unv.password);
+  const unverified = await tagVote(unvLogin, 'hades-ii', 'co-op');
+  const noCsrf = await api(BACK, '/community/tags/hades-ii/co-op/vote', {
+    method: 'POST',
+    jar: voters[1].jar,
+  });
+  const unknownTag = await tagVote(voters[1], 'hades-ii', 'no-such-tag-zz');
+  const badSlug = await api(BACK, '/community/tags/Hades%20II/co-op/vote', {
+    method: 'POST',
+    jar: voters[1].jar,
+    csrf: voters[1].csrf,
+  });
+  const withdraw = await tagVote(voters[3], 'hades-ii', 'horror', 'DELETE');
+  const afterWithdraw = tagRow('hades-ii', 'horror');
+  const sugNew = await api(BACK, '/community/tags/hades-ii/suggest', {
+    method: 'POST',
+    jar: voters[1].jar,
+    csrf: voters[1].csrf,
+    body: { name: `Verify Tag ${RUN}` },
+  });
+  const sugKnown = await api(BACK, '/community/tags/hades-ii/suggest', {
+    method: 'POST',
+    jar: voters[1].jar,
+    csrf: voters[1].csrf,
+    body: { name: 'Coop' },
+  });
+  const sugRow = psql(
+    `SELECT status || '|' || source FROM tag_suggestions WHERE raw_name = ${lit(`Verify Tag ${RUN}`)};`,
+  );
+  const notInTaxonomy = Number(
+    psql(`SELECT count(*) FROM tags WHERE name ILIKE ${lit(`Verify Tag ${RUN}`)};`),
+  );
+  const exp = await api(BACK, '/auth/export', { jar: voters[0].jar });
+  const exported = (exp.json?.data?.tagVotes ?? exp.json?.tagVotes ?? []).some(
+    (v) => v.game === 'hades-ii' && v.tag === 'horror',
+  );
+  check(
+    "S3.10 reader rules: unverified 403, no CSRF 403, a non-taxonomy tag 404, a bad slug 400; a vote is withdrawable; a new tag NAME goes to the suggestion queue (pending, never live) while a known spelling points to the existing tag; the GDPR export carries the user's tag votes",
+    unverified.status === 403 &&
+      noCsrf.status === 403 &&
+      unknownTag.status === 404 &&
+      badSlug.status === 400 &&
+      withdraw.status === 200 &&
+      afterWithdraw?.count === 3 &&
+      sugNew.json?.data?.status === 'queued' &&
+      sugRow === 'pending|user' &&
+      notInTaxonomy === 0 &&
+      sugKnown.json?.data?.status === 'exists' &&
+      sugKnown.json?.data?.tagSlug === 'co-op' &&
+      exported,
+    `unverified=${unverified.status} noCsrf=${noCsrf.status} unknown=${unknownTag.status} badSlug=${badSlug.status} withdraw=${withdraw.status}→votes ${afterWithdraw?.count} · suggest=${sugNew.json?.data?.status}/${sugRow} known→${sugKnown.json?.data?.tagSlug} · export=${exported}`,
+  );
+
+  // ── S3.11 RBAC + audit ─────────────────────────────────────────────────────
+  const modQueue = await api(BACK, '/admin/api/tag-queue', { jar: mod.jar });
+  const modSettings = await api(BACK, '/admin/api/tag-settings', {
+    method: 'PATCH',
+    jar: mod.jar,
+    csrf: mod.csrf,
+    body: { indexMinGames: 3 },
+  });
+  const modTaxonomy = await api(BACK, '/admin/api/tag-taxonomy', { jar: mod.jar });
+  const readerQueue = await api(BACK, '/admin/api/tag-queue', { jar: voters[0].jar });
+  // The admin UI's own path (bug-A lesson): frontend BFF + staff session + CSRF.
+  const uiMod = await uiLogin('demo-moderator');
+  const uiQueue = await uiApi(uiMod, '/admin/api/tag-queue');
+  const cheaters = tagRow('stellar-drifter', 'cheaters');
+  const uiReconfirm = await uiApi(
+    uiMod,
+    `/admin/api/tag-queue/${cheaters?.id}/reconfirm`,
+    'POST',
+    {},
+  );
+  const uiAdmin = await uiLogin('demo-admin');
+  const tagCfg = (await adminApi('/tag-settings')).json?.data;
+  const uiSettings = await uiApi(uiAdmin, '/admin/api/tag-settings', 'PATCH', {
+    catalogCardCount: tagCfg?.catalogCardCount ?? 3,
+  });
+  const audits = psql(
+    "SELECT string_agg(DISTINCT actor_label || ':' || entity_type, ',') FROM audit_logs WHERE entity_type IN ('game-tag', 'tag-suggestion') AND created_at > now() - interval '30 minutes';",
+  );
+  check(
+    'S3.11 RBAC + audit: editors (moderator) read the queue and the taxonomy and act on tags; tag settings are admin-only (moderator 403); a reader 403; every editor action and suggestion is in the audit log; the queue + settings work through the admin UI path (BFF, session, CSRF)',
+    modQueue.status === 200 &&
+      modTaxonomy.status === 200 &&
+      modSettings.status === 403 &&
+      readerQueue.status === 403 &&
+      uiQueue.status === 200 &&
+      uiReconfirm.status === 200 &&
+      uiSettings.status === 200 &&
+      audits.includes('demo-moderator:game-tag') &&
+      audits.includes('public: tag-suggestion:tag-suggestion'),
+    `mod queue=${modQueue.status} taxonomy=${modTaxonomy.status} settings=${modSettings.status} · reader=${readerQueue.status} · UI path queue=${uiQueue.status} reconfirm=${uiReconfirm.status} settings=${uiSettings.status} · audit actors=${audits}`,
+  );
+}
+
+async function restoreS3() {
+  const stmts = [];
+  for (const [g, t] of s3Restore.pairs) {
+    stmts.push(
+      `DELETE FROM game_tags WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(g)}) AND tag_id = (SELECT id FROM tags WHERE slug = ${lit(t)});`,
+      `DELETE FROM game_tag_votes WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(g)}) AND tag_id = (SELECT id FROM tags WHERE slug = ${lit(t)});`,
+    );
+  }
+  stmts.push(`DELETE FROM tag_suggestions WHERE raw_name = ${lit(`Verify Tag ${RUN}`)};`);
+  if (s3Restore.reopenImport) {
+    stmts.push(
+      `UPDATE game_tags SET state = ${lit(s3Restore.reopenImport.state)} WHERE id = ${lit(s3Restore.reopenImport.id)};`,
+    );
+  }
+  if (s3Restore.predatoryWas === 'false' || s3Restore.predatoryWas === 'true') {
+    stmts.push(
+      `UPDATE game_content_flags SET predatory_monetization = ${s3Restore.predatoryWas} WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter');`,
+    );
+  }
+  if (stmts.length) {
+    psql(
+      `BEGIN;\n${auditSql({ action: 'delete', entityType: 'verify-run', entityId: `verify-run-${RUN}`, changes: { statements: stmts.length }, summary: `verify cleanup removed run ${RUN}'s tag fixtures` })}\n${stmts.join('\n')}\nCOMMIT;`,
+    );
+  }
+  if (s3Restore.section)
+    await adminApi('/homepage/sections/by_players', 'PATCH', s3Restore.section);
+  if (s3Restore.settings) restoreSettings(s3Restore.settings);
+}
+
 async function restoreS2() {
   for (const id of s2Restore.placements) {
     await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
@@ -2448,7 +3069,9 @@ async function main() {
     await s2a();
     await s2b();
     await s2Fixes();
+    await s3();
   } finally {
+    await restoreS3();
     await restoreS2();
     restoreH3();
     // Re-run safety: restore switches + undo this run's integrity/vote rows.

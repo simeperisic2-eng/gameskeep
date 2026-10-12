@@ -1,6 +1,8 @@
 import type { CatalogGame } from '@/lib/public-api';
 import { scoreToTen } from '@/lib/format';
 import { CoverArt } from './CoverArt';
+import { TagChips } from './TagChips';
+import { QuickView } from './QuickView';
 
 /**
  * A catalog tile (SPEC I5b; BLUEPRINT 2.4) — the IMDb-style browse card. Leads
@@ -104,6 +106,9 @@ export function GameTile({
           <TileScore label="Players" score={game.community} />
         </div>
         {note ? <p className="gk-tile-note">{note}</p> : null}
+        <TagChips tags={game.tags ?? []} />
+        {/* Phase P S3: quick view — a sibling button, never inside a link. */}
+        <QuickView slug={game.slug} name={game.name} />
       </div>
     </article>
   );
