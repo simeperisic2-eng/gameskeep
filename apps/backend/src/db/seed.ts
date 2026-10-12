@@ -378,6 +378,15 @@ export async function seedDemo(): Promise<void> {
     { key: 'upcoming', label: 'Upcoming', page: 'upcoming', format: 'card' },
     { key: 'awards', label: 'Awards', page: 'awards', format: 'banner' },
     { key: 'awards-year', label: 'Awards archive', page: 'awards', format: 'banner' },
+    // Owner decision (S2 follow-up): story coverage lists can carry a paid row too —
+    // inserted at the slot's list position, always labeled; the outlet rows are untouched.
+    {
+      key: 'topic-coverage',
+      label: 'Story coverage list',
+      page: 'topic',
+      format: 'row',
+      listPosition: 4,
+    },
   ];
   for (const s of slotDefs)
     await ensure(adSlots, { ...s, fallback: 'ad', isActive: true }, eq(adSlots.key, s.key));

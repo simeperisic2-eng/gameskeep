@@ -582,6 +582,7 @@ export const RESOURCES: ResourceDef[] = [
       F.text('page', true),
       F.text('format'),
       F.enum('fallback', AD_SLOT_FALLBACKS),
+      F.num('listPosition'),
       F.bool('isActive'),
       F.num('sort'),
     ],
@@ -592,6 +593,18 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.adPlacements,
     create: adPlacementCreate,
     update: adPlacementCreate.partial(),
+    // Owner decision B: a slot placement may promote a story — it must exist
+    // (a dangling slug would render as an unlinked creative).
+    validate: async (next) => {
+      const slug = typeof next.promotedTopicSlug === 'string' ? next.promotedTopicSlug : null;
+      if (!slug) return null;
+      const [t] = await db
+        .select({ id: schema.topics.id })
+        .from(schema.topics)
+        .where(eq(schema.topics.slug, slug))
+        .limit(1);
+      return t ? null : `No story "${slug}".`;
+    },
     labelColumn: 'advertiserName',
     fields: [
       F.ref('slotId', 'ad-slots', true),
@@ -602,6 +615,7 @@ export const RESOURCES: ResourceDef[] = [
       F.text('ctaUrl'),
       F.text('ctaLabel'),
       F.ref('promotedSubjectId', 'subjects'),
+      F.text('promotedTopicSlug'),
       F.enum('status', AD_PLACEMENT_STATUSES),
       F.dt('startsAt'),
       F.dt('endsAt'),

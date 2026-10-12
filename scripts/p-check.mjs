@@ -51,30 +51,41 @@
  *
  *  S2 — homepage sections (commit 1: schema, DB rejection, snapshots, settings, admin)
  *   S2.1  (acc. 1) reorder in admin → the homepage order follows after save; audited
- *   S2.2  (acc. 2) a Promoted placement on Trending / any data section → API 400 AND
- *         the DB rejects it (FK + CHECK); a data section cannot be re-typed sellable
- *   S2.3  (acc. 3) a discovery section holds ONE Promoted item at its position, with
- *         the advertiser; a 2nd active → 409; a story is never promotable
+ *   S2.2  (owner decision B, rewritten) a paid placement — game OR story — is
+ *         accepted on EVERY section with a list (data sections included), by the
+ *         API and the DB; a block (no list) or a placement with no / two items → 400
+ *   S2.3  (decision B, rewritten) several paid items at the admin-set positions,
+ *         each with its kind + advertiser; the organic list is exactly as before
  *   S2.4  (acc. 4) too few samples → "—"; an empty previous window → "New"
  *   S2.5  (acc. 5) a pinned item keeps its position across refreshes
  *   S2.6  a ring of fresh accounts adds nothing to Trending; a credible one counts
  *   S2.7  Top rated ranks on the critic + community layers only
  *   S2.8  the homepage serves the STORED snapshots (no ranking on a request)
- *   S2.9  section edits validated per kind; RBAC
+ *   S2.9  section edits validated (paid positions / min items on a block → 400); RBAC
  *   S2.10 player counts sampled daily; the game chart stays weekly
  *   S2.11 the Standalone rule keys on the type’s stable role (rename-proof)
  *   S2.12 ads.showUnsoldPlaceholder default false, admin-set + audited
  *  S2 — commit 2 (homepage layout + copy, SSR)
  *   S2.13 (acc. 1) the rendered page follows the saved section order
- *   S2.14 (acc. 3) the Promoted label is render-forced under every switch; no data
- *         section renders a paid item
+ *   S2.14 (decision B, rewritten) with a paid game + a paid story in EVERY section
+ *         that shows a list, each section renders "Promoted" and "Sponsored" with
+ *         the advertiser under every switch combination
  *   S2.15 Δ on cards with its window (48h / 7d), New / — / ±%, neutral colours
  *   S2.16 (acc. 5) the Trending list keeps the section order — a pin holds its row
- *   S2.17 no Promoted row between outlet articles on story pages
+ *   S2.17 (decision B, rewritten) the story coverage list: no paid row while the
+ *         'topic-coverage' slot is unsold; sold → ONE labeled row at the slot's
+ *         position, the outlet rows + count unchanged
  *   S2.18 unsold slots render nothing at default; the switch brings the box back
  *   S2.19 no stale copy; Community CTA; the newsletter form uses the consented path
  *   S2.20 spotlight band filled; no echoed headline; stacked 3-across cards
- *   S2.21 Our picks hidden while empty; neutral "Our pick" label when pinned
+ *   S2.21 Our picks hidden while empty (a paid item alone never shows it); an
+ *         organic pick reads "Our pick"; a paid item there shows its paid label,
+ *         never "Our pick"
+ *   S2.22 (review bug A) "Save order" / "Save pins" through the admin UI's own path
+ *         (frontend BFF, demo-owner session, CSRF double-submit) → 200 + applied
+ *   S2.23 (decision B) payment never changes data: paid items everywhere leave
+ *         every organic list (order, metric, Δ), every score, player count, bias
+ *         distribution and integrity signal exactly as computed without them
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -1250,14 +1261,68 @@ function clearOwnEmailThrottle() {
 }
 const itemSlug = (i) => i.topic?.slug ?? i.game?.slug ?? null;
 
+/**
+ * Review bug A: sign in through the FRONTEND exactly as the browser does (the
+ * admin UI never talks to the backend directly — it calls the BFF with the
+ * staff session cookie + the CSRF token from /api/auth/csrf).
+ */
+async function uiLogin(identifier) {
+  const jar = {};
+  const c0 = await api(FRONT, '/api/auth/csrf', { jar });
+  jarFrom(c0.res, jar);
+  const r = await api(FRONT, '/api/auth/login', {
+    method: 'POST',
+    jar,
+    csrf: c0.json?.token,
+    body: { identifier, password: DEMO_PW },
+  });
+  jarFrom(r.res, jar);
+  const c1 = await api(FRONT, '/api/auth/csrf', { jar });
+  jarFrom(c1.res, jar);
+  return { jar, csrf: c1.json?.token, status: r.status };
+}
+const uiApi = (ui, path, method = 'GET', body) =>
+  api(FRONT, path, { method, jar: ui.jar, csrf: method === 'GET' ? undefined : ui.csrf, body });
+
+/** Every number we compute or import, timestamps excluded (S2.23). */
+const dataFingerprint = () =>
+  psql(
+    [
+      "SELECT md5(coalesce((SELECT string_agg(concat_ws(',', game_id, our_score, critics_score, critics_outlet_count, community_our_score, community_our_count, community_web_score, community_our_naive_score, disconnect_value, disconnect_band), '|' ORDER BY game_id) FROM game_rating_summaries), ''))",
+      "|| ':' || md5(coalesce((SELECT string_agg(concat_ws(',', slug, bias_distribution::text, derived_influence_pct, derived_quality_pct), '|' ORDER BY slug) FROM topics), ''))",
+      "|| ':' || md5(coalesce((SELECT string_agg(concat_ws(',', id, kind, status), '|' ORDER BY id) FROM article_integrity_signals), ''))",
+      "|| ':' || md5(coalesce((SELECT string_agg(concat_ws(',', id, influence_score, quality_score, is_sponsored, has_affiliate_links, based_on_review_copy), '|' ORDER BY id) FROM articles), ''))",
+      "|| ':' || (SELECT count(*) || '/' || coalesce(sum(current_players), 0) FROM game_player_counts);",
+    ].join(' '),
+  );
+/** Each section's ORGANIC items as computed: slug | metric | Δ (S2.23). */
+const organicBySection = async () =>
+  Object.fromEntries(
+    (await homeSections()).map((x) => [
+      x.key,
+      x.items
+        .filter((i) => !i.paid)
+        .map((i) => `${itemSlug(i)}|${i.metric}|${JSON.stringify(i.delta)}`)
+        .join(','),
+    ]),
+  );
+/** "Paid promotion · <advertiser>" — React may split the two text nodes. */
+const paidByRe = (adv) =>
+  new RegExp(`Paid promotion · (<!-- -->)?${adv.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+
 async function s2a() {
   const cfg0 = await sectionsConfig();
   s2Restore.order = cfg0.map((x) => x.key);
   s2Restore.settings = snapshotSettings(['homepage', 'ads']);
   for (const key of ['trending', 'featured']) s2Restore.pins.set(key, pinsOf(cfg0, key));
+  for (const x of cfg0) {
+    if (x.items !== 'none')
+      s2Restore.sections.set(x.key, { paidPositions: x.paidPositions ?? [], minItems: x.minItems });
+  }
   const featured0 = cfg0.find((x) => x.key === 'featured');
   s2Restore.sections.set('featured', {
-    promotedPosition: featured0?.promotedPosition ?? null,
+    paidPositions: featured0?.paidPositions ?? [],
+    minItems: featured0?.minItems,
     mode: featured0?.mode,
   });
   const mod = await login('demo-moderator', DEMO_PW);
@@ -1293,18 +1358,76 @@ async function s2a() {
     `mod=${modOrder.status} put=${put.status} served=${served.slice(0, 4).join('>')}… audit=${orderAudit}`,
   );
 
-  // ── S2.2 (acc.2) a paid placement for a DATA section is rejected: API + DB ──
+  // ── S2.22 (review bug A) the admin UI's own path: BFF + session + CSRF ─────
+  // The checks above use the service token against the backend directly — that is
+  // why the missing BFF PUT went unnoticed. This sends what the UI sends.
+  const ui = await uiLogin('demo-owner');
+  const uiCfg = await uiApi(ui, '/admin/api/homepage/config');
+  const uiKeys = (uiCfg.json?.data?.sections ?? []).map((x) => x.key);
+  const uiMoved = [...uiKeys];
+  const gi = uiMoved.indexOf('genres');
+  if (gi > 0) [uiMoved[gi - 1], uiMoved[gi]] = [uiMoved[gi], uiMoved[gi - 1]];
+  const uiOrder = await uiApi(ui, '/admin/api/homepage/order', 'PUT', { keys: uiMoved });
+  await waitHomepage(uiOrder);
+  const uiApplied = (await sectionsConfig()).map((x) => x.key).join(',') === uiMoved.join(',');
+  const uiPins = await uiApi(ui, '/admin/api/homepage/sections/featured/pins', 'PUT', {
+    pins: pinsOf(await sectionsConfig(), 'featured'),
+  });
+  await waitHomepage(uiPins);
+  const uiNoCsrf = await api(FRONT, '/admin/api/homepage/order', {
+    method: 'PUT',
+    jar: ui.jar,
+    body: { keys: uiKeys },
+  });
+  const uiBack = await uiApi(ui, '/admin/api/homepage/order', 'PUT', { keys: uiKeys });
+  await waitHomepage(uiBack);
+  const uiRestored = (await sectionsConfig()).map((x) => x.key).join(',') === uiKeys.join(',');
+  check(
+    'S2.22 (review bug A) "Save order" and "Save pins" through the admin UI path (frontend BFF, demo-owner session, CSRF double-submit) → 200 and applied; without the CSRF token → 403',
+    ui.status === 200 &&
+      uiCfg.status === 200 &&
+      gi > 0 &&
+      uiOrder.status === 200 &&
+      uiApplied &&
+      uiPins.status === 200 &&
+      uiNoCsrf.status === 403 &&
+      uiBack.status === 200 &&
+      uiRestored,
+    `login=${ui.status} config=${uiCfg.status} order=${uiOrder.status} applied=${uiApplied} pins=${uiPins.status} noCsrf=${uiNoCsrf.status} restore=${uiBack.status}/${uiRestored}`,
+  );
+
+  // ── S2.2 (decision B) a paid placement is accepted on ANY section with a list ─
   const game =
     psql("SELECT slug FROM subjects WHERE type = 'game' AND slug = 'elden-ring';") || 'elden-ring';
-  const dataKeys = cfg0.filter((x) => x.kind === 'data').map((x) => x.key);
-  const apiRejects = [];
-  for (const key of dataKeys) {
-    const r = await adminApi(`/homepage/sections/${key}/promotions`, 'POST', {
+  const storyRows = psql(
+    "SELECT slug FROM topics WHERE bias_distribution IS NOT NULL AND (bias_distribution->>'articleCount')::int > 0 ORDER BY last_activity_at DESC LIMIT 2;",
+  ).split('\n');
+  const story = storyRows[0];
+  const storyB = storyRows[1] ?? storyRows[0];
+  const listKeys = cfg0.filter((x) => x.items !== 'none').map((x) => x.key);
+  const accepted = [];
+  for (const key of listKeys) {
+    const g = await adminApi(`/homepage/sections/${key}/promotions`, 'POST', {
       advertiserName: `S2 Promo ${RUN}`,
       gameSlug: game,
     });
-    apiRejects.push(`${key}:${r.status}`);
+    const t = await adminApi(`/homepage/sections/${key}/promotions`, 'POST', {
+      advertiserName: `S2 Promo ${RUN}`,
+      topicSlug: story,
+    });
+    for (const r of [g, t]) if (r.json?.data?.id) s2Restore.placements.push(r.json.data.id);
+    accepted.push(`${key}:${g.status}/${t.status}`);
   }
+  const blockKey = cfg0.find((x) => x.items === 'none')?.key;
+  const onBlock = await adminApi(`/homepage/sections/${blockKey}/promotions`, 'POST', {
+    advertiserName: `S2 Promo ${RUN}`,
+    gameSlug: game,
+  });
+  const twoItems = await adminApi('/homepage/sections/trending/promotions', 'POST', {
+    advertiserName: `S2 Promo ${RUN}`,
+    gameSlug: game,
+    topicSlug: story,
+  });
   const dbTry = (sqlText) => {
     try {
       psql(sqlText);
@@ -1317,73 +1440,85 @@ async function s2a() {
   };
   const trendingId = psql("SELECT id FROM homepage_sections WHERE key = 'trending';");
   const gameSubject = psql(`SELECT id FROM subjects WHERE slug = ${lit(game)};`);
-  const asDiscovery = dbTry(
-    `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id) VALUES (${lit(trendingId)}, 'discovery', ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(gameSubject)});`,
+  const dbStory = dbTry(
+    `INSERT INTO ad_placements (section_id, advertiser_name, headline, promoted_topic_slug) VALUES (${lit(trendingId)}, ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(story)});`,
   );
-  const asData = dbTry(
-    `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id) VALUES (${lit(trendingId)}, 'data', ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(gameSubject)});`,
+  const dbNoItem = dbTry(
+    `INSERT INTO ad_placements (section_id, advertiser_name, headline) VALUES (${lit(trendingId)}, ${lit(`S2 Promo ${RUN}`)}, 'x');`,
   );
-  const retype = dbTry("UPDATE homepage_sections SET kind = 'discovery' WHERE key = 'trending';");
+  const dbBoth = dbTry(
+    `INSERT INTO ad_placements (section_id, advertiser_name, headline, promoted_subject_id, promoted_topic_slug) VALUES (${lit(trendingId)}, ${lit(`S2 Promo ${RUN}`)}, 'x', ${lit(gameSubject)}, ${lit(story)});`,
+  );
   check(
-    'S2.2 (acc.2) attaching a Promoted placement to Trending (and every data section) is rejected — API 400 AND the DB (FK/CHECK); a data section cannot be re-typed sellable',
-    apiRejects.every((x) => x.endsWith(':400')) &&
-      dataKeys.includes('trending') &&
-      asDiscovery === 'rejected' &&
-      asData === 'rejected' &&
-      retype === 'rejected',
-    `api=${apiRejects.join(' ')} db(as discovery)=${asDiscovery} db(as data)=${asData} retype=${retype}`,
+    'S2.2 (decision B) a paid placement — a game OR a story — is accepted on EVERY section with a list (Trending and the other data sections included), by the API (201) and the DB; a block, or a placement with no item / two items → rejected',
+    listKeys.length >= 9 &&
+      listKeys.includes('trending') &&
+      accepted.every((x) => x.endsWith(':201/201')) &&
+      onBlock.status === 400 &&
+      twoItems.status === 400 &&
+      dbStory === 'ACCEPTED' &&
+      dbNoItem === 'rejected' &&
+      dbBoth === 'rejected',
+    `api=${accepted.join(' ')} block(${blockKey})=${onBlock.status} two=${twoItems.status} db story=${dbStory} none=${dbNoItem} both=${dbBoth}`,
   );
 
-  // ── S2.3 (acc.3) Featured: the one Promoted item at its position, labeled ──
-  const story = psql(
-    "SELECT slug FROM topics WHERE bias_distribution IS NOT NULL AND (bias_distribution->>'articleCount')::int > 0 ORDER BY last_activity_at DESC LIMIT 1;",
+  // ── S2.3 (decision B) several paid items at their positions; organic untouched
+  await adminApi('/homepage/sections/featured', 'PATCH', { paidPositions: [2, 4], mode: 'manual' });
+  await waitHomepage(
+    await adminApi('/homepage/sections/featured/pins', 'PUT', {
+      pins: [
+        { position: 1, topicSlug: story },
+        { position: 3, gameSlug: 'hades-ii' },
+      ],
+    }),
   );
-  await adminApi('/homepage/sections/featured', 'PATCH', { promotedPosition: 2, mode: 'manual' });
-  await adminApi('/homepage/sections/featured/pins', 'PUT', {
-    pins: [
-      { position: 1, topicSlug: story },
-      { position: 3, gameSlug: 'hades-ii' },
-    ],
-  });
-  const promo = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+  const organicBefore = ((await homeSections()).find((x) => x.key === 'featured')?.items ?? [])
+    .filter((i) => !i.paid)
+    .map(itemSlug);
+  const pg = await adminApi('/homepage/sections/featured/promotions', 'POST', {
     advertiserName: `S2 Promo ${RUN}`,
     gameSlug: game,
   });
-  const promoId = promo.json?.data?.id;
-  if (promoId) s2Restore.placements.push(promoId);
-  const act = await adminApi(`/ads/placements/${promoId}/status`, 'POST', { status: 'active' });
-  await waitHomepage(act);
-  const featured = (await homeSections()).find((x) => x.key === 'featured');
-  const at2 = featured?.items?.[1];
-  const second = await adminApi('/homepage/sections/featured/promotions', 'POST', {
+  const pt = await adminApi('/homepage/sections/featured/promotions', 'POST', {
     advertiserName: `S2 Promo B ${RUN}`,
-    gameSlug: 'hades-ii',
+    topicSlug: storyB,
   });
-  const secondId = second.json?.data?.id;
-  if (secondId) s2Restore.placements.push(secondId);
-  const secondAct = await adminApi(`/ads/placements/${secondId}/status`, 'POST', {
-    status: 'active',
-  });
-  const storyPromo = await adminApi('/homepage/sections/featured/promotions', 'POST', {
-    advertiserName: `S2 Promo C ${RUN}`,
-    gameSlug: story,
-  });
-  const dataPaid = (await homeSections())
-    .filter((x) => x.kind === 'data')
-    .some((x) => x.items.some((i) => i.promoted));
+  const s23Ids = [pg.json?.data?.id, pt.json?.data?.id].filter(Boolean);
+  s2Restore.placements.push(...s23Ids);
+  const actG = await adminApi(`/ads/placements/${s23Ids[0]}/status`, 'POST', { status: 'active' });
+  const actS = await adminApi(`/ads/placements/${s23Ids[1]}/status`, 'POST', { status: 'active' });
+  await waitHomepage(actS);
+  await recomputeHomepage();
+  const featuredItems = (await homeSections()).find((x) => x.key === 'featured')?.items ?? [];
+  // Expected: the organic list with the paid refs INSERTED at 2 then 4.
+  const expectedFeatured = [...organicBefore];
+  expectedFeatured.splice(Math.min(1, expectedFeatured.length), 0, game);
+  expectedFeatured.splice(Math.min(3, expectedFeatured.length), 0, storyB);
+  const organicAfter = featuredItems.filter((i) => !i.paid).map(itemSlug);
+  const paidG = featuredItems[1];
+  const paidS = featuredItems[Math.min(3, featuredItems.length - 1)];
   check(
-    'S2.3 (acc.3) a discovery section carries ONE Promoted item at its admin-chosen position with the advertiser; a second active one → 409; a story is never promotable; no data section holds a paid item',
-    promo.status === 201 &&
-      act.status === 200 &&
-      at2?.promoted?.advertiser === `S2 Promo ${RUN}` &&
-      itemSlug(at2) === game &&
-      featured?.items?.filter((i) => i.promoted).length === 1 &&
-      second.status === 201 &&
-      secondAct.status === 409 &&
-      storyPromo.status === 400 &&
-      !dataPaid,
-    `pos2=${itemSlug(at2)} label=${at2?.promoted?.advertiser ?? '—'} 2nd-active=${secondAct.status} story=${storyPromo.status} dataPaid=${dataPaid}`,
+    'S2.3 (decision B) a section carries several paid items at its admin-set positions (2 and 4), a game ("Promoted") and a story ("Sponsored"), each with its advertiser; the organic list is exactly what it was without them',
+    pg.status === 201 &&
+      pt.status === 201 &&
+      actG.status === 200 &&
+      actS.status === 200 &&
+      featuredItems.map(itemSlug).join(',') === expectedFeatured.join(',') &&
+      paidG?.paid?.kind === 'game' &&
+      paidG?.paid?.advertiser === `S2 Promo ${RUN}` &&
+      paidS?.paid?.kind === 'story' &&
+      paidS?.paid?.advertiser === `S2 Promo B ${RUN}` &&
+      featuredItems.filter((i) => i.paid).length === 2 &&
+      organicAfter.join(',') === organicBefore.join(','),
+    `served=${featuredItems.map((i) => `${itemSlug(i)}${i.paid ? `[${i.paid.kind}]` : ''}`).join(',')} organic kept=${organicAfter.join(',') === organicBefore.join(',')}`,
   );
+  // End both so later groups start from organic lists.
+  for (const id of s23Ids)
+    await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
+  await adminApi('/homepage/sections/featured', 'PATCH', {
+    paidPositions: s2Restore.sections.get('featured')?.paidPositions ?? [],
+  });
+  await recomputeHomepage();
 
   // ── S2.4 (acc.4) Δ honesty: too few samples → "—"; empty prior window → New ──
   const playersOf = async () => (await homeSections()).find((x) => x.key === 'by_players');
@@ -1576,7 +1711,9 @@ async function s2a() {
     body: { title: 'x' },
   });
   const results = {
-    promotedOnData: await v('trending', { promotedPosition: 1 }),
+    paidOnBlock: await v('briefing', { paidPositions: [1] }),
+    paidOutOfRange: await v('trending', { paidPositions: [0] }),
+    minItemsOnBlock: await v('genres', { minItems: 2 }),
     ourPicksAuto: await v('our_picks', { mode: 'auto' }),
     windowOnTopRated: await v('top_rated', { deltaWindowHours: 24 }),
     tooMany: await v('latest', { itemCount: 99 }),
@@ -1584,9 +1721,11 @@ async function s2a() {
     unknown: await v('nope', { title: 'x' }),
   };
   check(
-    'S2.9 section edits are validated per kind (paid position on a data section, Our picks auto, Δ window off-section, out-of-range, wrong rule dimension → 400; unknown → 404); moderator 403',
+    'S2.9 section edits are validated (paid positions / min items on a block, a paid position out of range, Our picks auto, Δ window off-section, too many items, wrong rule dimension → 400; unknown → 404); moderator 403',
     modPatch.status === 403 &&
-      results.promotedOnData === 400 &&
+      results.paidOnBlock === 400 &&
+      results.paidOutOfRange === 400 &&
+      results.minItemsOnBlock === 400 &&
       results.ourPicksAuto === 400 &&
       results.windowOnTopRated === 400 &&
       results.tooMany === 400 &&
@@ -1684,34 +1823,128 @@ async function s2b() {
     `ssr=${ssr1.order.slice(0, 5).join('>')}…`,
   );
 
-  // ── S2.14 (acc.3, SSR) the Promoted label is render-forced; data sections never paid
-  const labelIn = (h) =>
-    (h ?? '').includes('Paid promotion · ') && (h ?? '').includes('>Promoted<');
-  let lastHtml = await html('/');
-  const featuredHas = () => labelIn(ssrSections(lastHtml).byKey.get('featured'));
-  const states = [];
-  states.push(featuredHas());
+  // ── S2.23 + S2.14 (decision B) a paid game AND a paid story in every section
+  //    that shows a list: organic data unchanged; the labels always render ──────
+  const paidGame = 'cyberpunk-2077';
+  const paidStory = psql(
+    'SELECT slug FROM topics WHERE bias_distribution IS NOT NULL ORDER BY last_activity_at ASC LIMIT 1;',
+  );
+  const publicFp = async () => {
+    const g = (await api(BACK, `/public/game/${paidGame}`)).json?.data;
+    const t = (await api(BACK, `/public/topic/${paidStory}`)).json?.data;
+    return JSON.stringify({
+      rating: g?.rating,
+      players: g?.playerCount,
+      history: g?.playerCountHistory,
+      distribution: t?.distribution,
+      flags: t?.flags,
+      integrity: t?.integrityTally,
+      sources: t?.sourceCount,
+      articles: t?.articleCount,
+    });
+  };
+  await recomputeHomepage();
+  const orgA = await organicBySection();
+  const dbA = dataFingerprint();
+  const pubA = await publicFp();
+  const shownLists = Object.entries(orgA)
+    .filter(([, v]) => v.length > 0)
+    .map(([k]) => k);
+  const everywhere = [];
+  for (const key of shownLists) {
+    await adminApi(`/homepage/sections/${key}`, 'PATCH', { paidPositions: [1, 3] });
+    for (const [adv, item] of [
+      [`S2 Promo G ${RUN}`, { gameSlug: paidGame }],
+      [`S2 Promo S ${RUN}`, { topicSlug: paidStory }],
+    ]) {
+      const r = await adminApi(`/homepage/sections/${key}/promotions`, 'POST', {
+        advertiserName: adv,
+        ...item,
+      });
+      if (r.json?.data?.id) everywhere.push(r.json.data.id);
+    }
+  }
+  s2Restore.placements.push(...everywhere);
+  let lastAct = null;
+  for (const id of everywhere)
+    lastAct = await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'active' });
+  await waitHomepage(lastAct);
+  await recomputeHomepage();
+  const orgB = await organicBySection();
+  const dbB = dataFingerprint();
+  const pubB = await publicFp();
+  const withPaid = await homeSections();
+  const placedOk = shownLists.filter((k) => {
+    const items = withPaid.find((x) => x.key === k)?.items ?? [];
+    const third = items[Math.min(2, items.length - 1)];
+    return (
+      items[0]?.paid?.kind === 'game' &&
+      itemSlug(items[0]) === paidGame &&
+      third?.paid?.kind === 'story' &&
+      itemSlug(third) === paidStory
+    );
+  });
+
+  // S2.14: the labels render in every one of those sections under every switch.
+  const labelsIn = (h) =>
+    (h ?? '').includes('>Promoted<') &&
+    (h ?? '').includes('>Sponsored<') &&
+    paidByRe(`S2 Promo G ${RUN}`).test(h ?? '') &&
+    paidByRe(`S2 Promo S ${RUN}`).test(h ?? '');
+  const missing = [];
+  const sweep = (h, state) => {
+    const by = ssrSections(h).byKey;
+    for (const k of shownLists) if (!labelsIn(by.get(k))) missing.push(`${k}@${state}`);
+  };
+  sweep(await html('/'), 0);
   const toggles = [
     () => adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: true }),
     () => setDisplay({ displayScope: 'all', showQuality: true }),
     () => adminApi('/homepage/settings', 'PATCH', { showUnsoldPlaceholder: false }),
     () => setDisplay({ displayScope: 'reviews_and_sponsored', showQuality: false }),
   ];
-  for (const t of toggles) {
+  for (const [n, t] of toggles.entries()) {
     const r = await t();
     if (r?.json?.jobId) await waitHomepage(r);
-    lastHtml = await html('/');
-    states.push(featuredHas());
+    sweep(await html('/'), n + 1);
   }
-  const ssrNow = ssrSections(lastHtml);
-  const dataPaid = cfg
-    .filter((x) => x.kind === 'data')
-    .some((x) => /is-promoted|Paid promotion/.test(ssrNow.byKey.get(x.key) ?? ''));
   check(
-    'S2.14 (acc.3) a discovery section with a Promoted item shows the label in SSR under every switch combination; no data section renders a paid item',
-    states.every(Boolean) && !dataPaid,
-    `label across ${states.length} states: ${states.join(',')} dataPaid=${dataPaid}`,
+    `S2.14 (decision B) with a paid game + a paid story in every section that shows a list (${shownLists.length}: ${shownLists.join(', ')}), each section renders "Promoted" and "Sponsored" with the advertiser in SSR under every switch combination (5 states)`,
+    shownLists.length >= 6 &&
+      shownLists.includes('trending') &&
+      shownLists.includes('top_rated') &&
+      missing.length === 0,
+    missing.length
+      ? `label missing in: ${missing.slice(0, 8).join(' ')}`
+      : 'labels in every section, every state',
   );
+
+  // Remove them all, recompute: C is the unpaid computation right after.
+  for (const id of everywhere)
+    await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
+  for (const key of shownLists) {
+    await adminApi(`/homepage/sections/${key}`, 'PATCH', {
+      paidPositions: s2Restore.sections.get(key)?.paidPositions ?? [],
+    });
+  }
+  await recomputeHomepage();
+  const orgC = await organicBySection();
+  const dbC = dataFingerprint();
+  const pubC = await publicFp();
+  // Payment changed nothing iff the paid computation equals an unpaid one — the
+  // one before (A) or right after (C; guards a time-window boundary in between).
+  const sameOrg = (x, y) => Object.keys({ ...x, ...y }).every((k) => (x[k] ?? '') === (y[k] ?? ''));
+  const orgOk = sameOrg(orgB, orgA) || sameOrg(orgB, orgC);
+  const diffKeys = Object.keys(orgA).filter((k) => orgA[k] !== orgB[k]);
+  check(
+    `S2.23 (decision B) payment never changes data: with a paid game + a paid story in ${shownLists.length} sections, every organic list (order, metric, Δ), every score, player count, bias distribution and integrity signal equals the unpaid computation; each paid item sits at its position (1 and 3)`,
+    placedOk.length === shownLists.length &&
+      orgOk &&
+      (dbB === dbA || dbB === dbC) &&
+      (pubB === pubA || pubB === pubC),
+    `placed ${placedOk.length}/${shownLists.length} · organic ${sameOrg(orgB, orgA) ? '=A' : sameOrg(orgB, orgC) ? '=C' : `DIFFERS in ${diffKeys.join(',')}`} · data ${dbB === dbA ? '=A' : dbB === dbC ? '=C' : 'DIFFERS'} · public ${pubB === pubA ? '=A' : pubB === pubC ? '=C' : 'DIFFERS'}`,
+  );
+  const ssrNow = ssrSections(await html('/'));
 
   // ── S2.15 Δ on the cards with its window; neutral colours ─────────────────
   const chips = (h) =>
@@ -1771,19 +2004,77 @@ async function s2b() {
     `row3=${rowsA[2]} after refresh=${rowsB[2]} ssr=api ${rowsA.join(',') === apiAfter.join(',')}`,
   );
 
-  // ── S2.17 no Promoted row between outlet articles ─────────────────────────
+  // ── S2.17 (decision B) the story coverage list: a sold slot → ONE labeled row ─
   const topicSlugs = psql(
     "SELECT string_agg(slug, ',') FROM (SELECT slug FROM topics WHERE bias_distribution IS NOT NULL ORDER BY last_activity_at DESC LIMIT 6) x;",
   ).split(',');
-  const adRows = [];
+  const unsoldRows = [];
   for (const slug of topicSlugs) {
     const h = await html(`/topics/${slug}`);
-    if (/gk-srcrow-ad|Promoted slot/.test(h)) adRows.push(slug);
+    if (/data-paid-row|Promoted slot/.test(h)) unsoldRows.push(slug);
   }
+  const covSlot = psql(
+    "SELECT id || '|' || coalesce(list_position::text, '') FROM ad_slots WHERE key = 'topic-coverage';",
+  ).split('|');
+  const covPos = Number(covSlot[1]) || 1;
+  const covTopic = psql(
+    `SELECT t.slug FROM topics t JOIN article_topics at ON at.topic_id = t.id WHERE t.bias_distribution IS NOT NULL GROUP BY t.slug, t.last_activity_at HAVING count(*) >= ${covPos + 1} ORDER BY t.last_activity_at DESC LIMIT 1;`,
+  );
+  const rowSeq = (h) =>
+    [...h.matchAll(/<article class="gk-srcrow( is-paid)?"[^>]*>([\s\S]*?)<\/article>/g)].map(
+      (m) => ({
+        paid: Boolean(m[1]),
+        body: m[2],
+        title: (m[2].match(/<h3 class="gk-srcrow-title">([\s\S]*?)<\/h3>/)?.[1] ?? '')
+          .replace(/<[^>]+>/g, '')
+          .trim(),
+      }),
+    );
+  const countOf = (h) => h.match(/gk-coverage-count">(\d+)</)?.[1] ?? '?';
+  const pageA = await html(`/topics/${covTopic}`);
+  const covSale = await adminApi('/ad-placements', 'POST', {
+    slotId: covSlot[0],
+    advertiserName: `S2 Promo Cov ${RUN}`,
+    headline: `Sponsored story ${RUN}`,
+    promotedTopicSlug: paidStory,
+    status: 'active',
+  });
+  if (covSale.json?.data?.id) s2Restore.placements.push(covSale.json.data.id);
+  const badSlug = await adminApi('/ad-placements', 'POST', {
+    slotId: covSlot[0],
+    advertiserName: `S2 Promo Cov ${RUN}`,
+    headline: 'x',
+    promotedTopicSlug: `no-such-story-${RUN}`,
+  });
+  if (badSlug.json?.data?.id) s2Restore.placements.push(badSlug.json.data.id);
+  const pageB = await html(`/topics/${covTopic}`);
+  const rowsA2 = rowSeq(pageA);
+  const rowsB2 = rowSeq(pageB);
+  const paidIdx = rowsB2.findIndex((r) => r.paid);
+  const paidRow = rowsB2[paidIdx];
+  const outletA = rowsA2.map((r) => r.title).join('\n');
+  const outletB = rowsB2
+    .filter((r) => !r.paid)
+    .map((r) => r.title)
+    .join('\n');
+  if (covSale.json?.data?.id) await adminApi(`/ad-placements/${covSale.json.data.id}`, 'DELETE');
+  const pageC = await html(`/topics/${covTopic}`);
   check(
-    'S2.17 topic coverage lists carry no Promoted row — paid items only in discovery sections + sidebar slots',
-    topicSlugs.length >= 3 && adRows.length === 0,
-    `${topicSlugs.length} story pages, ad rows on: ${adRows.join(',') || 'none'}`,
+    `S2.17 (decision B) story coverage list: no paid row while the 'topic-coverage' slot is unsold (${topicSlugs.length} story pages); sold → ONE row labeled "Sponsored" + advertiser at the slot's position (${covPos}), linking to the promoted story; the outlet rows and the count are unchanged; a placement for a missing story → 400`,
+    topicSlugs.length >= 3 &&
+      unsoldRows.length === 0 &&
+      Boolean(covTopic) &&
+      covSale.status < 300 &&
+      rowsB2.filter((r) => r.paid).length === 1 &&
+      paidIdx === Math.min(covPos, rowsA2.length + 1) - 1 &&
+      paidRow?.body.includes('>Sponsored<') &&
+      paidByRe(`S2 Promo Cov ${RUN}`).test(paidRow?.body ?? '') &&
+      paidRow?.body.includes(`href="/topics/${paidStory}"`) &&
+      outletA === outletB &&
+      countOf(pageA) === countOf(pageB) &&
+      !/data-paid-row/.test(pageC) &&
+      badSlug.status === 400,
+    `unsold rows on: ${unsoldRows.join(',') || 'none'} · sold → paid rows=${rowsB2.filter((r) => r.paid).length} at #${paidIdx + 1} (slot ${covPos}) outlets kept=${outletA === outletB} count ${countOf(pageA)}→${countOf(pageB)} · removed=${!/data-paid-row/.test(pageC)} · bad slug=${badSlug.status}`,
   );
 
   // ── S2.18 an unsold slot renders NOTHING at default; the switch brings the box back
@@ -1872,18 +2163,43 @@ async function s2b() {
     `panels=${panels} withCoverage=${covered} echoes=${echoes.length} stacked=${count(trendHtml, 'is-stacked')}`,
   );
 
-  // ── S2.21 Our picks: hidden while empty; a pick shows the neutral label ────
+  // ── S2.21 Our picks: hidden while empty; organic "Our pick"; paid → its label ─
   const emptyHidden = !ssrSections(home).order.includes('our_picks');
+  await adminApi('/homepage/sections/our_picks', 'PATCH', { paidPositions: [2] });
+  const opPromo = await adminApi('/homepage/sections/our_picks/promotions', 'POST', {
+    advertiserName: `S2 Promo P ${RUN}`,
+    gameSlug: 'cyberpunk-2077',
+  });
+  const opId = opPromo.json?.data?.id;
+  if (opId) s2Restore.placements.push(opId);
+  await waitHomepage(
+    await adminApi(`/ads/placements/${opId}/status`, 'POST', { status: 'active' }),
+  );
+  const paidAloneHidden = !ssrSections(await html('/')).order.includes('our_picks');
   await waitHomepage(
     await adminApi('/homepage/sections/our_picks/pins', 'PUT', {
       pins: [{ position: 1, gameSlug: 'hades-ii' }],
     }),
   );
   const picks = ssrSections(await html('/')).byKey.get('our_picks') ?? '';
+  const cards = picks.split('<article class="gk-hgcard').slice(1);
+  const pickCard = cards.find((x) => x.includes('/games/hades-ii')) ?? '';
+  const paidCard = cards.find((x) => x.includes('/games/cyberpunk-2077')) ?? '';
+  await adminApi(`/ads/placements/${opId}/status`, 'POST', { status: 'ended' });
+  await adminApi('/homepage/sections/our_picks', 'PATCH', {
+    paidPositions: s2Restore.sections.get('our_picks')?.paidPositions ?? [],
+  });
   check(
-    'S2.21 Our picks is hidden while empty; a team pick renders with the neutral "Our pick" label, never "Promoted"',
-    emptyHidden && picks.includes('Our pick') && !/Promoted|Paid promotion/.test(picks),
-    `hiddenWhenEmpty=${emptyHidden} label=${picks.includes('Our pick')} paid=${/Promoted|Paid promotion/.test(picks)}`,
+    'S2.21 Our picks is hidden while empty — a paid item alone never shows it; an organic pick renders the neutral "Our pick" label; a paid item inside Our picks shows "Promoted" + advertiser, never "Our pick"',
+    emptyHidden &&
+      paidAloneHidden &&
+      cards.length === 2 &&
+      pickCard.includes('Our pick') &&
+      !/Promoted|Sponsored|Paid promotion/.test(pickCard) &&
+      paidCard.includes('>Promoted<') &&
+      paidByRe(`S2 Promo P ${RUN}`).test(paidCard) &&
+      !paidCard.includes('Our pick'),
+    `hiddenWhenEmpty=${emptyHidden} paidAloneHidden=${paidAloneHidden} cards=${cards.length} pick="Our pick"=${pickCard.includes('Our pick')} paid label=${paidCard.includes('>Promoted<')} paid "Our pick"=${paidCard.includes('Our pick')}`,
   );
 }
 

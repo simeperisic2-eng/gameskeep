@@ -570,6 +570,8 @@ export const adSlotCreate = z.object({
   page: z.string().trim().min(1).max(60),
   format: z.string().trim().max(40).default('card'),
   fallback: z.enum(AD_SLOT_FALLBACKS).default('ad'),
+  /** In-list slot (e.g. the story coverage list): the 1-based row of its paid item. */
+  listPosition: z.number().int().min(1).max(50).nullable().optional(),
   isActive: z.boolean().default(true),
   sort,
 });
@@ -591,6 +593,14 @@ export const adPlacementCreate = z.object({
   ctaUrl: httpUrl.optional(),
   ctaLabel: z.string().trim().max(60).optional(),
   promotedSubjectId: uuid.optional(),
+  /** A promoted STORY by slug (owner decision: stories are promotable; labeled "Sponsored"). */
+  promotedTopicSlug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9-]+$/, 'lowercase slug (a-z, 0-9, hyphens)')
+    .optional(),
   status: z.enum(AD_PLACEMENT_STATUSES).default('draft'),
   startsAt: z.coerce.date().optional(),
   endsAt: z.coerce.date().optional(),
@@ -669,7 +679,7 @@ export const newsletterCampaignCreate = z.object({
 /**
  * The `lists` app_setting (Upcoming enrichment): the "New" window in days. The
  * homepage rail sizes + pins moved to the homepage SECTIONS (Phase P S2), and
- * `pinPromotedGames` is gone for good (data lists are never sold) — STRICT, so
+ * `pinPromotedGames` is gone for good (paid items are labeled placements) — STRICT, so
  * a client still sending a removed field gets a 400 instead of a silent no-op.
  */
 export const listsConfigInput = z
@@ -703,7 +713,14 @@ export const homepageSectionPatch = z
       .object({ include: ruleSide.optional(), exclude: ruleSide.optional() })
       .strict()
       .optional(),
-    promotedPosition: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS).nullable().optional(),
+    /** Positions of PAID items (any section — owner decision); the count is the length. */
+    paidPositions: z
+      .array(z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS))
+      .max(HOMEPAGE_MAX_ITEMS)
+      .refine((a) => new Set(a).size === a.length, { message: 'each paid position once' })
+      .optional(),
+    /** Below this many qualifying items the section is hidden (null = never). */
+    minItems: z.number().int().min(1).max(HOMEPAGE_MAX_ITEMS).nullable().optional(),
   })
   .strict();
 export type HomepageSectionPatch = z.infer<typeof homepageSectionPatch>;
@@ -761,12 +778,16 @@ export const homepageSettingsPatch = z
   })
   .strict();
 
-/** A paid placement for a DISCOVERY section (only a game can be promoted). */
+/**
+ * A paid placement for a homepage section — any section, a game OR a story
+ * (owner decision). Labels are render-forced: "Promoted" (game), "Sponsored" (story).
+ */
 export const homepagePromotionCreate = z
   .object({
     advertiserName: z.string().trim().min(1).max(160),
     advertiserContact: z.string().trim().max(200).optional(),
-    gameSlug: pinSlug,
+    gameSlug: pinSlug.optional(),
+    topicSlug: pinSlug.optional(),
     headline: z.string().trim().min(1).max(120).optional(),
     startsAt: z.coerce.date().optional(),
     endsAt: z.coerce.date().optional(),
@@ -774,7 +795,10 @@ export const homepagePromotionCreate = z
     currency: z.string().trim().length(3).optional(),
     notes: z.string().trim().max(2000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((p) => Boolean(p.gameSlug) !== Boolean(p.topicSlug), {
+    message: 'promote a game (gameSlug) OR a story (topicSlug)',
+  });
 export type HomepagePromotionCreate = z.infer<typeof homepagePromotionCreate>;
 
 // ── Phase P S1: public display switches + review integrity ───────────────────

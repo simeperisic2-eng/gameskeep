@@ -177,8 +177,11 @@ export interface HomepageSectionItem {
   type: 'topic' | 'game';
   /** An editorial pin (never paid — pins carry no label). */
   pinned: boolean;
-  /** A PAID placement (discovery sections only): the label is render-forced. */
-  promoted: { advertiser: string } | null;
+  /**
+   * A PAID insert (any section — owner decision). Render-forced label: "Promoted"
+   * for a game, "Sponsored" for a story. Organic entries: null.
+   */
+  paid: { advertiser: string; kind: 'game' | 'story' } | null;
   /** Trending / By players: vs the previous window of equal length. */
   delta: Delta | null;
   /** The section's ranking metric (score / average players / mean / gap). */
@@ -752,10 +755,10 @@ export async function getHomepageData(): Promise<HomepageData> {
       items.push({
         type: it.type,
         pinned: it.pinned === true,
-        // Only a discovery section can carry a paid item (the job never writes
-        // one elsewhere; this is the read-side belt to that DB brace).
-        promoted:
-          sec.kind === 'discovery' && it.promoted ? { advertiser: it.promoted.advertiser } : null,
+        paid:
+          it.paid && (it.paid.kind === 'game' || it.paid.kind === 'story')
+            ? { advertiser: it.paid.advertiser, kind: it.paid.kind }
+            : null,
         delta: it.delta ?? null,
         metric: typeof it.metric === 'number' ? it.metric : null,
         topic,
@@ -773,10 +776,15 @@ export async function getHomepageData(): Promise<HomepageData> {
   }
 
   const sectionOf = (key: string): HomepageSection | undefined => out.find((x) => x.key === key);
+  // The rails below are ORGANIC views (paid inserts excluded — data views).
   const topicCardsOf = (key: string): TopicCard[] =>
-    (sectionOf(key)?.items ?? []).map((i) => i.topic).filter((t): t is TopicCard => t !== null);
+    (sectionOf(key)?.items ?? [])
+      .filter((i) => !i.paid)
+      .map((i) => i.topic)
+      .filter((t): t is TopicCard => t !== null);
   const rankedOf = (key: string): RankedGame[] =>
     (sectionOf(key)?.items ?? [])
+      .filter((i) => !i.paid)
       .map((i) => (i.game ? (rankedBySlug.get(i.game.slug) ?? null) : null))
       .filter((g): g is RankedGame => g !== null);
 

@@ -1,4 +1,6 @@
-import type { RankedGame } from '@/lib/public-api';
+import type { HomepageSectionItem, PublicDisplay, RankedGame } from '@/lib/public-api';
+import { HomeGameCard } from './HomeGameCard';
+import { TopicCard } from './TopicCard';
 import { scoreToTen } from '@/lib/format';
 
 /**
@@ -42,14 +44,19 @@ function ScoreCol({
   );
 }
 
+/** An organic focus game, or a paid insert (owner decision B) rendered with its label. */
+export type FocusEntry = { game: RankedGame } | { paidItem: HomepageSectionItem };
+
 export function GamesInFocus({
-  games,
+  entries,
+  display,
   title = 'Games in focus',
 }: {
-  games: RankedGame[];
+  entries: FocusEntry[];
+  display: PublicDisplay;
   title?: string;
 }): React.JSX.Element | null {
-  if (games.length === 0) return null;
+  if (entries.length === 0) return null;
   return (
     <section className="gk-container gk-section" aria-label="Games in focus">
       <div className="gk-section-head">
@@ -66,19 +73,33 @@ export function GamesInFocus({
       </div>
 
       <div className="gk-focus-grid">
-        {games.map((g) => (
-          <a key={g.slug} className="gk-gamecard" href={`/games/${g.slug}`}>
-            <h3 className="gk-gamecard-name">{g.name}</h3>
-            <div className="gk-scores">
-              <ScoreCol label="Critics" score={g.critics} />
-              <ScoreCol label="Community" score={g.community} />
-              <ScoreCol label="Our" score={g.our} amber />
-            </div>
-            {g.disconnectValue != null ? (
-              <Disconnect value={g.disconnectValue} band={g.disconnectBand} />
-            ) : null}
-          </a>
-        ))}
+        {entries.map((e, i) =>
+          'paidItem' in e ? (
+            e.paidItem.topic ? (
+              <TopicCard
+                key={`paid:${i}`}
+                topic={e.paidItem.topic}
+                display={display}
+                layout="stacked"
+                paid={e.paidItem.paid}
+              />
+            ) : (
+              <HomeGameCard key={`paid:${i}`} item={e.paidItem} />
+            )
+          ) : (
+            <a key={e.game.slug} className="gk-gamecard" href={`/games/${e.game.slug}`}>
+              <h3 className="gk-gamecard-name">{e.game.name}</h3>
+              <div className="gk-scores">
+                <ScoreCol label="Critics" score={e.game.critics} />
+                <ScoreCol label="Community" score={e.game.community} />
+                <ScoreCol label="Our" score={e.game.our} amber />
+              </div>
+              {e.game.disconnectValue != null ? (
+                <Disconnect value={e.game.disconnectValue} band={e.game.disconnectBand} />
+              ) : null}
+            </a>
+          ),
+        )}
       </div>
     </section>
   );

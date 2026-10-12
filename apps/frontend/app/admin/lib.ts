@@ -222,7 +222,10 @@ export interface HomepageSectionConfig {
   cardTagCount: number;
   rules: { include: HomepageRuleLists; exclude: HomepageRuleLists };
   ruleDimensions: HomepageRuleDimension[];
-  promotedPosition: number | null;
+  /** Positions of paid items, ascending (owner decision B: any list section). */
+  paidPositions: number[];
+  /** Below this many qualifying items the section is hidden (null = never). */
+  minItems: number | null;
   pins: {
     position: number;
     topicSlug: string | null;
@@ -234,6 +237,8 @@ export interface HomepageSectionConfig {
     advertiser: string;
     gameSlug: string | null;
     gameName: string | null;
+    topicSlug: string | null;
+    topicTitle: string | null;
     status: string;
     startsAt: string | null;
     endsAt: string | null;

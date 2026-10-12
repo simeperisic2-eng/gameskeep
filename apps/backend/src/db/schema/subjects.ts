@@ -1,4 +1,4 @@
-import { index, pgTable, text, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { index, pgTable, text, varchar } from 'drizzle-orm/pg-core';
 import { subjectTypeEnum } from './enums';
 import { primaryId, timestamps } from './_shared';
 
@@ -21,9 +21,5 @@ export const subjects = pgTable(
     description: text('description'),
     ...timestamps(),
   },
-  (t) => [
-    index('subjects_type_idx').on(t.type),
-    // Target of the promoted-game composite FK (S2: only a game can be promoted).
-    uniqueIndex('subjects_id_type').on(t.id, t.type),
-  ],
+  (t) => [index('subjects_type_idx').on(t.type)],
 );

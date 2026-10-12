@@ -6493,3 +6493,51 @@ a.gk-spot-cov-title:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ── Paid items anywhere (owner decision B) ─────────────────────────────────
+   The label is render-forced: "Promoted" (game) / "Sponsored" (story) plus the
+   advertiser. Styling only frames it — nothing here can hide it. */
+.gk-paid {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  font-size: 11.5px;
+  color: var(--gk-text-dim);
+  min-width: 0;
+}
+.gk-paid.is-compact .gk-slot-flag {
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 1px 6px;
+}
+.gk-paid-by {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.gk-topiccard.is-paid,
+.gk-rankcard.is-paid,
+.gk-srcrow.is-paid {
+  border-color: rgba(var(--gk-amber), 0.45);
+}
+.gk-topiccard.is-paid .gk-paid {
+  margin-bottom: var(--s2);
+}
+.gk-trend-item.is-paid .gk-trend-meta .gk-paid {
+  margin-right: var(--s1);
+}
+.gk-spot-body > .gk-paid {
+  margin-bottom: var(--s1);
+}
+.gk-rankcard-paid {
+  display: block;
+  margin-bottom: var(--s2);
+}
+.gk-srcrow.is-paid {
+  border-left: 3px solid rgba(var(--gk-amber), 0.9);
+}
+.gk-srcrow.is-paid .gk-srcrow-body {
+  grid-column: 1 / -1;
+}

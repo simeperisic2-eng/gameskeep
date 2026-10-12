@@ -10,8 +10,9 @@ import { actorOf, sendError } from './http';
  * the session/token-guarded admin scope, before the generic `/:resource` CRUD.
  * The `lists` section falls through to the ADMIN (40) default rank. Since Phase P
  * S2 the config holds only the "New" window — rail sizes + pins live on the
- * homepage sections (/admin/api/homepage); `pinPromotedGames` is removed (data
- * lists are never sold). Plus a leak-proof preview + the slot inventory.
+ * homepage sections (/admin/api/homepage); `pinPromotedGames` is removed (a paid
+ * item is a labeled placement at an admin-set position, never an unlabeled pin).
+ * Plus a leak-proof preview + the slot inventory.
  * Slot RECORDS are edited via the generic `ad-slots` CRUD; this ties the two
  * "configuration" concerns together in one Control Panel surface.
  */
@@ -60,7 +61,9 @@ export async function registerListAdminRoutes(admin: FastifyInstance): Promise<v
             items: sec.items.map((it) => ({
               label: it.topic?.title ?? it.game?.name ?? '?',
               pinned: it.pinned,
-              promoted: it.promoted?.advertiser ?? null,
+              promoted: it.paid
+                ? `${it.paid.kind === 'story' ? 'Sponsored' : 'Promoted'} · ${it.paid.advertiser}`
+                : null,
               delta: deltaLabel(it.delta),
             })),
           })),

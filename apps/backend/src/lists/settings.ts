@@ -8,8 +8,8 @@ import { writeAudit, type AuditActor } from '../admin/audit';
  * "New" (recently released) window, shared by the /upcoming page and the
  * homepage New section. The homepage rail sizes + pins it used to hold moved to
  * the homepage SECTIONS (Phase P S2; carried over once by
- * `ensureHomepageSections`), and `pinPromotedGames` was removed — data lists are
- * never sold. Clamp-with-defaults + audit-on-write, like every settings module.
+ * `ensureHomepageSections`), and `pinPromotedGames` was removed — a paid item is
+ * a labeled placement, never an unlabeled pin. Clamp-with-defaults + audit-on-write.
  */
 export interface ListsSettings {
   /** Upcoming enrichment: how many days back counts as "New" (recently released). */

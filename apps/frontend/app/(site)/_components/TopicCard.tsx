@@ -1,4 +1,5 @@
-import type { PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
+import type { PaidInfo, PublicDisplay, TopicCard as TopicCardData } from '@/lib/public-api';
+import { PaidLabel } from './PaidLabel';
 import { distinctSubtitle, relativeTime } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { BiasMini } from './BiasBar';
@@ -18,6 +19,7 @@ export function TopicCard({
   topic,
   display,
   layout = 'row',
+  paid = null,
 }: {
   topic: TopicCardData;
   display: PublicDisplay;
@@ -27,15 +29,18 @@ export function TopicCard({
    * no cramped two-line truncation beside a 172px cover.
    */
   layout?: 'row' | 'stacked';
+  /** A PAID insert (owner decision B) — the "Sponsored" label is render-forced. */
+  paid?: PaidInfo | null;
 }): React.JSX.Element {
   const time = relativeTime(topic.lastActivityAt);
   const hasCover = topic.primaryGame != null;
   const subtitle = distinctSubtitle(topic.title, topic.tldr);
   return (
     <article
-      className={`gk-topiccard${hasCover ? ' has-cover' : ''}${layout === 'stacked' ? ' is-stacked' : ''}`}
+      className={`gk-topiccard${hasCover ? ' has-cover' : ''}${layout === 'stacked' ? ' is-stacked' : ''}${paid ? ' is-paid' : ''}`}
     >
       <div className="gk-topiccard-body">
+        {paid ? <PaidLabel paid={paid} /> : null}
         <div className="gk-chips">
           {topic.typeLabel ? <span className="gk-chip amber">{topic.typeLabel}</span> : null}
           {topic.primaryGame ? (

@@ -13,8 +13,11 @@ export interface SnapshotItem {
   type: 'topic' | 'game';
   slug: string;
   pinned: boolean;
-  /** Paid placement (discovery sections only) — the label is render-forced. */
-  promoted: { advertiser: string } | null;
+  /**
+   * A PAID insert (any section — owner decision). The label is render-forced:
+   * "Promoted" for a game, "Sponsored" for a story. Organic entries: null.
+   */
+  paid: { advertiser: string; kind: 'game' | 'story' } | null;
   /** Trending / By players only. */
   delta: Delta | null;
   /** The ranking metric (Trending score / average players / mean score / gap). */

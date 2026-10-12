@@ -3,7 +3,7 @@ import {
   getHomepage,
   type HomepageData,
   type HomepageSection,
-  type RankedGame,
+  type HomepageSectionItem,
   type TopicCard as TopicCardData,
 } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
@@ -13,13 +13,14 @@ import { TrendBar } from './_components/TrendBar';
 import { TopicCard } from './_components/TopicCard';
 import { MainFeed } from './_components/MainFeed';
 import { LatestNews } from './_components/LatestNews';
-import { GamesInFocus } from './_components/GamesInFocus';
+import { GamesInFocus, type FocusEntry } from './_components/GamesInFocus';
 import { GenreRail } from './_components/GenreRail';
 import { BriefingStrip } from './_components/BriefingStrip';
 import { CommunityTeaser } from './_components/CommunityTeaser';
 import { Newsletter } from './_components/Newsletter';
 import { AdSlot } from './_components/AdSlot';
 import { HomeGameCard } from './_components/HomeGameCard';
+import { PaidLabel } from './_components/PaidLabel';
 
 // Trending is live state + server-rotated — render per request (also guarantees
 // crawlers get full SSR content, not a cached shell).
@@ -52,23 +53,48 @@ function rotationIndex(length: number): number {
   return length < 2 ? 0 : Math.floor(Date.now() / ROTATE_MS) % length;
 }
 
+/**
+ * A Top rated card. Organic cards carry their rank; a PAID insert (owner decision
+ * B) carries the render-forced label instead of a number and shows its TRUE score
+ * — payment never changes data.
+ */
 function RankCard({
-  game,
+  item,
   rank,
-  metric,
 }: {
-  game: RankedGame;
-  rank: number;
-  metric: number | null;
-}): React.JSX.Element {
+  item: HomepageSectionItem;
+  rank: number | null;
+}): React.JSX.Element | null {
+  const head = item.paid ? (
+    <span className="gk-rankcard-paid">
+      <PaidLabel paid={item.paid} />
+    </span>
+  ) : (
+    <span className="gk-rankcard-rank">{rank}</span>
+  );
+  if (item.topic) {
+    return (
+      <a
+        className={`gk-rankcard${item.paid ? ' is-paid' : ''}`}
+        href={`/topics/${item.topic.slug}`}
+      >
+        {head}
+        <span className="gk-rankcard-name">{item.topic.title}</span>
+        <span className="gk-rankcard-sub">Story</span>
+      </a>
+    );
+  }
+  const game = item.game;
+  if (!game) return null;
   // Top rated ranks on the critic + community layers only (S5 decision, applied
   // in S2) — the card shows exactly the figure it is ranked by.
   const layers = [game.critics, game.community].filter((n): n is number => n != null);
-  const mean = metric ?? (layers.length ? layers.reduce((a, b) => a + b, 0) / layers.length : null);
+  const mean =
+    item.metric ?? (layers.length ? layers.reduce((a, b) => a + b, 0) / layers.length : null);
   const headline = scoreToTen(mean);
   return (
-    <a className="gk-rankcard" href={`/games/${game.slug}`}>
-      <span className="gk-rankcard-rank">{rank}</span>
+    <a className={`gk-rankcard${item.paid ? ' is-paid' : ''}`} href={`/games/${game.slug}`}>
+      {head}
       <span className="gk-rankcard-name">{game.name}</span>
       <span className="gk-rankcard-row">
         <span className="gk-score">{headline ?? '—'}</span>
@@ -78,6 +104,10 @@ function RankCard({
     </a>
   );
 }
+
+/** Stable, duplicate-safe React key (a paid item may also rank organically). */
+const itemKey = (it: HomepageSectionItem, i: number): string =>
+  `${it.paid ? 'paid' : 'org'}:${it.topic?.slug ?? it.game?.slug ?? ''}:${i}`;
 
 const playersLabel = (n: number | null): string | null =>
   n == null ? null : `~${n.toLocaleString('en-US')} playing (Steam avg)`;
@@ -89,7 +119,6 @@ function renderSection(
   prev: HomepageSection | undefined,
   data: HomepageData,
 ): React.JSX.Element | null {
-  const topics = sec.items.map((i) => i.topic).filter((t): t is TopicCardData => t !== null);
   switch (sec.key) {
     case 'briefing':
       return (
@@ -99,8 +128,9 @@ function renderSection(
         </section>
       );
     case 'trending': {
-      if (topics.length === 0) return null;
-      const secondary = topics.slice(1, 4);
+      const rows = sec.items.filter((i) => i.topic || i.game);
+      if (rows.length === 0) return null;
+      const secondary = sec.items.filter((i) => i.topic).slice(1, 4);
       return (
         <section className="gk-container gk-hero" aria-label={sec.title}>
           <Hero
@@ -108,12 +138,18 @@ function renderSection(
             windowHours={sec.windowHours}
             title={sec.title}
             display={data.display}
-            initial={rotationIndex(topics.length)}
+            initial={rotationIndex(rows.length)}
           />
           {secondary.length > 0 && (
             <div className="gk-hero-secondary">
-              {secondary.map((t) => (
-                <TopicCard key={t.id} topic={t} display={data.display} layout="stacked" />
+              {secondary.map((it, i) => (
+                <TopicCard
+                  key={itemKey(it, i)}
+                  topic={it.topic!}
+                  display={data.display}
+                  layout="stacked"
+                  paid={it.paid}
+                />
               ))}
             </div>
           )}
@@ -133,7 +169,7 @@ function renderSection(
             </a>
           </div>
           <div className="gk-portal">
-            <MainFeed topics={topics} display={data.display} />
+            <MainFeed items={sec.items} display={data.display} />
             <aside className="gk-side">
               <LatestNews articles={data.latest} />
               <AdSlot slotKey="home" />
@@ -142,21 +178,21 @@ function renderSection(
         </section>
       );
     case 'focus': {
-      const games = sec.items
-        .map((i) => (i.game ? data.controversial.find((g) => g.slug === i.game!.slug) : null))
-        .filter((g): g is RankedGame => Boolean(g));
-      return <GamesInFocus games={games} title={sec.title} />;
+      const entries = sec.items
+        .map((i): FocusEntry | null => {
+          if (i.paid) return { paidItem: i };
+          const game = i.game ? data.controversial.find((g) => g.slug === i.game!.slug) : null;
+          return game ? { game } : null;
+        })
+        .filter((e): e is FocusEntry => e !== null);
+      return <GamesInFocus entries={entries} display={data.display} title={sec.title} />;
     }
     case 'top_rated': {
-      const rows = sec.items
-        .map((i) => ({
-          item: i,
-          game: i.game ? data.topRated.find((g) => g.slug === i.game!.slug) : undefined,
-        }))
-        .filter((r): r is { item: (typeof sec.items)[number]; game: RankedGame } =>
-          Boolean(r.game),
-        );
+      const rows = sec.items.filter((i) => i.game || (i.paid && i.topic));
       if (rows.length === 0) return null;
+      // Organic cards keep their numbers; paid inserts are never numbered.
+      let n = 0;
+      const ranks = rows.map((r) => (r.paid ? null : (n += 1)));
       return (
         <section className="gk-container gk-section-tight" aria-label={sec.title}>
           <div className="gk-section-head">
@@ -170,7 +206,7 @@ function renderSection(
           </div>
           <div className="gk-rail">
             {rows.map((r, i) => (
-              <RankCard key={r.game.slug} game={r.game} rank={i + 1} metric={r.item.metric} />
+              <RankCard key={itemKey(r, i)} item={r} rank={ranks[i] ?? null} />
             ))}
           </div>
         </section>
@@ -220,18 +256,20 @@ function renderSection(
             {sec.items.map((item, i) =>
               item.topic ? (
                 <TopicCard
-                  key={`t:${item.topic.slug}`}
+                  key={itemKey(item, i)}
                   topic={item.topic}
                   display={data.display}
                   layout="stacked"
+                  paid={item.paid}
                 />
               ) : (
                 <HomeGameCard
-                  key={`g:${item.game?.slug ?? i}`}
+                  key={itemKey(item, i)}
                   item={item}
                   windowHours={sec.windowHours}
                   metricLabel={sec.key === 'by_players' ? playersLabel(item.metric) : null}
-                  ourPick={sec.key === 'our_picks'}
+                  // A paid item inside Our picks shows its paid label, never "Our pick".
+                  ourPick={sec.key === 'our_picks' && !item.paid}
                 />
               ),
             )}
@@ -247,7 +285,10 @@ export default async function HomePage(): Promise<React.JSX.Element> {
   const trendingTopics =
     data.sections
       .find((s) => s.key === 'trending')
-      ?.items.map((i) => i.topic)
+      // The quick-access strip is organic only (a paid story is labeled in the
+      // Trending section itself and never appears unlabeled here).
+      ?.items.filter((i) => !i.paid)
+      .map((i) => i.topic)
       .filter((t): t is TopicCardData => t !== null) ?? [];
 
   const jsonLd = {

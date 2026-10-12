@@ -102,7 +102,7 @@ describe('feed rules', () => {
   });
 });
 
-describe('composeSection (pins + auto + the one Promoted item)', () => {
+describe('composeSection (pins + auto + paid inserts)', () => {
   const auto = ['a', 'b', 'c', 'd', 'e'];
   it('pins hold their explicit position; auto fills the rest', () => {
     const out = composeSection({
@@ -112,7 +112,7 @@ describe('composeSection (pins + auto + the one Promoted item)', () => {
       auto,
     });
     expect(out.map((o) => o.ref)).toEqual(['a', 'b', 'p', 'c']);
-    expect(out[2]).toEqual({ ref: 'p', pinned: true, promoted: false });
+    expect(out[2]).toEqual({ ref: 'p', pinned: true, paid: null });
   });
   it('a pinned item keeps its position whatever the auto order does', () => {
     const pins = [{ position: 2, ref: 'p' }];
@@ -140,16 +140,42 @@ describe('composeSection (pins + auto + the one Promoted item)', () => {
       'b',
     ]);
   });
-  it('the Promoted item takes its position (moved if already listed) and is the only paid entry', () => {
+  it('paid items are INSERTED at their positions; the organic list is untouched (owner decision B)', () => {
+    const organic = composeSection({ mode: 'pins_auto', itemCount: 3, pins: [], auto });
     const out = composeSection({
       mode: 'pins_auto',
       itemCount: 3,
       pins: [],
       auto,
-      promoted: { position: 2, ref: 'd' },
+      paid: { positions: [4, 2], refs: ['a', 'x'] },
     });
-    expect(out.map((o) => o.ref)).toEqual(['a', 'd', 'b']);
-    expect(out.filter((o) => o.promoted).map((o) => o.ref)).toEqual(['d']);
+    // positions sort ascending → first booked (a) at #2, second (x) at #4
+    expect(out.map((o) => o.ref)).toEqual(['a', 'a', 'b', 'x', 'c']);
+    expect(out.filter((o) => o.paid !== null).map((o) => [o.ref, o.paid])).toEqual([
+      ['a', 0],
+      ['x', 1],
+    ]);
+    // the organic entries — same refs, same order, nothing removed or deduped
+    expect(out.filter((o) => o.paid === null)).toEqual(organic);
+  });
+  it('extra paid items beyond the positions are not shown; no positions → no paid items', () => {
+    const out = composeSection({
+      mode: 'auto',
+      itemCount: 2,
+      pins: [],
+      auto,
+      paid: { positions: [1], refs: ['p', 'q'] },
+    });
+    expect(out.map((o) => o.ref)).toEqual(['p', 'a', 'b']);
+    expect(
+      composeSection({
+        mode: 'auto',
+        itemCount: 2,
+        pins: [],
+        auto,
+        paid: { positions: [], refs: ['p'] },
+      }).map((o) => o.ref),
+    ).toEqual(['a', 'b']);
   });
   it('junk positions are ignored; the count is clamped', () => {
     const out = composeSection({
@@ -182,22 +208,22 @@ describe('validateSectionPatch (per kind)', () => {
     }
     throw new Error('expected a rejection');
   };
-  it('a data section can never get a Promoted position', () => {
+  it('any section with a list takes paid positions (owner decision B); a block has none', () => {
     for (const key of [
       'trending',
       'by_players',
       'top_rated',
       'our_picks',
       'latest',
-      'focus',
+      'featured',
     ] as const) {
-      expect(rejects(() => validateSectionPatch(sec(key), { promotedPosition: 1 }))).toMatch(
-        /never shown/,
-      );
+      expect(validateSectionPatch(sec(key), { paidPositions: [5, 2, 5] })).toEqual({
+        paidPositions: [2, 5],
+      });
     }
-    expect(validateSectionPatch(sec('featured'), { promotedPosition: 2 })).toEqual({
-      promotedPosition: 2,
-    });
+    expect(rejects(() => validateSectionPatch(sec('genres'), { paidPositions: [1] }))).toMatch(
+      /block/,
+    );
   });
   it('Our picks is manual only; Δ windows only where a Δ shows', () => {
     expect(rejects(() => validateSectionPatch(sec('our_picks'), { mode: 'auto' }))).toMatch(

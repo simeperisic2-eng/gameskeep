@@ -68,3 +68,8 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
 export async function DELETE(req: Request, ctx: Ctx): Promise<Response> {
   return relay(req, ctx.params);
 }
+// Phase P S2 follow-up: the homepage admin saves order + pins with PUT. Without
+// this export Next answered 405 (empty body) and "Save order" failed in the UI.
+export async function PUT(req: Request, ctx: Ctx): Promise<Response> {
+  return relay(req, ctx.params);
+}

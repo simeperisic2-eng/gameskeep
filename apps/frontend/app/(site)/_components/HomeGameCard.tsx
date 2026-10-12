@@ -2,6 +2,7 @@ import type { HomepageSectionItem } from '@/lib/public-api';
 import { scoreToTen } from '@/lib/format';
 import { CoverArt } from './CoverArt';
 import { DeltaChip } from './DeltaChip';
+import { PaidLabel } from './PaidLabel';
 
 const STATUS_LABEL: Record<string, string> = {
   announced: 'Announced',
@@ -26,10 +27,10 @@ function releaseLabel(date: string | null): string | null {
 
 /**
  * A game in a homepage section (Phase P S2). The PAID label is render-forced: a
- * promoted item always shows "Promoted · <advertiser>" — there is no prop or
- * setting that hides it (only discovery sections ever carry one). "Our pick" is
- * the neutral, never-sold team label. Cover and title are separate links (no
- * nested anchors).
+ * paid item always shows "Promoted · <advertiser>" — no prop or setting hides it
+ * (owner decision B: any section may carry paid items). "Our pick" is the
+ * neutral team label for ORGANIC picks only — a paid item inside Our picks shows
+ * the paid label, never "Our pick". Cover and title are separate links.
  */
 export function HomeGameCard({
   item,
@@ -49,11 +50,10 @@ export function HomeGameCard({
   const community = scoreToTen(g.community);
   const when = g.status === 'released' ? null : releaseLabel(g.releaseDate);
   return (
-    <article className={`gk-hgcard${item.promoted ? ' is-promoted' : ''}`}>
-      {item.promoted ? (
-        <div className="gk-hgcard-flag" aria-label="Promoted content">
-          <span className="gk-slot-flag">Promoted</span>
-          <span className="gk-hgcard-flag-by">Paid promotion · {item.promoted.advertiser}</span>
+    <article className={`gk-hgcard${item.paid ? ' is-promoted' : ''}`}>
+      {item.paid ? (
+        <div className="gk-hgcard-flag">
+          <PaidLabel paid={item.paid} />
         </div>
       ) : ourPick ? (
         <div className="gk-hgcard-pick">Our pick</div>

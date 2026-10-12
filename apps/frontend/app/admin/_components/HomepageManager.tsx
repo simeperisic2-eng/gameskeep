@@ -12,11 +12,12 @@ import type {
 
 /**
  * Homepage sections (Phase P S2). Order, enable, mode, item count, Δ window,
- * card tags, feed rules, pins and — on DISCOVERY sections only — the one paid
- * Promoted item and its position. Data sections (Trending, By players, Top rated,
- * Our picks, Latest, Games in focus) are never sold: the server and the DB both
- * reject a placement there. Every save is audited and refreshes the stored
- * snapshots (the homepage reads only those).
+ * card tags, feed rules, pins, minimum items and PAID placements. Owner decision
+ * B: any section with a list can carry paid items (games or stories) at the
+ * positions set here. Two things never change: every paid item renders its label
+ * ("Promoted" for a game, "Sponsored" for a story), and a paid item is INSERTED —
+ * the organic list and everyone's numbers stay exactly as computed. Every save is
+ * audited and refreshes the stored snapshots (the homepage reads only those).
  */
 type Draft = Pick<
   HomepageSectionConfig,
@@ -27,12 +28,13 @@ type Draft = Pick<
   | 'deltaWindowHours'
   | 'cardTagFamilies'
   | 'cardTagCount'
-  | 'promotedPosition'
-> & { include: Record<string, string>; exclude: Record<string, string> };
+  | 'minItems'
+> & { paidPositions: string; include: Record<string, string>; exclude: Record<string, string> };
 
+// The section kind is an informational label only (owner decision B).
 const KIND_HINT: Record<HomepageSectionConfig['kind'], string> = {
-  data: 'data — never sold',
-  discovery: 'discovery — may hold one Promoted item',
+  data: 'data',
+  discovery: 'discovery',
   block: 'block',
 };
 const MODE_LABEL = { auto: 'Auto', manual: 'Manual (pins only)', pins_auto: 'Pins + auto' };
@@ -63,6 +65,8 @@ async function send(
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  // An empty / non-JSON error body still says WHICH failure it was.
+  if (!res.ok && !json.message && !json.issues) json.message = `HTTP ${res.status}`;
   return { ok: res.ok, json };
 }
 const errorOf = (j: Record<string, unknown>): string => {
@@ -82,7 +86,8 @@ function draftOf(s: HomepageSectionConfig): Draft {
     deltaWindowHours: s.deltaWindowHours,
     cardTagFamilies: s.cardTagFamilies,
     cardTagCount: s.cardTagCount,
-    promotedPosition: s.promotedPosition,
+    minItems: s.minItems,
+    paidPositions: s.paidPositions.join(', '),
     include: side(s.rules.include),
     exclude: side(s.rules.exclude),
   };
@@ -108,7 +113,8 @@ function SectionEditor({
   );
   const [promo, setPromo] = useState({
     advertiserName: '',
-    gameSlug: '',
+    kind: section.items === 'topic' ? 'story' : 'game',
+    slug: '',
     startsAt: '',
     endsAt: '',
   });
@@ -131,7 +137,16 @@ function SectionEditor({
       if (section.ruleDimensions.length) body.rules = rules;
     } else if (section.key === 'genres') body.itemCount = d.itemCount;
     if (section.delta) body.deltaWindowHours = d.deltaWindowHours;
-    if (section.kind === 'discovery') body.promotedPosition = d.promotedPosition;
+    if (!isBlock) {
+      const positions = textList(d.paidPositions).map(Number);
+      if (positions.some((n) => !Number.isInteger(n) || n < 1 || n > 24)) {
+        setBusy(false);
+        flash('Save failed: paid positions are whole numbers from 1 to 24, comma-separated.');
+        return;
+      }
+      body.paidPositions = positions;
+      body.minItems = d.minItems;
+    }
     const r = await send(`/admin/api/homepage/sections/${section.key}`, 'PATCH', body);
     setBusy(false);
     flash(
@@ -161,10 +176,9 @@ function SectionEditor({
 
   async function createPromotion(): Promise<void> {
     setBusy(true);
-    const body: Record<string, unknown> = {
-      advertiserName: promo.advertiserName,
-      gameSlug: promo.gameSlug.trim(),
-    };
+    const body: Record<string, unknown> = { advertiserName: promo.advertiserName };
+    if (promo.kind === 'story') body.topicSlug = promo.slug.trim();
+    else body.gameSlug = promo.slug.trim();
     if (promo.startsAt) body.startsAt = promo.startsAt;
     if (promo.endsAt) body.endsAt = promo.endsAt;
     const r = await send(`/admin/api/homepage/sections/${section.key}/promotions`, 'POST', body);
@@ -272,21 +286,36 @@ function SectionEditor({
             </label>
           </>
         )}
-        {section.kind === 'discovery' && (
-          <label className="gk-nl-field">
-            <span>
-              Promoted position <span className="gk-cp-dim">· empty = no paid item here</span>
-            </span>
-            <input
-              type="number"
-              min={1}
-              max={24}
-              value={d.promotedPosition == null ? '' : String(d.promotedPosition)}
-              onChange={(e) =>
-                setD({ ...d, promotedPosition: e.target.value ? Number(e.target.value) : null })
-              }
-            />
-          </label>
+        {!isBlock && (
+          <>
+            <label className="gk-nl-field">
+              <span>
+                Paid positions{' '}
+                <span className="gk-cp-dim">
+                  · comma-separated, e.g. 2, 6 · empty = no paid items · first booked fills the
+                  first position
+                </span>
+              </span>
+              <input
+                value={d.paidPositions}
+                onChange={(e) => setD({ ...d, paidPositions: e.target.value })}
+              />
+            </label>
+            <label className="gk-nl-field">
+              <span>
+                Minimum items <span className="gk-cp-dim">· fewer qualify → section hidden</span>
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={24}
+                value={d.minItems == null ? '' : String(d.minItems)}
+                onChange={(e) =>
+                  setD({ ...d, minItems: e.target.value ? Number(e.target.value) : null })
+                }
+              />
+            </label>
+          </>
         )}
         {section.ruleDimensions.map((dim) => (
           <div key={dim} className="gk-hp-rule">
@@ -396,10 +425,11 @@ function SectionEditor({
         </div>
       )}
 
-      {section.kind === 'discovery' && (
+      {!isBlock && (
         <div className="gk-hp-sub">
           <h3 className="gk-lists-preview-h">
-            Paid placements · games only · always labeled “Promoted”
+            Paid placements · always labeled (game “Promoted”, story “Sponsored”) · inserted at the
+            paid positions, never changing the organic list
           </h3>
           {section.promotions.length === 0 ? (
             <p className="gk-cp-dim">None yet.</p>
@@ -410,7 +440,12 @@ function SectionEditor({
                   <tr key={p.id}>
                     <td>
                       <b>{p.advertiser}</b>
-                      <span className="gk-cp-dim"> · {p.gameName ?? p.gameSlug ?? '—'}</span>
+                      <span className="gk-cp-dim">
+                        {' · '}
+                        {p.topicSlug
+                          ? `story ${p.topicTitle ?? p.topicSlug}`
+                          : `game ${p.gameName ?? p.gameSlug ?? '—'}`}
+                      </span>
                     </td>
                     <td>
                       <span
@@ -454,10 +489,20 @@ function SectionEditor({
               />
             </label>
             <label className="gk-nl-field">
-              <span>Game slug</span>
+              <span>Promotes</span>
+              <select
+                value={promo.kind}
+                onChange={(e) => setPromo({ ...promo, kind: e.target.value })}
+              >
+                <option value="game">a game (“Promoted”)</option>
+                <option value="story">a story (“Sponsored”)</option>
+              </select>
+            </label>
+            <label className="gk-nl-field">
+              <span>{promo.kind === 'story' ? 'Story slug' : 'Game slug'}</span>
               <input
-                value={promo.gameSlug}
-                onChange={(e) => setPromo({ ...promo, gameSlug: e.target.value })}
+                value={promo.slug}
+                onChange={(e) => setPromo({ ...promo, slug: e.target.value })}
               />
             </label>
             <label className="gk-nl-field">
@@ -760,9 +805,7 @@ export function HomepageManager({
                     <li key={n}>
                       {it.label}
                       {it.pinned ? <span className="gk-lists-pin">pinned</span> : null}
-                      {it.promoted ? (
-                        <span className="gk-lists-pin">Promoted · {it.promoted}</span>
-                      ) : null}
+                      {it.promoted ? <span className="gk-lists-pin">{it.promoted}</span> : null}
                       {it.delta ? <span className="gk-cp-dim"> {it.delta}</span> : null}
                     </li>
                   ))}

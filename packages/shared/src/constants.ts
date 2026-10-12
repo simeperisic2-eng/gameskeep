@@ -571,11 +571,11 @@ export type UnmatchedStatus = (typeof UNMATCHED_STATUSES)[number];
 
 // ── Homepage sections (Phase P S2) ────────────────────────────────────────────
 /**
- * Section kinds. DATA sections (Trending, By players, Top rated, Our picks, the
- * latest-stories feed, Games in focus) are NEVER sold: a paid placement cannot
- * target one — enforced at the service AND the DB (composite FK + CHECK).
- * DISCOVERY sections (New, Upcoming, Featured) may hold at most one Promoted
- * item at an admin-chosen position, always labeled. BLOCKS carry no items.
+ * Section kinds — an INFORMATIONAL label since the owner decision that any list
+ * may carry paid placements (data = ranked from our data; discovery = curated
+ * discovery; block = no items). What stays fixed in code: every paid item carries
+ * the render-forced label ("Promoted" game / "Sponsored" story), and payment
+ * never changes data (paid items are inserted; the organic list is untouched).
  */
 export const HOMEPAGE_SECTION_KINDS = ['data', 'discovery', 'block'] as const;
 export type HomepageSectionKind = (typeof HOMEPAGE_SECTION_KINDS)[number];
@@ -600,14 +600,17 @@ export interface HomepageSectionDef {
     mode: HomepageSectionMode;
     itemCount: number;
     deltaWindowHours: number | null;
-    promotedPosition: number | null;
+    /** Positions of paid items (owner decision: any list; the count is the length). */
+    paidPositions: readonly number[];
+    /** Below this many qualifying items the section is hidden (null = never). */
+    minItems: number | null;
   };
 }
 
 /**
- * The fixed section catalogue: the KEY is the stable identity and decides the
- * kind (a CHECK in the DB mirrors this map, so no edit can turn a data section
- * into a sellable one). Titles, order, counts, modes, rules and pins are data.
+ * The fixed section catalogue: the KEY is the stable identity (its kind label is
+ * mirrored by a DB CHECK). Titles, order, counts, modes, rules, pins and paid
+ * positions are admin data.
  */
 export const HOMEPAGE_SECTIONS = {
   briefing: {
@@ -621,7 +624,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 1,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   trending: {
@@ -635,7 +639,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 8,
       deltaWindowHours: 48,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: 3,
     },
   },
   latest: {
@@ -649,7 +654,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 18,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   featured: {
@@ -663,7 +669,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'manual',
       itemCount: 3,
       deltaWindowHours: null,
-      promotedPosition: 2,
+      paidPositions: [2],
+      minItems: null,
     },
   },
   by_players: {
@@ -677,7 +684,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 6,
       deltaWindowHours: 168,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   new: {
@@ -691,7 +699,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 6,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   our_picks: {
@@ -705,7 +714,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'manual',
       itemCount: 6,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   focus: {
@@ -719,7 +729,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 3,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   top_rated: {
@@ -733,7 +744,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 6,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   upcoming: {
@@ -747,7 +759,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 6,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   genres: {
@@ -761,7 +774,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 12,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   community: {
@@ -775,7 +789,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 1,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
   newsletter: {
@@ -789,7 +804,8 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'auto',
       itemCount: 1,
       deltaWindowHours: null,
-      promotedPosition: null,
+      paidPositions: [],
+      minItems: null,
     },
   },
 } as const satisfies Record<string, HomepageSectionDef>;

@@ -2,22 +2,16 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
-  foreignKey,
   index,
   integer,
   pgTable,
+  smallint,
   text,
   timestamp,
-  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import {
-  adPlacementStatusEnum,
-  adSlotFallbackEnum,
-  homepageSectionKindEnum,
-  subjectTypeEnum,
-} from './enums';
+import { adPlacementStatusEnum, adSlotFallbackEnum } from './enums';
 import { homepageSections } from './homepage';
 import { subjects } from './subjects';
 import { primaryId, timestamps } from './_shared';
@@ -45,6 +39,9 @@ export const adSlots = pgTable(
     fallback: adSlotFallbackEnum('fallback').notNull().default('ad'),
     isActive: boolean('is_active').notNull().default(true),
     sort: integer('sort').notNull().default(0),
+    /** For a slot INSIDE a list (e.g. the story coverage list): the 1-based row
+     *  where its paid item is inserted (admin-set; null = not a list slot). */
+    listPosition: smallint('list_position'),
     ...timestamps(),
   },
   (t) => [index('ad_slots_page_idx').on(t.page)],
@@ -63,12 +60,11 @@ export const adPlacements = pgTable(
   'ad_placements',
   {
     id: primaryId(),
-    // TARGET: exactly one of a page slot or a homepage DISCOVERY section (S2).
+    // TARGET: exactly one of a page slot or a homepage section (any section —
+    // owner decision; the label stays render-forced and payment never changes data).
     slotId: uuid('slot_id').references(() => adSlots.id, { onDelete: 'cascade' }),
-    sectionId: uuid('section_id'),
-    /** Always 'discovery' when set — with the composite FK this makes a data
-     *  section unreferenceable: the DB rejects selling it (S2). */
-    sectionKind: homepageSectionKindEnum('section_kind'),
+    // no cascade: a section is never deleted, and its billing records must not be
+    sectionId: uuid('section_id').references(() => homepageSections.id),
     advertiserName: varchar('advertiser_name', { length: 160 }).notNull(),
     advertiserContact: varchar('advertiser_contact', { length: 200 }),
     // ── UGC creative (escaped on render, validated on input) ──
@@ -80,9 +76,9 @@ export const adPlacements = pgTable(
     promotedSubjectId: uuid('promoted_subject_id').references(() => subjects.id, {
       onDelete: 'set null',
     }),
-    /** 'game' (the default) — with the composite FK only a GAME can be promoted;
-     *  stories are never promotable anywhere (S2). Unchecked while the id is null. */
-    promotedSubjectType: subjectTypeEnum('promoted_subject_type').default('game'),
+    /** A promoted STORY (by slug — the identity a re-cluster keeps). Labeled
+     *  "Sponsored"; a promoted game is labeled "Promoted" (render-forced). */
+    promotedTopicSlug: varchar('promoted_topic_slug', { length: 200 }),
     status: adPlacementStatusEnum('status').notNull().default('draft'),
     startsAt: timestamp('starts_at', { withTimezone: true }),
     endsAt: timestamp('ends_at', { withTimezone: true }),
@@ -101,32 +97,16 @@ export const adPlacements = pgTable(
     index('ad_placements_status_idx').on(t.status),
     index('ad_placements_subject_idx').on(t.promotedSubjectId),
     index('ad_placements_section_idx').on(t.sectionId),
-    // Paid placements may target DISCOVERY sections only: (section, kind) must
-    // exist in homepage_sections AND kind must be 'discovery'.
-    foreignKey({
-      name: 'ad_placements_section_discovery_fk',
-      columns: [t.sectionId, t.sectionKind],
-      foreignColumns: [homepageSections.id, homepageSections.kind],
-    }), // no cascade: a section is never deleted, and its billing records must not be
-    check(
-      'ad_placements_section_kind_discovery',
-      sql`section_kind IS NULL OR section_kind = 'discovery'`,
-    ),
-    check('ad_placements_section_pair', sql`(section_id IS NULL) = (section_kind IS NULL)`),
     check('ad_placements_one_target', sql`num_nonnulls(slot_id, section_id) = 1`),
-    // Only a GAME can be promoted: (subject, type) must exist with type = game.
-    foreignKey({
-      name: 'ad_placements_promoted_game_fk',
-      columns: [t.promotedSubjectId, t.promotedSubjectType],
-      foreignColumns: [subjects.id, subjects.type],
-    }).onDelete('set null'),
+    // A placement promotes at most one thing (a game OR a story); a section
+    // placement must promote one (it renders as that item's card).
     check(
-      'ad_placements_promoted_game',
-      sql`promoted_subject_type IS NULL OR promoted_subject_type = 'game'`,
+      'ad_placements_one_promoted',
+      sql`num_nonnulls(promoted_subject_id, promoted_topic_slug) <= 1`,
     ),
-    // At most ONE active Promoted item per discovery section.
-    uniqueIndex('ad_placements_one_active_per_section')
-      .on(t.sectionId)
-      .where(sql`section_id IS NOT NULL AND status = 'active'`),
+    check(
+      'ad_placements_section_item',
+      sql`section_id IS NULL OR num_nonnulls(promoted_subject_id, promoted_topic_slug) = 1`,
+    ),
   ],
 );

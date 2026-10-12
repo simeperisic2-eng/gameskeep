@@ -141,6 +141,20 @@
       "when": 1791734323518,
       "tag": "0019_s2_homepage_sections",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791747885491,
+      "tag": "0020_paid_anywhere_add",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791747908925,
+      "tag": "0021_paid_anywhere_drop",
+      "breakpoints": true
     }
   ]
 }

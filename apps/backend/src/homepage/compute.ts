@@ -41,7 +41,8 @@ import {
 
 /**
  * The homepage snapshots job (Phase P S2). Ranks every enabled section by its
- * rule, applies pins and (discovery only) the one Promoted item, computes the Δ
+ * rule, applies pins, INSERTS the paid items at their positions (any section;
+ * the organic list is untouched — payment never changes data), computes the Δ
  * windows, and STORES the result — the homepage request only reads snapshots.
  * Runs off the request path: on its own queue (config saves, periodic refresh,
  * boot) and inline at the end of the ingest / rating / reputation jobs so a
@@ -397,7 +398,7 @@ export async function computeHomepageSnapshots(now: Date = new Date()): Promise<
           settings,
           newWindowDays: lists.newWindowDays,
           pins: pins.get(s.id) ?? [],
-          promotion: s.kind === 'discovery' ? (promotions.get(s.id) ?? null) : null,
+          paid: promotions.get(s.id) ?? [],
           topicRows,
           topicBySlug,
           engagement,
@@ -408,9 +409,13 @@ export async function computeHomepageSnapshots(now: Date = new Date()): Promise<
           nowMs,
         })
       : { key, windowHours: s.deltaWindowHours, items: [] };
+    // ORGANIC refs only: a paid insert must never shift what a dependent section
+    // excludes (payment never changes data — owner decision B).
     composedRefs.set(
       key,
-      payload.items.map((i) => `${i.type === 'topic' ? 't' : 'g'}:${i.slug}`),
+      payload.items
+        .filter((i) => !i.paid)
+        .map((i) => `${i.type === 'topic' ? 't' : 'g'}:${i.slug}`),
     );
     written.push(payload);
   }
@@ -431,7 +436,8 @@ interface BuildCtx {
   settings: HomepageSettings;
   newWindowDays: number;
   pins: { position: number; ref: string; type: 'topic' | 'game' }[];
-  promotion: { slug: string; advertiser: string } | null;
+  /** The section's live paid placements, booking order (first booked → first position). */
+  paid: { ref: string; advertiser: string; kind: 'game' | 'story' }[];
   topicRows: Map<string, TopicRow>;
   topicBySlug: Map<string, TopicRow>;
   engagement: Awaited<ReturnType<typeof loadEngagement>>;
@@ -459,7 +465,7 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
   switch (s.key) {
     case 'trending': {
       const w = ctx.settings.trendingWeights;
-      const scored = [...ctx.topicRows.values()].filter(topicPass).map((t) => {
+      const scored = [...ctx.topicRows.values()].map((t) => {
         const e = ctx.engagement.get(t.id);
         const now = trendingScore(
           {
@@ -486,6 +492,7 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       });
       // This window's score first; quiet stories fill the rest by recency.
       auto = scored
+        .filter((x) => topicPass(x.t))
         .sort((a, b) => b.now - a.now || b.t.lastActivity - a.t.lastActivity)
         .map((x) => `t:${x.t.slug}`);
       break;
@@ -500,13 +507,13 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       break;
     }
     case 'focus': {
+      for (const g of ctx.gameRows) {
+        if (g.disconnect != null) metrics.set(`g:${g.slug}`, { delta: null, metric: g.disconnect });
+      }
       auto = ctx.gameRows
         .filter((g) => g.disconnect != null && gamePass(g))
         .sort((a, b) => (b.disconnect ?? 0) - (a.disconnect ?? 0))
-        .map((g) => {
-          metrics.set(`g:${g.slug}`, { delta: null, metric: g.disconnect });
-          return `g:${g.slug}`;
-        });
+        .map((g) => `g:${g.slug}`);
       break;
     }
     case 'top_rated': {
@@ -514,35 +521,35 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       // of the Top Rated average until S5 switches it on). Distinct from the
       // first three Games in focus.
       const focus = new Set((ctx.composedRefs.get('focus') ?? []).slice(0, 3));
-      auto = ctx.gameRows
-        .map((g) => ({
-          g,
-          mean: average([g.critics, g.community].filter((n): n is number => n != null)),
-        }))
+      const rated = ctx.gameRows.map((g) => ({
+        g,
+        mean: average([g.critics, g.community].filter((n): n is number => n != null)),
+      }));
+      for (const x of rated) {
+        if (x.mean != null)
+          metrics.set(`g:${x.g.slug}`, { delta: null, metric: Math.round(x.mean * 10) / 10 });
+      }
+      auto = rated
         .filter((x) => x.mean != null && gamePass(x.g) && !focus.has(`g:${x.g.slug}`))
         .sort((a, b) => (b.mean ?? 0) - (a.mean ?? 0))
-        .map((x) => {
-          metrics.set(`g:${x.g.slug}`, {
-            delta: null,
-            metric: Math.round((x.mean ?? 0) * 10) / 10,
-          });
-          return `g:${x.g.slug}`;
-        });
+        .map((x) => `g:${x.g.slug}`);
       break;
     }
     case 'by_players': {
-      auto = ctx.gameRows
+      const sampled = ctx.gameRows
         .map((g) => ({ g, w: ctx.playerWindows.get(g.gameId) }))
-        .filter((x) => x.w && x.w.now.length > 0 && gamePass(x.g))
-        .map((x) => ({ ...x, avg: average(x.w!.now) ?? 0 }))
-        .sort((a, b) => b.avg - a.avg)
-        .map((x) => {
-          metrics.set(`g:${x.g.slug}`, {
-            delta: playersDelta(x.w!.now, x.w!.prev, ctx.settings.deltaMinPoints),
-            metric: Math.round(x.avg),
-          });
-          return `g:${x.g.slug}`;
+        .filter((x) => x.w && x.w.now.length > 0)
+        .map((x) => ({ ...x, avg: average(x.w!.now) ?? 0 }));
+      for (const x of sampled) {
+        metrics.set(`g:${x.g.slug}`, {
+          delta: playersDelta(x.w!.now, x.w!.prev, ctx.settings.deltaMinPoints),
+          metric: Math.round(x.avg),
         });
+      }
+      auto = sampled
+        .filter((x) => gamePass(x.g))
+        .sort((a, b) => b.avg - a.avg)
+        .map((x) => `g:${x.g.slug}`);
       break;
     }
     case 'new': {
@@ -593,15 +600,17 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
     .filter((p) =>
       p.type === 'topic' ? ctx.topicBySlug.has(p.ref.slice(2)) : ctx.gameBySlug.has(p.ref.slice(2)),
     );
-  const promoted =
-    s.kind === 'discovery' &&
-    s.promotedPosition != null &&
-    ctx.promotion &&
-    ctx.gameBySlug.has(ctx.promotion.slug)
-      ? { position: s.promotedPosition, ref: `g:${ctx.promotion.slug}` }
-      : null;
-
-  const composed = composeSection({ mode: s.mode, itemCount: s.itemCount, pins, auto, promoted });
+  // Paid inserts that still resolve (a deleted game / re-clustered story is skipped).
+  const paid = ctx.paid.filter((x) =>
+    x.kind === 'story' ? ctx.topicBySlug.has(x.ref.slice(2)) : ctx.gameBySlug.has(x.ref.slice(2)),
+  );
+  const composed = composeSection({
+    mode: s.mode,
+    itemCount: s.itemCount,
+    pins,
+    auto,
+    paid: { positions: s.paidPositions, refs: paid.map((x) => x.ref) },
+  });
   base.items = composed.map((c): SnapshotItem => {
     const type = c.ref.startsWith('t:') ? 'topic' : 'game';
     const m = metrics.get(c.ref);
@@ -609,10 +618,16 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       type,
       slug: c.ref.slice(2),
       pinned: c.pinned,
-      promoted: c.promoted && ctx.promotion ? { advertiser: ctx.promotion.advertiser } : null,
+      paid:
+        c.paid !== null && paid[c.paid]
+          ? { advertiser: paid[c.paid]!.advertiser, kind: paid[c.paid]!.kind }
+          : null,
       delta: m?.delta ?? null,
       metric: m?.metric ?? null,
     };
   });
+  // A paid item never makes a section appear on its own (e.g. an empty Our picks
+  // stays hidden): no organic item → nothing is shown.
+  if (!base.items.some((i) => !i.paid)) base.items = [];
   return base;
 }

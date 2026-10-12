@@ -1,5 +1,6 @@
 import { getAdSlot } from '@/lib/public-api';
 import { isHttpUrl } from '@/lib/url';
+import { paidWord } from './PaidLabel';
 
 /**
  * Ad / promoted slot (SPEC I8, Slice 2; BLUEPRINT slot rule). A slot references a
@@ -10,17 +11,32 @@ import { isHttpUrl } from '@/lib/url';
  * and the CTA is `rel="nofollow sponsored noopener"`. UNSOLD (Phase P S2): the slot
  * renders NOTHING unless `ads.showUnsoldPlaceholder` is on (default off) — then
  * its fallback: the "AD" box, or nothing (`hide`). Never an empty ad box.
+ * Owner decision B: a placement may promote a story ("Sponsored") or a game
+ * ("Promoted"); the label is render-forced either way, and the headline links to
+ * the promoted page.
  */
 export async function AdSlot({ slotKey }: { slotKey: string }): Promise<React.JSX.Element | null> {
   const view = await getAdSlot(slotKey);
   const placement = view?.placement ?? null;
 
   if (placement) {
+    const word = paidWord(placement.story ? 'story' : placement.game ? 'game' : 'creative');
+    const internal = placement.story
+      ? `/topics/${placement.story.slug}`
+      : placement.game
+        ? `/games/${placement.game.slug}`
+        : null;
     return (
-      <aside className="gk-slot gk-slot-promoted" aria-label="Promoted content">
-        <span className="gk-slot-flag">Promoted</span>
+      <aside className="gk-slot gk-slot-promoted" aria-label={`${word} content`}>
+        <span className="gk-slot-flag">{word}</span>
         <div className="gk-slot-promo">
-          <b className="gk-slot-promo-headline">{placement.headline}</b>
+          {internal ? (
+            <a className="gk-slot-promo-headline" href={internal}>
+              {placement.headline}
+            </a>
+          ) : (
+            <b className="gk-slot-promo-headline">{placement.headline}</b>
+          )}
           {placement.body ? <p className="gk-slot-promo-body">{placement.body}</p> : null}
           <div className="gk-slot-promo-foot">
             <span className="gk-slot-promo-by">Paid promotion · {placement.advertiser}</span>

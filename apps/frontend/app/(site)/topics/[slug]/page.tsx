@@ -1,7 +1,7 @@
 import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { getComments, getTopic, type TopicDetail } from '@/lib/public-api';
+import { getAdSlot, getComments, getTopic, type TopicDetail } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
 import {
   distinctSubtitle,
@@ -74,7 +74,7 @@ export default async function TopicPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.JSX.Element> {
   const { slug } = await params;
-  const topic = await loadTopic(slug);
+  const [topic, coverageSlot] = await Promise.all([loadTopic(slug), getAdSlot('topic-coverage')]);
   if (!topic) notFound();
 
   // "Resolved" is internal clustering state — no public chip (hygiene 3).
@@ -176,7 +176,11 @@ export default async function TopicPage({
               </section>
             ) : null}
 
-            <TopicArticles articles={topic.articles} display={topic.display} />
+            <TopicArticles
+              articles={topic.articles}
+              display={topic.display}
+              paidSlot={coverageSlot}
+            />
 
             {topic.status === 'developing' ? <StoryTimeline entries={topic.timeline} /> : null}
 

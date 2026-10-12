@@ -47,9 +47,10 @@
  *       `lists.pinPromotedGames` is rejected (400 — the setting is gone)
  *  23.  a MANUAL pin holds its explicit position in Top Rated, across a
  *       snapshot recompute (auto ranking still runs underneath)
- *  24.  data lists are NEVER sold: a paid placement for Top Rated is rejected by
- *       the API (400) AND by the DB, and an active game promotion leaves the Top
- *       Rated order untouched (the old auto-pin is gone)
+ *  24.  (owner decision B — rewritten from "data lists are never sold") a paid
+ *       placement in Top Rated is ALLOWED (201) and renders with the forced
+ *       "Promoted" label at its admin-set position; the organic order and every
+ *       metric stay exactly as ranked (a slot promotion moves nothing either)
  *
  *  Slice 6 — phase-close security fixes (regressions for the review findings)
  *  25.  F1 (HIGH): a signed-in caller CANNOT hijack another user's subscription
@@ -632,30 +633,16 @@ async function body() {
     `pin=${pinTarget} front=${top2[0]} after recompute=${top3[0]}`,
   );
 
-  // ── 24. data lists are NEVER sold (service + DB); a promotion moves nothing ──
+  // ── 24. (decision B) a paid placement in Top Rated: allowed, labeled, data unchanged
   const promoTarget = top1.find((x) => x !== pinTarget) ?? top1[0];
-  const apiReject = await api(BACK, '/admin/api/homepage/sections/top_rated/promotions', {
-    method: 'POST',
-    jar: adm.jar,
-    csrf: adm.csrf,
-    body: { advertiserName: `Lists Promo ${RUN}`, gameSlug: promoTarget },
-  });
-  // DB layer: a raw insert pointing a placement at Top Rated must fail.
-  const topRatedId = sqlOne(`SELECT id FROM homepage_sections WHERE key='top_rated'`);
-  const promoSubjectId = sqlOne(`SELECT id FROM subjects WHERE slug='${promoTarget}'`);
-  let dbReject = false;
-  try {
-    psql(
-      `INSERT INTO ad_placements (section_id, section_kind, advertiser_name, headline, promoted_subject_id, status) VALUES (${lit(topRatedId)}, 'discovery', ${lit(`Lists Promo ${RUN}`)}, 'X', ${lit(promoSubjectId)}, 'active');`,
-    );
-  } catch {
-    dbReject = true;
-  }
-  const dbRows = Number(
-    sqlOne(`SELECT count(*) FROM ad_placements WHERE section_id='${topRatedId}'`),
-  );
-  // Baseline order with no pins, THEN an active slot promotion of a Top Rated
-  // game (the old auto-pin trigger) — the order must not move.
+  const topRatedOrganic = async () =>
+    (
+      (await api(BACK, '/public/homepage')).json?.data?.sections?.find((x) => x.key === 'top_rated')
+        ?.items ?? []
+    )
+      .filter((i) => !i.paid)
+      .map((i) => `${i.game?.slug}|${i.metric}`)
+      .join(',');
   await api(BACK, '/admin/api/homepage/sections/top_rated/pins', {
     method: 'PUT',
     jar: adm.jar,
@@ -663,7 +650,29 @@ async function body() {
     body: { pins: [] },
   });
   await recomputeAndWait();
-  const topBase = await topRatedSlugs();
+  const orgBase = await topRatedOrganic();
+  const paidBefore = (await sectionCfg()).find((x) => x.key === 'top_rated')?.paidPositions ?? [];
+  const sectionPromo = await api(BACK, '/admin/api/homepage/sections/top_rated/promotions', {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { advertiserName: `Lists Promo ${RUN}`, gameSlug: promoTarget },
+  });
+  const sectionPromoId = sectionPromo.json?.data?.id;
+  const posSet = await api(BACK, '/admin/api/homepage/sections/top_rated', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { paidPositions: [1] },
+  });
+  const activated = await api(BACK, `/admin/api/ads/placements/${sectionPromoId}/status`, {
+    method: 'POST',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { status: 'active' },
+  });
+  // A slot promotion of a Top Rated game too (the old auto-pin trigger).
+  const promoSubjectId = sqlOne(`SELECT id FROM subjects WHERE slug='${promoTarget}'`);
   const slotIdForPromo = sqlOne(`SELECT id FROM ad_slots WHERE key='home'`);
   const promoPlacement = await api(BACK, '/admin/api/ad-placements', {
     method: 'POST',
@@ -678,24 +687,49 @@ async function body() {
     },
   });
   await recomputeAndWait();
-  const top4 = await topRatedSlugs();
-  const home4 = (await api(BACK, '/public/homepage')).json?.data;
-  const paidInData = (home4?.sections ?? [])
-    .filter((x) => x.kind === 'data')
-    .some((x) => x.items.some((i) => i.promoted));
+  const topPaid =
+    (await api(BACK, '/public/homepage')).json?.data?.sections?.find((x) => x.key === 'top_rated')
+      ?.items ?? [];
+  const orgPaid = await topRatedOrganic();
+  const topPage = (await api(FRONT, '/')).text;
+  const topAt = topPage.indexOf('data-section="top_rated"');
+  const topNext = topPage.indexOf('data-section="', topAt + 10);
+  const topHtml = topAt < 0 ? '' : topPage.slice(topAt, topNext < 0 ? undefined : topNext);
   check(
-    '24. Data lists are never sold: Top Rated placement → API 400 + DB rejects; an active promotion leaves the order as ranked',
-    apiReject.status === 400 &&
-      /never sold/.test(apiReject.json?.message ?? '') &&
-      dbReject &&
-      dbRows === 0 &&
+    '24. (decision B) a paid placement in Top Rated is allowed (201) and renders at its admin-set position with the forced "Promoted" label + advertiser; the organic order and every metric are unchanged (a slot promotion moves nothing either)',
+    sectionPromo.status === 201 &&
+      posSet.status === 200 &&
+      activated.status === 200 &&
       promoPlacement.status < 300 &&
-      top4.join(',') === topBase.join(',') &&
-      !paidInData,
-    `api=${apiReject.status} db=${dbReject ? 'rejected' : 'ACCEPTED'} rows=${dbRows} promo=${promoTarget} order kept=${top4.join(',') === topBase.join(',')} paidInData=${paidInData}`,
+      topPaid[0]?.paid?.kind === 'game' &&
+      topPaid[0]?.game?.slug === promoTarget &&
+      topPaid.filter((i) => i.paid).length === 1 &&
+      orgPaid === orgBase &&
+      topHtml.includes('>Promoted<') &&
+      new RegExp(`Paid promotion · (<!-- -->)?Lists Promo ${RUN}`).test(topHtml),
+    `create=${sectionPromo.status} positions=${posSet.status} active=${activated.status} #1=${topPaid[0]?.game?.slug}[${topPaid[0]?.paid?.kind ?? 'organic'}] organic kept=${orgPaid === orgBase} label=${topHtml.includes('>Promoted<')}`,
   );
 
-  // cleanup: remove the promo placement + restore the pins + lists config as they were
+  // cleanup: end + remove both placements; positions, pins and settings back
+  if (sectionPromoId) {
+    await api(BACK, `/admin/api/ads/placements/${sectionPromoId}/status`, {
+      method: 'POST',
+      jar: adm.jar,
+      csrf: adm.csrf,
+      body: { status: 'ended' },
+    });
+    await api(BACK, `/admin/api/ad-placements/${sectionPromoId}`, {
+      method: 'DELETE',
+      jar: adm.jar,
+      csrf: adm.csrf,
+    });
+  }
+  await api(BACK, '/admin/api/homepage/sections/top_rated', {
+    method: 'PATCH',
+    jar: adm.jar,
+    csrf: adm.csrf,
+    body: { paidPositions: paidBefore },
+  });
   const promoPid = promoPlacement.json?.data?.id;
   if (promoPid)
     await api(BACK, `/admin/api/ad-placements/${promoPid}`, {

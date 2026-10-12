@@ -2,7 +2,7 @@ import { and, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm
 import type { AdPlacementStatus } from '@gameskeep/shared/constants';
 import type { PromoPricingInput } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
-import { adPlacements, adSlots, appSettings, subjects } from '../db/schema';
+import { adPlacements, adSlots, appSettings, subjects, topics } from '../db/schema';
 import { writeAudit, type AuditActor } from '../admin/audit';
 import { homepageSettings } from '../homepage/settings';
 
@@ -28,12 +28,18 @@ export interface PublicPlacement {
   ctaUrl: string | null;
   ctaLabel: string | null;
   advertiser: string;
+  /** What is promoted, if anything — drives the render-forced label:
+   *  a story → "Sponsored"; a game or a plain creative → "Promoted". */
+  game: { slug: string; name: string } | null;
+  story: { slug: string; title: string } | null;
 }
 export interface SlotView {
   slotKey: string;
   fallback: string; // 'ad' | 'organic' | 'hide'
   format: string;
   placement: PublicPlacement | null;
+  /** For a slot INSIDE a list (e.g. the story coverage list): its 1-based row. */
+  listPosition: number | null;
   /**
    * `ads.showUnsoldPlaceholder` (Phase P S2, default false): while off an UNSOLD
    * slot renders nothing publicly, whatever its fallback; on → the fallback.
@@ -47,12 +53,18 @@ const toPublic = (p: {
   ctaUrl: string | null;
   ctaLabel: string | null;
   advertiserName: string;
+  gameSlug: string | null;
+  gameName: string | null;
+  topicSlug: string | null;
+  topicTitle: string | null;
 }): PublicPlacement => ({
   headline: p.headline,
   body: p.body,
   ctaUrl: p.ctaUrl,
   ctaLabel: p.ctaLabel,
   advertiser: p.advertiserName,
+  game: p.gameSlug && p.gameName ? { slug: p.gameSlug, name: p.gameName } : null,
+  story: p.topicSlug && p.topicTitle ? { slug: p.topicSlug, title: p.topicTitle } : null,
 });
 
 /** What an `AdSlot key=…` renders: its live placement (if any) + its fallback. */
@@ -63,6 +75,7 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
       fallback: adSlots.fallback,
       format: adSlots.format,
       isActive: adSlots.isActive,
+      listPosition: adSlots.listPosition,
     })
     .from(adSlots)
     .where(eq(adSlots.key, slotKey))
@@ -70,7 +83,14 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
   const showPlaceholder = (await homepageSettings()).showUnsoldPlaceholder;
   // Unknown/disabled slot → the "AD" fallback (rendered only if placeholders are on).
   if (!slot || !slot.isActive)
-    return { slotKey, fallback: 'ad', format: 'card', placement: null, showPlaceholder };
+    return {
+      slotKey,
+      fallback: 'ad',
+      format: 'card',
+      placement: null,
+      listPosition: null,
+      showPlaceholder,
+    };
 
   const [p] = await db
     .select({
@@ -79,8 +99,14 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
       ctaUrl: adPlacements.ctaUrl,
       ctaLabel: adPlacements.ctaLabel,
       advertiserName: adPlacements.advertiserName,
+      gameSlug: subjects.slug,
+      gameName: subjects.name,
+      topicSlug: topics.slug,
+      topicTitle: topics.title,
     })
     .from(adPlacements)
+    .leftJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
+    .leftJoin(topics, eq(topics.slug, adPlacements.promotedTopicSlug))
     .where(and(eq(adPlacements.slotId, slot.id), liveWindow(now)))
     .orderBy(desc(adPlacements.updatedAt))
     .limit(1);
@@ -90,6 +116,7 @@ export async function slotPublicView(slotKey: string, now: Date = new Date()): P
     fallback: slot.fallback,
     format: slot.format,
     placement: p ? toPublic(p) : null,
+    listPosition: slot.listPosition ?? null,
     showPlaceholder,
   };
 }
@@ -114,32 +141,41 @@ export async function promotionForGame(
 }
 
 /**
- * The live Promoted item of each homepage DISCOVERY section (Phase P S2): one
- * active, in-window placement per section (the DB allows only one active), with
- * its game slug + advertiser display name for the render-forced label. The old
- * "auto-pin promoted games into Top Rated" path is gone — data lists are never
- * sold. Leak-proof: never price / contact / notes.
+ * The live PAID placements of each homepage section (owner decision: any
+ * section; games or stories; as many as the section has paid positions). In
+ * booking order — the first booked fills the first paid position. Leak-proof:
+ * the item ref + the advertiser display name for the render-forced label only.
  */
 export async function activeSectionPromotions(
   now: Date = new Date(),
-): Promise<Map<string, { slug: string; advertiser: string }>> {
+): Promise<Map<string, { ref: string; advertiser: string; kind: 'game' | 'story' }[]>> {
   const rows = await db
     .select({
       sectionId: adPlacements.sectionId,
-      slug: subjects.slug,
+      gameSlug: subjects.slug,
+      topicSlug: adPlacements.promotedTopicSlug,
       advertiser: adPlacements.advertiserName,
     })
     .from(adPlacements)
-    .innerJoin(
-      subjects,
-      and(eq(subjects.id, adPlacements.promotedSubjectId), eq(subjects.type, 'game')),
-    )
+    .leftJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
     .where(and(isNotNull(adPlacements.sectionId), liveWindow(now)))
-    .orderBy(desc(adPlacements.updatedAt));
-  const out = new Map<string, { slug: string; advertiser: string }>();
+    .orderBy(
+      sql`${adPlacements.startsAt} ASC NULLS FIRST`,
+      adPlacements.createdAt,
+      adPlacements.id,
+    );
+  const out = new Map<string, { ref: string; advertiser: string; kind: 'game' | 'story' }[]>();
   for (const r of rows) {
-    if (r.sectionId && !out.has(r.sectionId))
-      out.set(r.sectionId, { slug: r.slug, advertiser: r.advertiser });
+    if (!r.sectionId) continue;
+    const item = r.topicSlug
+      ? { ref: `t:${r.topicSlug}`, advertiser: r.advertiser, kind: 'story' as const }
+      : r.gameSlug
+        ? { ref: `g:${r.gameSlug}`, advertiser: r.advertiser, kind: 'game' as const }
+        : null;
+    if (!item) continue;
+    const list = out.get(r.sectionId) ?? [];
+    list.push(item);
+    out.set(r.sectionId, list);
   }
   return out;
 }

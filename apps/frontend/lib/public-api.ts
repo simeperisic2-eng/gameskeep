@@ -136,12 +136,21 @@ export interface HomepageCoverageRow {
   url: string | null;
 }
 
+/** Who paid for an item and what it is (the label: game → Promoted, story → Sponsored). */
+export interface PaidInfo {
+  advertiser: string;
+  kind: 'game' | 'story';
+}
+
 export interface HomepageSectionItem {
   type: 'topic' | 'game';
   /** An editorial pin — never paid, never labeled. */
   pinned: boolean;
-  /** A PAID placement (discovery sections only) — the label is render-forced. */
-  promoted: { advertiser: string } | null;
+  /**
+   * A PAID insert (any section — owner decision). The label is render-forced:
+   * "Promoted" for a game, "Sponsored" for a story. Organic entries: null.
+   */
+  paid: PaidInfo | null;
   delta: Delta | null;
   metric: number | null;
   topic: TopicCard | null;
@@ -897,12 +906,17 @@ export interface AdPlacementView {
   ctaUrl: string | null;
   ctaLabel: string | null;
   advertiser: string;
+  /** What is promoted (drives the label: story → "Sponsored", else "Promoted"). */
+  game: { slug: string; name: string } | null;
+  story: { slug: string; title: string } | null;
 }
 export interface AdSlotView {
   slotKey: string;
   fallback: string; // 'ad' | 'organic' | 'hide'
   format: string;
   placement: AdPlacementView | null;
+  /** For a slot inside a list (the story coverage list): its 1-based row. */
+  listPosition: number | null;
   /** `ads.showUnsoldPlaceholder` (S2, default false): unsold → render nothing. */
   showPlaceholder: boolean;
 }

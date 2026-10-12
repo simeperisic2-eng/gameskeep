@@ -29,7 +29,7 @@ import { coerceRules, ruleDimensionsFor, type SectionRules } from './rules';
 /**
  * Homepage section configuration (Phase P S2): the fixed catalogue's rows,
  * edited through the admin (title, enabled, order, mode, count, Δ window, card
- * tags, feed rules, pins, the discovery Promoted position) — every change
+ * tags, feed rules, pins, paid positions, minimum items) — every change
  * validated against the section's kind and audited old → new.
  */
 export class HomepageConfigError extends Error {
@@ -56,7 +56,10 @@ export interface SectionRow {
   cardTagFamilies: string[];
   cardTagCount: number;
   rules: SectionRules;
-  promotedPosition: number | null;
+  /** Positions of paid items (any number — owner decision). */
+  paidPositions: number[];
+  /** Below this many qualifying items the section is hidden. */
+  minItems: number | null;
 }
 
 export interface SectionPin {
@@ -88,7 +91,8 @@ function shape(r: typeof homepageSections.$inferSelect): SectionRow | null {
     cardTagFamilies: r.cardTagFamilies ?? [],
     cardTagCount: r.cardTagCount,
     rules: coerceRules(r.rules),
-    promotedPosition: r.promotedPosition ?? null,
+    paidPositions: [...(r.paidPositions ?? [])].sort((a, b) => a - b),
+    minItems: r.minItems ?? null,
   };
 }
 
@@ -155,7 +159,8 @@ export async function ensureHomepageSections(): Promise<string[]> {
         mode: def.defaults.mode,
         itemCount: legacyCount[key] ?? def.defaults.itemCount,
         deltaWindowHours: def.defaults.deltaWindowHours,
-        promotedPosition: def.defaults.promotedPosition,
+        paidPositions: [...def.defaults.paidPositions],
+        minItems: def.defaults.minItems,
       })
       .onConflictDoNothing()
       .returning({ id: homepageSections.id });
@@ -229,6 +234,9 @@ export interface SectionPromotion {
   advertiser: string;
   gameSlug: string | null;
   gameName: string | null;
+  /** A promoted story (labeled "Sponsored"); a game is labeled "Promoted". */
+  topicSlug: string | null;
+  topicTitle: string | null;
   status: string;
   startsAt: string | null;
   endsAt: string | null;
@@ -241,12 +249,15 @@ export async function promotionsFor(sectionId: string): Promise<SectionPromotion
       advertiser: adPlacements.advertiserName,
       gameSlug: subjects.slug,
       gameName: subjects.name,
+      topicSlug: adPlacements.promotedTopicSlug,
+      topicTitle: topics.title,
       status: adPlacements.status,
       startsAt: adPlacements.startsAt,
       endsAt: adPlacements.endsAt,
     })
     .from(adPlacements)
     .leftJoin(subjects, eq(subjects.id, adPlacements.promotedSubjectId))
+    .leftJoin(topics, eq(topics.slug, adPlacements.promotedTopicSlug))
     .where(eq(adPlacements.sectionId, sectionId))
     .orderBy(sql`${adPlacements.updatedAt} DESC`);
   return rows.map((r) => ({
@@ -254,6 +265,8 @@ export async function promotionsFor(sectionId: string): Promise<SectionPromotion
     advertiser: r.advertiser,
     gameSlug: r.gameSlug ?? null,
     gameName: r.gameName ?? null,
+    topicSlug: r.topicSlug ?? null,
+    topicTitle: r.topicTitle ?? null,
     status: r.status,
     startsAt: r.startsAt ? r.startsAt.toISOString() : null,
     endsAt: r.endsAt ? r.endsAt.toISOString() : null,
@@ -309,12 +322,17 @@ export function validateSectionPatch(
     }
     out.rules = coerceRules(patch.rules);
   }
-  if (patch.promotedPosition !== undefined) {
-    if (section.kind !== 'discovery' && patch.promotedPosition !== null)
-      bad(
-        `"${section.key}" is a ${section.kind} section — paid placements are never shown there (discovery sections only: New, Upcoming, Featured).`,
-      );
-    out.promotedPosition = patch.promotedPosition;
+  if (patch.paidPositions !== undefined) {
+    // Any list may carry paid items (owner decision); a block has no list to
+    // insert into — structural, not a sales rule.
+    if (section.items === 'none' && patch.paidPositions.length)
+      bad(`"${section.key}" is a block — it has no list to insert a paid item into.`);
+    out.paidPositions = [...new Set(patch.paidPositions)].sort((a, b) => a - b);
+  }
+  if (patch.minItems !== undefined) {
+    if (section.items === 'none' && patch.minItems !== null)
+      bad(`"${section.key}" is a block — it has no items to count.`);
+    out.minItems = patch.minItems;
   }
   return out;
 }
@@ -328,7 +346,8 @@ const auditable = (s: SectionRow): Raw => ({
   cardTagFamilies: s.cardTagFamilies,
   cardTagCount: s.cardTagCount,
   rules: s.rules,
-  promotedPosition: s.promotedPosition,
+  paidPositions: s.paidPositions,
+  minItems: s.minItems,
 });
 
 export async function updateSection(
@@ -460,9 +479,10 @@ export async function setSectionPins(
 
 /**
  * Create a PAID placement for a homepage section (draft — activation is the
- * admin's status switch after off-site payment). Data sections are rejected
- * here (service) and by the DB (composite FK + CHECK). Only a GAME can be
- * promoted; stories never are.
+ * admin's status switch after off-site payment). Any section with a list, a game
+ * OR a story (owner decision). What never changes: the item renders with its
+ * paid label, and it is INSERTED at a paid position — it never alters the
+ * organic list or anyone's numbers.
  */
 export async function createSectionPromotion(
   key: string,
@@ -471,29 +491,43 @@ export async function createSectionPromotion(
 ): Promise<SectionPromotion> {
   const section = await sectionByKey(key);
   if (!section) throw new HomepageConfigError(404, `Unknown section "${key}".`);
-  if (section.kind !== 'discovery') {
+  if (section.items === 'none') {
     throw new HomepageConfigError(
       400,
-      `"${section.title}" is a ${section.kind} section and is never sold — paid placements can only target a discovery section (New, Upcoming, Featured).`,
+      `"${section.title}" is a block — it has no list to place an item in.`,
     );
   }
-  const [game] = await db
-    .select({ id: subjects.id, name: subjects.name })
-    .from(subjects)
-    .where(and(eq(subjects.slug, input.gameSlug), eq(subjects.type, 'game')))
-    .limit(1);
-  if (!game)
-    throw new HomepageConfigError(400, `No game "${input.gameSlug}" — only games can be promoted.`);
+  let promotedSubjectId: string | null = null;
+  let promotedTopicSlug: string | null = null;
+  let name: string;
+  if (input.gameSlug) {
+    const [game] = await db
+      .select({ id: subjects.id, name: subjects.name })
+      .from(subjects)
+      .where(and(eq(subjects.slug, input.gameSlug), eq(subjects.type, 'game')))
+      .limit(1);
+    if (!game) throw new HomepageConfigError(400, `No game "${input.gameSlug}".`);
+    promotedSubjectId = game.id;
+    name = game.name;
+  } else {
+    const [topic] = await db
+      .select({ slug: topics.slug, title: topics.title })
+      .from(topics)
+      .where(eq(topics.slug, input.topicSlug ?? ''))
+      .limit(1);
+    if (!topic) throw new HomepageConfigError(400, `No story "${input.topicSlug}".`);
+    promotedTopicSlug = topic.slug;
+    name = topic.title;
+  }
   const [row] = await db
     .insert(adPlacements)
     .values({
       sectionId: section.id,
-      sectionKind: 'discovery',
       advertiserName: input.advertiserName,
       advertiserContact: input.advertiserContact ?? null,
-      headline: input.headline ?? game.name.slice(0, 120),
-      promotedSubjectId: game.id,
-      promotedSubjectType: 'game',
+      headline: input.headline ?? name.slice(0, 120),
+      promotedSubjectId,
+      promotedTopicSlug,
       status: 'draft',
       startsAt: input.startsAt ?? null,
       endsAt: input.endsAt ?? null,
@@ -502,14 +536,15 @@ export async function createSectionPromotion(
       notes: input.notes ?? null,
     })
     .returning({ id: adPlacements.id });
+  const item = input.gameSlug ? `game ${input.gameSlug}` : `story ${input.topicSlug}`;
   await writeAudit({
     action: 'create',
     entityType: 'ad-placement',
     entityId: row!.id,
-    changes: { created: { section: key, game: input.gameSlug, advertiser: input.advertiserName } },
-    summary: `section promotion "${input.advertiserName}" → ${key} (${input.gameSlug}), draft`,
+    changes: { created: { section: key, item, advertiser: input.advertiserName } },
+    summary: `section placement "${input.advertiserName}" → ${key} (${item}), draft`,
     actor,
   });
   const all = await promotionsFor(section.id);
-  return all.find((p) => p.id === row!.id)!;
+  return all.find((x) => x.id === row!.id)!;
 }

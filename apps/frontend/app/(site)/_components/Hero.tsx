@@ -5,6 +5,7 @@ import type { HomepageSectionItem, PublicDisplay, TopicCard } from '@/lib/public
 import {
   distinctSubtitle,
   publicTopicStatus,
+  scoreToTen,
   stripLeadingTitle,
   truncateWords,
 } from '@/lib/format';
@@ -13,6 +14,7 @@ import { DeltaChip } from './DeltaChip';
 import { compactTopicToken } from '@/lib/bias';
 import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
+import { PaidLabel } from './PaidLabel';
 
 /**
  * The homepage HERO (SPEC I5a) — the "wow".
@@ -23,7 +25,9 @@ import { BiasBar } from './BiasBar';
  * the list ORDER is the Trending section's (pins hold their position — it never
  * rotates); only the initially highlighted story rotates at server render. Each
  * row carries its Δ with the window; the spotlight shows how the story is being
- * covered (up to three outlets' headlines, linking out).
+ * covered (up to three outlets' headlines, linking out). Paid inserts (owner
+ * decision B — a story or a game) carry the render-forced label and no rank
+ * number; organic rows keep their numbering.
  *
  * All trending rows show at once (the list fills the column to the spotlight's
  * height); every spotlight panel is rendered into the DOM at SSR (toggled by
@@ -72,13 +76,13 @@ export function Hero({
   display: PublicDisplay;
   initial?: number;
 }): React.JSX.Element {
-  const rows = items.filter(
-    (i): i is HomepageSectionItem & { topic: TopicCard } => i.topic !== null,
-  );
-  const topics = rows.map((r) => r.topic);
-  const [active, setActive] = useState(Math.min(initial, Math.max(0, topics.length - 1)));
+  const rows = items.filter((i) => i.topic !== null || i.game !== null);
+  const [active, setActive] = useState(Math.min(initial, Math.max(0, rows.length - 1)));
+  // Organic rows keep their rank numbers; paid inserts are never numbered.
+  let n = 0;
+  const ranks = rows.map((r) => (r.paid ? null : (n += 1)));
 
-  if (topics.length === 0) {
+  if (rows.length === 0) {
     return (
       <div className="gk-spotlight" style={{ padding: 28 }}>
         <p className="gk-section-sub">
@@ -88,6 +92,9 @@ export function Hero({
     );
   }
 
+  const keyOf = (r: HomepageSectionItem, i: number): string =>
+    `${r.paid ? 'paid' : 'org'}:${r.topic?.id ?? r.game?.slug ?? ''}:${i}`;
+
   return (
     <div className="gk-hero-grid">
       <div className="gk-trending">
@@ -96,48 +103,110 @@ export function Hero({
           {title}
         </div>
         <ul className="gk-trend-list">
-          {topics.map((t, i) => (
-            <li key={t.id}>
-              {/* B1: the row is a real LINK to its story (headlines navigate).
-                  Hover/focus still drives the spotlight selection — the locked
-                  I5a interaction — so pointing selects, clicking goes. */}
-              <a
-                className={`gk-trend-item${i === active ? ' is-active' : ''}`}
-                href={`/topics/${t.slug}`}
-                aria-current={i === active ? 'true' : undefined}
-                onMouseEnter={() => setActive(i)}
-                onFocus={() => setActive(i)}
-              >
-                <span className="gk-trend-rank">{i + 1}</span>
-                <span style={{ minWidth: 0 }}>
-                  <span className="gk-trend-title">{t.title}</span>
-                  <span className="gk-trend-meta">
-                    {miniInfluence(t, display)}
-                    <span>{t.sourceCount > 1 ? `${t.sourceCount} sources` : 'single source'}</span>
-                    <span aria-hidden>·</span>
-                    <span>
-                      {t.articleCount} {t.articleCount === 1 ? 'article' : 'articles'}
+          {rows.map((r, i) => {
+            const t = r.topic;
+            const g = r.game;
+            return (
+              <li key={keyOf(r, i)}>
+                {/* B1: the row is a real LINK (headlines navigate). Hover/focus
+                    still drives the spotlight selection — pointing selects,
+                    clicking goes. */}
+                <a
+                  className={`gk-trend-item${i === active ? ' is-active' : ''}${r.paid ? ' is-paid' : ''}`}
+                  href={t ? `/topics/${t.slug}` : `/games/${g?.slug ?? ''}`}
+                  aria-current={i === active ? 'true' : undefined}
+                  onMouseEnter={() => setActive(i)}
+                  onFocus={() => setActive(i)}
+                >
+                  <span className="gk-trend-rank">{ranks[i] ?? ''}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span className="gk-trend-title">{t ? t.title : (g?.name ?? '')}</span>
+                    <span className="gk-trend-meta">
+                      {r.paid ? <PaidLabel paid={r.paid} compact /> : null}
+                      {t ? (
+                        <>
+                          {miniInfluence(t, display)}
+                          <span>
+                            {t.sourceCount > 1 ? `${t.sourceCount} sources` : 'single source'}
+                          </span>
+                          <span aria-hidden>·</span>
+                          <span>
+                            {t.articleCount} {t.articleCount === 1 ? 'article' : 'articles'}
+                          </span>
+                          <DeltaChip delta={r.delta} windowHours={windowHours} />
+                        </>
+                      ) : (
+                        <span>{g?.genres[0] ?? 'Game'}</span>
+                      )}
                     </span>
-                    <DeltaChip delta={rows[i]!.delta} windowHours={windowHours} />
                   </span>
-                </span>
-              </a>
-            </li>
-          ))}
+                </a>
+              </li>
+            );
+          })}
         </ul>
       </div>
 
       <div className="gk-spotlight">
-        {topics.map((t, i) => {
+        {rows.map((r, i) => {
+          if (!r.topic) {
+            // A game row (only a paid insert puts a game into Trending).
+            const g = r.game!;
+            const critics = scoreToTen(g.critics);
+            const community = scoreToTen(g.community);
+            return (
+              <article
+                key={keyOf(r, i)}
+                className={`gk-spot-panel${i === active ? ' is-active' : ''}`}
+                aria-hidden={i !== active}
+              >
+                <div className="gk-spot-cover">
+                  <CoverArt label={g.name} imageUrl={g.coverUrl} kicker="Game" />
+                </div>
+                <div className="gk-spot-body">
+                  {r.paid ? <PaidLabel paid={r.paid} /> : null}
+                  <h3 className="gk-spot-title">
+                    <a
+                      className="gk-title-link"
+                      href={`/games/${g.slug}`}
+                      tabIndex={i === active ? undefined : -1}
+                    >
+                      {g.name}
+                    </a>
+                  </h3>
+                  {critics || community ? (
+                    <p className="gk-spot-summary">
+                      {critics ? `Critics ${critics}` : ''}
+                      {critics && community ? ' · ' : ''}
+                      {community ? `Community ${community}` : ''}
+                    </p>
+                  ) : null}
+                  <div className="gk-spot-foot">
+                    <span className="gk-section-sub" style={{ margin: 0, fontSize: 13 }}>
+                      {g.genres.slice(0, 2).join(' · ')}
+                    </span>
+                    <a
+                      className="gk-readlink"
+                      href={`/games/${g.slug}`}
+                      tabIndex={i === active ? undefined : -1}
+                    >
+                      See the game <ArrowRight />
+                    </a>
+                  </div>
+                </div>
+              </article>
+            );
+          }
+          const t: TopicCard = r.topic;
           const summary = truncateWords(
             stripLeadingTitle(t.aiSummary, t.title) ?? distinctSubtitle(t.title, t.tldr),
             220,
           );
-          const coverage = (rows[i]!.coverage ?? []).filter((c) => c.title);
+          const coverage = (r.coverage ?? []).filter((c) => c.title);
           const status = publicTopicStatus(t.status);
           return (
             <article
-              key={t.id}
+              key={keyOf(r, i)}
               className={`gk-spot-panel${i === active ? ' is-active' : ''}`}
               aria-hidden={i !== active}
             >
@@ -145,6 +214,7 @@ export function Hero({
                 <CoverArt label={t.primaryGame?.name ?? t.title} kicker={t.typeLabel ?? 'Story'} />
               </div>
               <div className="gk-spot-body">
+                {r.paid ? <PaidLabel paid={r.paid} /> : null}
                 <div className="gk-chips">
                   {t.typeLabel ? <span className="gk-chip amber">{t.typeLabel}</span> : null}
                   {status ? (

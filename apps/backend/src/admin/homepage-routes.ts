@@ -46,7 +46,7 @@ async function recompute(reason: string): Promise<string | null> {
 }
 
 export async function registerHomepageAdminRoutes(admin: FastifyInstance): Promise<void> {
-  // The whole config: sections (with pins + discovery promotions) + switches.
+  // The whole config: sections (with pins + paid placements) + switches.
   admin.get('/homepage/config', async (_req, reply) => {
     try {
       const sections = await listSections();
@@ -56,7 +56,7 @@ export async function registerHomepageAdminRoutes(admin: FastifyInstance): Promi
           ruleDimensions: ruleDimensionsFor(s.items),
           defaultTitle: HOMEPAGE_SECTIONS[s.key].title,
           pins: await pinsFor(s.id),
-          promotions: s.kind === 'discovery' ? await promotionsFor(s.id) : [],
+          promotions: s.items === 'none' ? [] : await promotionsFor(s.id),
         })),
       );
       reply.send({
@@ -114,7 +114,8 @@ export async function registerHomepageAdminRoutes(admin: FastifyInstance): Promi
     }
   });
 
-  // PAID placements for a section — discovery only (service 400 + DB rejection).
+  // PAID placements for a section — any section with a list (owner decision);
+  // the label is render-forced and payment never changes data.
   admin.get<{ Params: { key: string } }>(
     '/homepage/sections/:key/promotions',
     async (req, reply) => {
@@ -126,7 +127,7 @@ export async function registerHomepageAdminRoutes(admin: FastifyInstance): Promi
             .send({ error: 'not_found', message: `Unknown section "${req.params.key}".` });
           return;
         }
-        reply.send({ data: section.kind === 'discovery' ? await promotionsFor(section.id) : [] });
+        reply.send({ data: section.items === 'none' ? [] : await promotionsFor(section.id) });
       } catch (err) {
         sendHomepageError(reply, err);
       }

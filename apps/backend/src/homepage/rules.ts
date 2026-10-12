@@ -181,22 +181,25 @@ export function matchesRules(attrs: RuleLists, rules: SectionRules): boolean {
 export interface Composed {
   ref: string;
   pinned: boolean;
-  promoted: boolean;
+  /** Index into the paid list when this entry is a PAID insert, else null. */
+  paid: number | null;
 }
 
 /**
- * Lay out a section. MANUAL: pins only (by position). AUTO: the rule order only.
- * PINS + AUTO: every pin holds its explicit position, auto fills the rest. Then
- * the ONE Promoted item (discovery sections only — the caller never passes one
- * for a data section) takes its admin-chosen position; if it was already listed
- * it moves there. Holes close up (a pin past the end of a short list moves up).
+ * Lay out a section. The ORGANIC list first — MANUAL: pins only (by position);
+ * AUTO: the rule order only; PINS + AUTO: every pin holds its explicit position,
+ * auto fills the rest (holes close up). Then PAID items are INSERTED at their
+ * admin-set positions (owner decision: any list may carry them). Payment never
+ * changes data: no organic item is removed, moved or deduplicated — a paid item
+ * that also ranks organically appears twice (once labeled) — and the organic
+ * order is exactly what it would be with no placement at all.
  */
 export function composeSection(args: {
   mode: HomepageSectionMode;
   itemCount: number;
   pins: { position: number; ref: string }[];
   auto: string[];
-  promoted?: { position: number; ref: string } | null;
+  paid?: { positions: number[]; refs: string[] } | null;
 }): Composed[] {
   const count = Math.min(HOMEPAGE_MAX_ITEMS, Math.max(1, Math.floor(args.itemCount)));
   const pins = [...args.pins]
@@ -211,9 +214,9 @@ export function composeSection(args: {
       if (args.mode === 'manual') {
         const free = slots.findIndex((s) => s === null);
         if (free === -1) break;
-        slots[free] = { ref: p.ref, pinned: true, promoted: false };
+        slots[free] = { ref: p.ref, pinned: true, paid: null };
       } else if (p.position <= count && slots[p.position - 1] === null) {
-        slots[p.position - 1] = { ref: p.ref, pinned: true, promoted: false };
+        slots[p.position - 1] = { ref: p.ref, pinned: true, paid: null };
       } else continue;
       used.add(p.ref);
     }
@@ -224,18 +227,25 @@ export function composeSection(args: {
       if (used.has(ref)) continue;
       while (i < count && slots[i] !== null) i += 1;
       if (i >= count) break;
-      slots[i] = { ref, pinned: false, promoted: false };
+      slots[i] = { ref, pinned: false, paid: null };
       used.add(ref);
     }
   }
 
-  let out = slots.filter((s): s is Composed => s !== null);
-  const promo = args.promoted;
-  if (promo && promo.ref && Number.isInteger(promo.position) && promo.position >= 1) {
-    out = out.filter((s) => s.ref !== promo.ref);
-    const at = Math.min(promo.position - 1, out.length);
-    out.splice(at, 0, { ref: promo.ref, pinned: false, promoted: true });
-    out = out.slice(0, count);
+  const out = slots.filter((s): s is Composed => s !== null);
+  const positions = [
+    ...new Set((args.paid?.positions ?? []).filter((n) => Number.isInteger(n) && n >= 1)),
+  ].sort((a, b) => a - b);
+  const refs = args.paid?.refs ?? [];
+  // Ascending positions, each insert at its final 1-based position (clamped to
+  // the end of a short list).
+  for (let k = 0; k < Math.min(positions.length, refs.length); k += 1) {
+    if (!refs[k]) continue;
+    out.splice(Math.min(positions[k]! - 1, out.length), 0, {
+      ref: refs[k]!,
+      pinned: false,
+      paid: k,
+    });
   }
   return out;
 }

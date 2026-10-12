@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { PublicDisplay, TopicArticleRow } from '@/lib/public-api';
+import type { AdSlotView, PublicDisplay, TopicArticleRow } from '@/lib/public-api';
+import { isHttpUrl } from '@/lib/url';
+import { PaidLabel } from './PaidLabel';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { NO_SIGNALS_LABEL } from '@/lib/bias';
 import { ArticleFlags } from './BiasBar';
@@ -128,12 +130,57 @@ function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
   );
 }
 
+/**
+ * A PAID row in the coverage list (owner decision B): the slot's live placement,
+ * inserted at the slot's admin-set row. The label is render-forced ("Sponsored"
+ * for a story, "Promoted" for a game or a plain creative); it is never an outlet
+ * article, never counted, and the outlet rows around it are unchanged.
+ */
+function PaidRow({ slot }: { slot: AdSlotView }): React.JSX.Element | null {
+  const p = slot.placement;
+  if (!p) return null;
+  const kind = p.story ? 'story' : p.game ? 'game' : 'creative';
+  const internal = p.story ? `/topics/${p.story.slug}` : p.game ? `/games/${p.game.slug}` : null;
+  const external = !internal && isHttpUrl(p.ctaUrl) ? p.ctaUrl : null;
+  return (
+    <article className="gk-srcrow is-paid" data-paid-row="">
+      <div className="gk-srcrow-body">
+        <div className="gk-srcrow-top">
+          <PaidLabel paid={{ advertiser: p.advertiser, kind }} />
+        </div>
+        <h3 className="gk-srcrow-title">
+          {internal ? (
+            <a className="gk-title-link" href={internal}>
+              {p.headline}
+            </a>
+          ) : external ? (
+            <a
+              className="gk-title-link"
+              href={external}
+              target="_blank"
+              rel="nofollow sponsored noopener"
+            >
+              {p.headline}
+            </a>
+          ) : (
+            p.headline
+          )}
+        </h3>
+        {p.body ? <p className="gk-srcrow-excerpt">{p.body}</p> : null}
+      </div>
+    </article>
+  );
+}
+
 export function TopicArticles({
   articles,
   display,
+  paidSlot = null,
 }: {
   articles: TopicArticleRow[];
   display: PublicDisplay;
+  /** The 'topic-coverage' slot (owner decision B); a paid row only when it is sold. */
+  paidSlot?: AdSlotView | null;
 }): React.JSX.Element {
   const [sort, setSort] = useState<SortKey>('date');
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -146,8 +193,12 @@ export function TopicArticles({
     [articles, filter],
   );
 
-  // Phase P S2: paid placements never sit between outlet articles — they appear
-  // only in discovery sections and sidebar slots.
+  // Owner decision B: a sold 'topic-coverage' slot inserts ONE labeled row at its
+  // admin-set position (in the unfiltered list; a filter shows outlet rows only).
+  const paidAt =
+    paidSlot?.placement && filter === 'all'
+      ? Math.min(Math.max(1, paidSlot.listPosition ?? 1), ordered.length + 1) - 1
+      : -1;
 
   return (
     <section className="gk-coverage" aria-label="All coverage">
@@ -187,11 +238,15 @@ export function TopicArticles({
       ) : null}
 
       <div className="gk-srcrows">
-        {ordered.map((a) => (
-          <div key={a.id} hidden={!matches(a, filter)}>
-            <ArticleRow a={a} />
+        {ordered.map((a, i) => (
+          <div key={a.id} style={{ display: 'contents' }}>
+            {i === paidAt && paidSlot ? <PaidRow slot={paidSlot} /> : null}
+            <div hidden={!matches(a, filter)}>
+              <ArticleRow a={a} />
+            </div>
           </div>
         ))}
+        {paidAt === ordered.length && paidSlot ? <PaidRow slot={paidSlot} /> : null}
       </div>
       <NoSignalsNote rows={articles} />
     </section>

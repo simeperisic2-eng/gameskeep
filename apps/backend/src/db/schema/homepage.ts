@@ -20,15 +20,11 @@ import { primaryId, timestamps } from './_shared';
 
 /**
  * Homepage sections (Phase P S2). One row per section of the fixed catalogue
- * (`HOMEPAGE_SECTIONS`): the KEY is the stable identity and decides the KIND —
- * the `kind_by_key` CHECK mirrors the catalogue, so no edit (admin or SQL) can
- * turn a data section into a sellable one. Everything else is admin data:
- * title, enabled, order, mode, item count, Δ window, card tags, feed rules and
- * (discovery only) the position of the one Promoted item.
- *
- * `UNIQUE (id, kind)` exists for the composite FK from `ad_placements`: a paid
- * placement references (section id, 'discovery') — a data section has no such
- * pair, so the DB itself rejects selling it.
+ * (`HOMEPAGE_SECTIONS`): the KEY is the stable identity; the KIND (data /
+ * discovery / block) is an informational label only since the owner decision
+ * that any list may carry paid placements. Everything else is admin data: title,
+ * enabled, order, mode, item count, minimum items, Δ window, card tags, feed
+ * rules, and the positions of the PAID items (any number, admin-set).
  */
 const keysOfKind = (kind: string): string =>
   Object.entries(HOMEPAGE_SECTIONS)
@@ -63,12 +59,20 @@ export const homepageSections = pgTable(
     rules: jsonb('rules')
       .notNull()
       .default(sql`'{}'::jsonb`),
-    /** 1-based position of the ONE Promoted item — discovery sections only. */
-    promotedPosition: smallint('promoted_position'),
+    /**
+     * 1-based positions where PAID items are inserted (owner decision: any list
+     * may carry them; the count is the number of positions). Paid items are
+     * INSERTED — the organic list keeps its items, order and numbers.
+     */
+    paidPositions: smallint('paid_positions')
+      .array()
+      .notNull()
+      .default(sql`'{}'::smallint[]`),
+    /** Below this many qualifying items the section is hidden (null = never). */
+    minItems: smallint('min_items'),
     ...timestamps(),
   },
-  (t) => [
-    uniqueIndex('homepage_sections_id_kind').on(t.id, t.kind),
+  () => [
     check(
       'homepage_sections_kind_by_key',
       sql.raw(
@@ -78,10 +82,14 @@ export const homepageSections = pgTable(
       ),
     ),
     check(
-      'homepage_sections_promoted_discovery_only',
+      'homepage_sections_paid_positions',
       sql.raw(
-        `promoted_position IS NULL OR (kind = 'discovery' AND promoted_position BETWEEN 1 AND ${HOMEPAGE_MAX_ITEMS})`,
+        `cardinality(paid_positions) <= ${HOMEPAGE_MAX_ITEMS} AND 1 <= ALL (paid_positions) AND ${HOMEPAGE_MAX_ITEMS} >= ALL (paid_positions)`,
       ),
+    ),
+    check(
+      'homepage_sections_min_items',
+      sql.raw(`min_items IS NULL OR min_items BETWEEN 1 AND ${HOMEPAGE_MAX_ITEMS}`),
     ),
     check(
       'homepage_sections_item_count',
