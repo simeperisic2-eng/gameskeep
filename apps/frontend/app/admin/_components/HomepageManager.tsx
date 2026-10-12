@@ -272,7 +272,9 @@ function SectionEditor({
               </span>
               <input
                 value={listText(d.cardTagFamilies)}
-                onChange={(e) => setD({ ...d, cardTagFamilies: textList(e.target.value) })}
+                onChange={(e) =>
+                  setD({ ...d, cardTagFamilies: textList(e.target.value.toLowerCase()) })
+                }
               />
             </label>
             <label className="gk-nl-field">
