@@ -487,12 +487,19 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
           w,
           ctx.settings.maxEngagementShare,
         );
-        metrics.set(`t:${t.slug}`, { delta: trendingDelta(now, prev), metric: now });
+        // A quiet story (nothing counted in this window) is not trending and carries
+        // no Δ — never a "−100%" (owner, S2 review).
+        metrics.set(`t:${t.slug}`, {
+          delta: now > 0 ? trendingDelta(now, prev) : null,
+          metric: now,
+        });
         return { t, now };
       });
-      // This window's score first; quiet stories fill the rest by recency.
+      // Only stories with activity in THIS window trend (owner, S2 review): no
+      // coverage and no counted engagement ⇒ not trending. Fewer qualify → a
+      // shorter list; below the section's minimum it is hidden (end of function).
       auto = scored
-        .filter((x) => topicPass(x.t))
+        .filter((x) => x.now > 0 && topicPass(x.t))
         .sort((a, b) => b.now - a.now || b.t.lastActivity - a.t.lastActivity)
         .map((x) => `t:${x.t.slug}`);
       break;
@@ -626,8 +633,10 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       metric: m?.metric ?? null,
     };
   });
-  // A paid item never makes a section appear on its own (e.g. an empty Our picks
-  // stays hidden): no organic item → nothing is shown.
-  if (!base.items.some((i) => !i.paid)) base.items = [];
+  // Hidden when nothing organic qualifies — a paid item never makes a section
+  // appear on its own (e.g. an empty Our picks) — and below the section's
+  // admin-set minimum (Trending: 3). Pins count: they are the editors' choice.
+  const organic = base.items.filter((i) => !i.paid).length;
+  if (organic === 0 || (s.minItems != null && organic < s.minItems)) base.items = [];
   return base;
 }

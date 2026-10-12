@@ -112,6 +112,7 @@
  * DB/Redis TRUTH checks (hash-at-rest can't be proven through the API alone)
  * and cleans ONLY its own gk:auth:* / gk:email:send:* keys (never flushall).
  */
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {

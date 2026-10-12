@@ -56,7 +56,8 @@
  *         API and the DB; a block (no list) or a placement with no / two items → 400
  *   S2.3  (decision B, rewritten) several paid items at the admin-set positions,
  *         each with its kind + advertiser; the organic list is exactly as before
- *   S2.4  (acc. 4) too few samples → "—"; an empty previous window → "New"
+ *   S2.4  (acc. 4) too few samples → "—"; an empty previous window → "New"; the
+ *         demo Trending window defaults to 168h (production 48h — S2 review fix 2)
  *   S2.5  (acc. 5) a pinned item keeps its position across refreshes
  *   S2.6  a ring of fresh accounts adds nothing to Trending; a credible one counts
  *   S2.7  Top rated ranks on the critic + community layers only
@@ -70,7 +71,8 @@
  *   S2.14 (decision B, rewritten) with a paid game + a paid story in EVERY section
  *         that shows a list, each section renders "Promoted" and "Sponsored" with
  *         the advertiser under every switch combination
- *   S2.15 Δ on cards with its window (48h / 7d), New / — / ±%, neutral colours
+ *   S2.15 Δ on cards with its window (Trending: the configured one, 7d in demo; By
+ *         players 7d), New / — / ±%, never "−100%" in Trending; neutral colours
  *   S2.16 (acc. 5) the Trending list keeps the section order — a pin holds its row
  *   S2.17 (decision B, rewritten) the story coverage list: no paid row while the
  *         'topic-coverage' slot is unsold; sold → ONE labeled row at the slot's
@@ -86,9 +88,19 @@
  *   S2.23 (decision B) payment never changes data: paid items everywhere leave
  *         every organic list (order, metric, Δ), every score, player count, bias
  *         distribution and integrity signal exactly as computed without them
+ *  S2 review fixes
+ *   S2.24 (fix 1) Trending lists only stories active in its window: N active → N
+ *         rows (fewer than the item count), each scored > 0, no "−100%"; below
+ *         the admin-set minimum (default 3) the section is hidden
+ *   S2.25 (fix 3) the suggest-a-game rate limits are an admin setting (5 per IP,
+ *         60 overall per 10 min by default): applied live, validated, audited
+ *   S2.26 (fix 4) every suite routes fetch through netdiag: a connection reset is
+ *         never retried and is logged with time, URL, cause, compose ps + logs
  */
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import net from 'node:net';
 import {
   auditSql,
   lit,
@@ -1529,7 +1541,7 @@ async function s2a() {
   const allDash = (p50?.items ?? []).length > 0 && p50.items.every((i) => i.delta?.kind === 'none');
   await waitHomepage(await adminApi('/homepage/settings', 'PATCH', { deltaMinPoints: 3 }));
   // "New": find a window where some public story has coverage now and NONE in the
-  // previous window (deterministic on any data), set it, assert, put 48h back.
+  // previous window (deterministic on any data), set it, assert, put the default back.
   const defaultWindow = cfg0.find((x) => x.key === 'trending')?.deltaWindowHours;
   const counts2 = (slug, w) =>
     psql(
@@ -1547,30 +1559,39 @@ async function s2a() {
       break;
     }
   }
-  if (win && win !== defaultWindow) {
+  // The probe window may hold fewer active stories than Trending's minimum (fix 1
+  // hides the section then), so the probe shows the section from one story on.
+  const defaultMin = cfg0.find((x) => x.key === 'trending')?.minItems ?? null;
+  if (win) {
     await waitHomepage(
-      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: win }),
+      await adminApi('/homepage/sections/trending', 'PATCH', {
+        deltaWindowHours: win,
+        minItems: 1,
+      }),
     );
   }
   const trendW = (await homeSections()).find((x) => x.key === 'trending');
   const newItem = (trendW?.items ?? []).find((i) => itemSlug(i) === firstNew);
   const counts = firstNew ? counts2(firstNew, win) : ['?', '?'];
-  if (win && win !== defaultWindow) {
+  if (win) {
     await waitHomepage(
-      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: defaultWindow }),
+      await adminApi('/homepage/sections/trending', 'PATCH', {
+        deltaWindowHours: defaultWindow,
+        minItems: defaultMin,
+      }),
     );
   }
   const trend = (await homeSections()).find((x) => x.key === 'trending');
   check(
-    'S2.4 (acc.4) a game below the minimum samples shows "—" (never 0% / a guess); a story with an empty previous window shows "New"',
+    'S2.4 (acc.4) a game below the minimum samples shows "—" (never 0% / a guess); a story with an empty previous window shows "New"; the demo Trending window defaults to 168h (fix 2)',
     pctAt3 >= 1 &&
       allDash &&
-      defaultWindow === 48 &&
+      defaultWindow === 168 &&
       Boolean(firstNew) &&
       newItem?.delta?.kind === 'new' &&
       Number(counts[0]) >= 1 &&
       Number(counts[1]) === 0,
-    `players: pct@3=${pctAt3} allDash@50=${allDash} · trending default ${defaultWindow}h; at ${win}h "${firstNew}" → ${newItem?.delta?.kind ?? 'absent'} (now=${counts[0]} prev=${counts[1]})`,
+    `players: pct@3=${pctAt3} allDash@50=${allDash} · trending default ${defaultWindow}h (demo; production 48h); at ${win}h "${firstNew}" → ${newItem?.delta?.kind ?? 'absent'} (now=${counts[0]} prev=${counts[1]})`,
   );
 
   // ── S2.5 (acc.5) a pinned item keeps its position across auto refreshes ────
@@ -1655,6 +1676,74 @@ async function s2a() {
     `story=${target} score ${before} → ring(${ringWrites} accounts) ${afterRing} → credible follow ${afterCred} (follow weight ${followWeight})`,
   );
 
+  // ── S2.24 (S2 review fix 1) Trending = stories active in its window only ─────
+  // DB truth: a story qualifies iff it has an article in the window (engagement is
+  // capped by coverage, so it cannot qualify a story on its own). Pins are clear
+  // (S2.6) and no placement is live here.
+  const tCfg = (await sectionsConfig()).find((x) => x.key === 'trending');
+  const tWindow0 = tCfg?.deltaWindowHours ?? null;
+  const tMin0 = tCfg?.minItems ?? null;
+  const tMin = tMin0 ?? 3;
+  const tCount = tCfg?.itemCount ?? 8;
+  const activeIn = (w) =>
+    Number(
+      psql(
+        `SELECT count(DISTINCT t.id) FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE t.bias_distribution IS NOT NULL AND (t.bias_distribution->>'articleCount')::int > 0 AND a.publish_date > now() - interval '${w} hours' AND a.publish_date <= now();`,
+      ),
+    );
+  let wLow = null;
+  let wMid = null;
+  let qLow = 0;
+  let qMid = 0;
+  for (const w of [1, 2, 3, 6, 12, 24, 36, 48, 60, 72, 96, 120, 144, 168, 240, 336, 504, 720]) {
+    const q = activeIn(w);
+    if (wLow === null && q >= 1 && q < tMin) [wLow, qLow] = [w, q];
+    if (wMid === null && q >= tMin && q < tCount) [wMid, qMid] = [w, q];
+  }
+  const trendingNow = async () =>
+    (await homeSections()).find((x) => x.key === 'trending')?.items ?? [];
+  const quiet = (i) => !((i.metric ?? 0) > 0) || (i.delta?.kind === 'pct' && i.delta.value <= -100);
+  let lowItems = null;
+  let lowInSsr = null;
+  let midItems = [];
+  let lowAtMin1 = [];
+  if (wLow !== null && wMid !== null) {
+    await waitHomepage(
+      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: wLow }),
+    );
+    lowItems = await trendingNow();
+    lowInSsr = ssrSections(await html('/')).order.includes('trending');
+    await waitHomepage(
+      await adminApi('/homepage/sections/trending', 'PATCH', { deltaWindowHours: wMid }),
+    );
+    midItems = await trendingNow();
+    await waitHomepage(
+      await adminApi('/homepage/sections/trending', 'PATCH', {
+        deltaWindowHours: wLow,
+        minItems: 1,
+      }),
+    );
+    lowAtMin1 = await trendingNow();
+  }
+  await waitHomepage(
+    await adminApi('/homepage/sections/trending', 'PATCH', {
+      deltaWindowHours: tWindow0,
+      minItems: tMin0,
+    }),
+  );
+  check(
+    `S2.24 (S2 review fix 1) Trending lists only stories with activity in its window: N active → exactly N rows (fewer than the item count ${tCount}), each scored > 0, no "−100%"; below the minimum (${tMin}, admin-set) the section is hidden — API and page`,
+    wLow !== null &&
+      wMid !== null &&
+      lowItems?.length === 0 &&
+      lowInSsr === false &&
+      midItems.length === qMid &&
+      !midItems.some(quiet) &&
+      lowAtMin1.length === qLow &&
+      !lowAtMin1.some(quiet),
+    `${wLow}h: ${qLow} active → hidden=${lowItems?.length === 0}/ssr=${lowInSsr === false} (min 1 → ${lowAtMin1.length} rows) · ${wMid}h: ${qMid} active → ${midItems.length} rows, quiet rows=${midItems.filter(quiet).length}`,
+  );
+
   // ── S2.7 Top rated ranks on the critic + community layers only ─────────────
   const top = (await homeSections()).find((x) => x.key === 'top_rated');
   const rows = (top?.items ?? []).filter((i) => !i.pinned && i.game);
@@ -1714,6 +1803,7 @@ async function s2a() {
     paidOnBlock: await v('briefing', { paidPositions: [1] }),
     paidOutOfRange: await v('trending', { paidPositions: [0] }),
     minItemsOnBlock: await v('genres', { minItems: 2 }),
+    minAboveCount: await v('trending', { minItems: 24, itemCount: 8 }),
     ourPicksAuto: await v('our_picks', { mode: 'auto' }),
     windowOnTopRated: await v('top_rated', { deltaWindowHours: 24 }),
     tooMany: await v('latest', { itemCount: 99 }),
@@ -1721,11 +1811,12 @@ async function s2a() {
     unknown: await v('nope', { title: 'x' }),
   };
   check(
-    'S2.9 section edits are validated (paid positions / min items on a block, a paid position out of range, Our picks auto, Δ window off-section, too many items, wrong rule dimension → 400; unknown → 404); moderator 403',
+    'S2.9 section edits are validated (paid positions / min items on a block, a paid position out of range, a minimum above the item count, Our picks auto, Δ window off-section, too many items, wrong rule dimension → 400; unknown → 404); moderator 403',
     modPatch.status === 403 &&
       results.paidOnBlock === 400 &&
       results.paidOutOfRange === 400 &&
       results.minItemsOnBlock === 400 &&
+      results.minAboveCount === 400 &&
       results.ourPicksAuto === 400 &&
       results.windowOnTopRated === 400 &&
       results.tooMany === 400 &&
@@ -1953,6 +2044,13 @@ async function s2b() {
         /class="gk-delta is-([a-z]+)"[^>]*><b>([^<]*)<\/b><span class="gk-delta-win">([^<]*)<\/span>/g,
       ),
     ].map((m) => ({ kind: m[1], text: m[2], win: m[3] }));
+  const trendCfgW = (await sectionsConfig()).find((x) => x.key === 'trending')?.deltaWindowHours;
+  const trendWin =
+    trendCfgW == null
+      ? '?'
+      : trendCfgW < 72 || trendCfgW % 24
+        ? `${trendCfgW}h`
+        : `${trendCfgW / 24}d`;
   const trendChips = chips(ssrNow.byKey.get('trending'));
   const playerChips = chips(ssrNow.byKey.get('by_players'));
   const textOk = (c) =>
@@ -1964,9 +2062,9 @@ async function s2b() {
     .map((sel) => cssRule(css, sel))
     .join(' ');
   check(
-    'S2.15 Δ shows on the cards with its window ("48h" Trending, "7d" By players), as New / — / ±%; neutral colours (no green/red)',
+    `S2.15 Δ shows on the cards with its window (Trending "${trendWin}" = the configured window, By players "7d"), as New / — / ±%, never "−100%" in Trending (a quiet story doesn't trend); neutral colours (no green/red)`,
     trendChips.length >= 1 &&
-      trendChips.every((c) => c.win === '48h' && textOk(c)) &&
+      trendChips.every((c) => c.win === trendWin && textOk(c) && c.text !== '−100%') &&
       playerChips.length >= 1 &&
       playerChips.every((c) => c.win === '7d' && textOk(c)) &&
       !/#(7fd29a|e06c5f|ef4444|22c55e)|--gk-(green|red)/i.test(deltaRules),
@@ -2203,6 +2301,124 @@ async function s2b() {
   );
 }
 
+async function s2Fixes() {
+  // ── S2.25 (S2 review fix 3) the suggest rate limits are an admin setting ────
+  const sSnap = snapshotSettings(['suggest']);
+  const sGet = await adminApi('/catalog/suggest-settings');
+  const sMod = await login('demo-moderator', DEMO_PW);
+  const sModGet = await api(BACK, '/admin/api/catalog/suggest-settings', { jar: sMod.jar });
+  const sModPatch = await api(BACK, '/admin/api/catalog/suggest-settings', {
+    method: 'PATCH',
+    jar: sMod.jar,
+    csrf: sMod.csrf,
+    body: { perIpMax: 999 },
+  });
+  const raise = await adminApi('/catalog/suggest-settings', 'PATCH', {
+    perIpMax: 1000,
+    globalMax: 100000,
+  });
+  const sAnon = await withCsrf();
+  const suggest = (name) =>
+    api(BACK, '/public/suggest-game', {
+      method: 'POST',
+      jar: sAnon.jar,
+      csrf: sAnon.csrf,
+      body: { name },
+    });
+  const sugA = await suggest(`Verify Suggest P ${RUN}`);
+  const lower = await adminApi('/catalog/suggest-settings', 'PATCH', { perIpMax: 1 });
+  const sugB = await suggest(`Verify Suggest Q ${RUN}`);
+  const bad = [
+    await adminApi('/catalog/suggest-settings', 'PATCH', { perIpMax: 0 }),
+    await adminApi('/catalog/suggest-settings', 'PATCH', { windowMinutes: 5000 }),
+    await adminApi('/catalog/suggest-settings', 'PATCH', { perIpMax: 500, globalMax: 100 }),
+    await adminApi('/catalog/suggest-settings', 'PATCH', { unknownKey: 1 }),
+  ].map((r) => r.status);
+  const sAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'suggest' AND created_at > now() - interval '5 minutes';",
+    ),
+  );
+  restoreSettings(sSnap);
+  const windowMin = sGet.json?.data?.windowMinutes ?? 10;
+  // A later verify:upcoming waits out this run's suggestion too (its burst key).
+  try {
+    execSync(
+      `docker exec gameskeep-redis-1 redis-cli SET gk:verify:upcoming:suggest-burst ${Date.now()} EX ${windowMin * 60}`,
+      { encoding: 'utf8' },
+    );
+  } catch {
+    /* best-effort */
+  }
+  psql(
+    `BEGIN;
+${auditSql({ action: 'delete', entityType: 'unmatched-games', entityId: `verify-run-${RUN}`, summary: `verify cleanup removed run ${RUN}'s test suggestions` })}
+DELETE FROM unmatched_games WHERE raw_name IN (${lit(`Verify Suggest P ${RUN}`)}, ${lit(`Verify Suggest Q ${RUN}`)});
+COMMIT;`,
+  );
+  const freshDefaults =
+    sSnap.map.size > 0 ||
+    JSON.stringify(sGet.json?.data) ===
+      JSON.stringify({ perIpMax: 5, globalMax: 60, windowMinutes: 10 });
+  check(
+    'S2.25 (S2 review fix 3) the suggest-a-game rate limits are an admin setting (app_settings suggest; defaults 5 per IP / 60 overall / 10 min): moderator 403; raising them lets a suggestion through at once, lowering to 1 per IP → the next is 429; out-of-range / per-IP above overall / unknown key → 400; changes audited',
+    sGet.status === 200 &&
+      freshDefaults &&
+      sModGet.status === 403 &&
+      sModPatch.status === 403 &&
+      raise.status === 200 &&
+      sugA.status === 200 &&
+      lower.status === 200 &&
+      sugB.status === 429 &&
+      bad.every((x) => x === 400) &&
+      sAudit >= 2,
+    `get=${sGet.status} ${JSON.stringify(sGet.json?.data)} mod=${sModGet.status}/${sModPatch.status} raise=${raise.status} → suggest ${sugA.status} · lower=${lower.status} → suggest ${sugB.status} · bad=${bad.join(',')} audit=${sAudit}`,
+  );
+
+  // ── S2.26 (S2 review fix 4) connection errors: diagnosed, never retried ─────
+  let conns = 0;
+  const resetter = net.createServer((sock) => {
+    conns += 1;
+    sock.destroy();
+  });
+  await new Promise((r) => resetter.listen(0, '127.0.0.1', r));
+  const probeUrl = `http://127.0.0.1:${resetter.address().port}/netdiag-probe-${RUN}`;
+  const captured = [];
+  const realWrite = process.stderr.write;
+  process.stderr.write = (chunk) => {
+    captured.push(String(chunk));
+    return true;
+  };
+  let thrown = null;
+  try {
+    await fetch(probeUrl);
+  } catch (e) {
+    thrown = e;
+  } finally {
+    process.stderr.write = realWrite;
+  }
+  resetter.close();
+  const diag = captured.join('');
+  const suites = readdirSync('scripts').filter((f) => f.endsWith('-check.mjs'));
+  const unwired = suites.filter(
+    (f) => !/^import '\.\/lib\/netdiag\.mjs';/m.test(readFileSync(`scripts/${f}`, 'utf8')),
+  );
+  check(
+    'S2.26 (S2 review fix 4) every suite routes fetch through netdiag: a connection reset is NOT retried (one connection), the original error is rethrown, and one NETDIAG block logs time, method + URL, cause, docker compose ps and the backend + frontend logs around it',
+    conns === 1 &&
+      ['ECONNRESET', 'UND_ERR_SOCKET'].includes(thrown?.cause?.code) &&
+      diag.includes('NETDIAG: connection error') &&
+      diag.includes(`GET ${probeUrl}`) &&
+      /time\s+\d{4}-\d\d-\d\dT/.test(diag) &&
+      diag.includes('── docker compose ps ──') &&
+      diag.includes('gameskeep-backend-1') &&
+      diag.includes('── backend logs') &&
+      diag.includes('── frontend logs') &&
+      unwired.length === 0,
+    `connections=${conns} rethrown=${thrown?.cause?.code ?? thrown?.message} block=${diag.includes('NETDIAG')} suites wired ${suites.length - unwired.length}/${suites.length}${unwired.length ? ` (missing: ${unwired.join(',')})` : ''}`,
+  );
+}
+
 async function restoreS2() {
   for (const id of s2Restore.placements) {
     await adminApi(`/ads/placements/${id}/status`, 'POST', { status: 'ended' });
@@ -2231,6 +2447,7 @@ async function main() {
     await h3();
     await s2a();
     await s2b();
+    await s2Fixes();
   } finally {
     await restoreS2();
     restoreH3();

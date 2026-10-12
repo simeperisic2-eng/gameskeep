@@ -14,9 +14,11 @@ import type {
   HomepageSectionPatch,
 } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
+import { isDemo } from '../config/env';
 import {
   adPlacements,
   appSettings,
+  auditLogs,
   homepageSectionPins,
   homepageSections,
   subjects,
@@ -127,6 +129,92 @@ const slugList = (v: unknown): string[] =>
  * carried over — hero/feed/top-rated counts and the topic / game pins — so an
  * upgraded install keeps its editorial choices. Returns the keys created.
  */
+/** The Δ window a fresh section starts with — the demo value only in demo mode. */
+export function defaultWindowFor(
+  defaults: { deltaWindowHours: number | null; demoDeltaWindowHours?: number },
+  demo: boolean,
+): number | null {
+  return demo && defaults.demoDeltaWindowHours != null
+    ? defaults.demoDeltaWindowHours
+    : defaults.deltaWindowHours;
+}
+
+/**
+ * Whether a demo boot may move an EXISTING section's Δ window to the demo
+ * default: only while it still holds the production default and no staff edit
+ * of the window is on record (a staff choice always wins). Pure — unit-tested.
+ */
+export function demoWindowDecision(input: {
+  current: number | null;
+  productionDefault: number | null;
+  demoDefault: number | null | undefined;
+  staffEdited: boolean;
+}): number | null {
+  if (input.demoDefault == null || input.staffEdited) return null;
+  if (input.current == null || input.current !== input.productionDefault) return null;
+  return input.current === input.demoDefault ? null : input.demoDefault;
+}
+
+/**
+ * Demo mode only (owner, S2 review): a volume created before the demo default
+ * existed still holds Trending's production window (48h); the bundled feed is
+ * too quiet for it. Move it to the demo default once, guarded by
+ * `demoWindowDecision`, audited as a system actor (which the guard ignores).
+ */
+export async function applyDemoSectionDefaults(): Promise<string[]> {
+  if (!isDemo()) return [];
+  const changed: string[] = [];
+  for (const key of HOMEPAGE_SECTION_KEYS) {
+    const defaults = HOMEPAGE_SECTIONS[key].defaults as {
+      deltaWindowHours: number | null;
+      demoDeltaWindowHours?: number;
+    };
+    if (defaults.demoDeltaWindowHours == null) continue;
+    const [row] = await db
+      .select({ id: homepageSections.id, window: homepageSections.deltaWindowHours })
+      .from(homepageSections)
+      .where(eq(homepageSections.key, key))
+      .limit(1);
+    if (!row) continue;
+    const [edits] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityType, 'homepage-section'),
+          eq(auditLogs.entityId, key),
+          sql`${auditLogs.changes} ? 'deltaWindowHours'`,
+          sql`${auditLogs.actorLabel} NOT LIKE 'system:%'`,
+        ),
+      );
+    const next = demoWindowDecision({
+      current: row.window,
+      productionDefault: defaults.deltaWindowHours,
+      demoDefault: defaults.demoDeltaWindowHours,
+      staffEdited: Number(edits?.n ?? 0) > 0,
+    });
+    if (next == null || row.window == null) continue;
+    const moved = await db
+      .update(homepageSections)
+      .set({ deltaWindowHours: next })
+      .where(
+        and(eq(homepageSections.id, row.id), eq(homepageSections.deltaWindowHours, row.window)),
+      )
+      .returning({ id: homepageSections.id });
+    if (!moved.length) continue;
+    await writeAudit({
+      action: 'update',
+      entityType: 'homepage-section',
+      entityId: key,
+      changes: { deltaWindowHours: { from: row.window, to: next } },
+      summary: `demo default: ${key} Δ window ${row.window}h → ${next}h`,
+      actor: { label: 'system:demo-defaults' },
+    });
+    changed.push(key);
+  }
+  return changed;
+}
+
 export async function ensureHomepageSections(): Promise<string[]> {
   const existing = new Set(
     (await db.select({ key: homepageSections.key }).from(homepageSections)).map((r) => r.key),
@@ -158,7 +246,7 @@ export async function ensureHomepageSections(): Promise<string[]> {
         position: def.defaults.position,
         mode: def.defaults.mode,
         itemCount: legacyCount[key] ?? def.defaults.itemCount,
-        deltaWindowHours: def.defaults.deltaWindowHours,
+        deltaWindowHours: defaultWindowFor(def.defaults, isDemo()),
         paidPositions: [...def.defaults.paidPositions],
         minItems: def.defaults.minItems,
       })
@@ -277,7 +365,8 @@ export async function promotionsFor(sectionId: string): Promise<SectionPromotion
 
 /** Check a patch against the section's kind; returns the clean column values. */
 export function validateSectionPatch(
-  section: Pick<SectionRow, 'key' | 'kind' | 'items' | 'delta' | 'itemCount'>,
+  section: Pick<SectionRow, 'key' | 'kind' | 'items' | 'delta' | 'itemCount'> &
+    Partial<Pick<SectionRow, 'minItems'>>,
   patch: HomepageSectionPatch,
 ): Partial<typeof homepageSections.$inferInsert> {
   const bad = (m: string): never => {
@@ -334,6 +423,13 @@ export function validateSectionPatch(
       bad(`"${section.key}" is a block — it has no items to count.`);
     out.minItems = patch.minItems;
   }
+  // A minimum above the item count would hide the section for good (S2 review).
+  const count = patch.itemCount ?? section.itemCount;
+  const min = patch.minItems !== undefined ? patch.minItems : (section.minItems ?? null);
+  if (section.items !== 'none' && min != null && min > count)
+    bad(
+      `Minimum items (${min}) can't exceed the item count (${count}) — "${section.key}" would never show.`,
+    );
   return out;
 }
 

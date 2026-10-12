@@ -38,7 +38,7 @@ export function MainFeed({
           {it.topic ? (
             <TopicCard topic={it.topic} display={display} paid={it.paid} />
           ) : (
-            <HomeGameCard item={it} />
+            <HomeGameCard item={it} layout="row" />
           )}
         </div>
       ))}

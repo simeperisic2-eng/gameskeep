@@ -25,6 +25,7 @@
  */
 
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import {
   lit,
   psql,

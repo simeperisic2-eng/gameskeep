@@ -37,12 +37,15 @@ export function HomeGameCard({
   windowHours = null,
   metricLabel = null,
   ourPick = false,
+  layout = 'card',
 }: {
   item: HomepageSectionItem;
   windowHours?: number | null;
   /** A factual line, e.g. "~68,000 playing" (By players). */
   metricLabel?: string | null;
   ourPick?: boolean;
+  /** 'row' = a compact feed row (small cover beside the text), e.g. in Latest. */
+  layout?: 'card' | 'row';
 }): React.JSX.Element | null {
   const g = item.game;
   if (!g) return null;
@@ -50,7 +53,9 @@ export function HomeGameCard({
   const community = scoreToTen(g.community);
   const when = g.status === 'released' ? null : releaseLabel(g.releaseDate);
   return (
-    <article className={`gk-hgcard${item.paid ? ' is-promoted' : ''}`}>
+    <article
+      className={`gk-hgcard${item.paid ? ' is-promoted' : ''}${layout === 'row' ? ' is-row' : ''}`}
+    >
       {item.paid ? (
         <div className="gk-hgcard-flag">
           <PaidLabel paid={item.paid} />

@@ -10,7 +10,7 @@ import { enqueueReputationRecompute } from './reputation/jobs';
 import { runMigrations } from './db/migrate';
 import { seedDemo } from './db/seed';
 import { ensureBuiltinSourceTypes } from './sources/rules';
-import { ensureHomepageSections } from './homepage/sections';
+import { applyDemoSectionDefaults, ensureHomepageSections } from './homepage/sections';
 import { armHomepageRefresh, enqueueHomepageCompute } from './homepage/jobs';
 import { ensureDemoPlayerHistory } from './steam/demo-history';
 
@@ -31,6 +31,9 @@ async function main(): Promise<void> {
     if (isDemo()) {
       await seedDemo();
       app.log.info('demo seed loaded');
+      // Demo defaults on an older volume (S2 review: Trending window 168h), guarded.
+      const demoDefaults = await applyDemoSectionDefaults();
+      if (demoDefaults.length) app.log.info({ demoDefaults }, 'demo section defaults applied');
     }
   } catch (err) {
     app.log.error({ err }, 'database init (migrate/seed) failed');

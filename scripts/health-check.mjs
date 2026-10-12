@@ -14,6 +14,8 @@
  * any check fails, so it doubles as a CI/verification gate. Run: `npm run health`.
  */
 
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
+
 const BACKEND = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 const AI = `http://localhost:${process.env.AI_PORT ?? 8000}`;
 const FRONTEND = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;

@@ -19,6 +19,7 @@
  *
  * Run after `npm run demo:up`: `npm run verify:upcoming`.
  */
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
 import { auditSql, lit, psql, restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 
@@ -122,8 +123,9 @@ function print() {
 }
 
 /**
- * Re-run safety (Phase P S2): the suggest limiter is an in-memory 10-minute
- * per-IP window and check 8 deliberately exhausts it. A run right after another
+ * Re-run safety (Phase P S2): the suggest limiter is an in-memory per-IP window
+ * (admin-set since the S2 review: app_settings `suggest`, default 10 minutes)
+ * and check 8 deliberately exhausts it. A run right after another
  * (a warm ladder takes ~8 min) would hit the previous run's burst. The burst
  * records its window in Redis; a new run first waits out whatever is left.
  */
@@ -308,11 +310,13 @@ async function body() {
     method: 'POST',
     body: { name: `NoCsrf ${RUN}` },
   });
-  // Burst past the per-IP limit (PER_IP_MAX = 5 / window); checks 6+7 already
-  // spent 2, so the burst tops it out and the rest 429.
+  // Burst past the CONFIGURED per-IP limit (default 5 per window); checks 6+7
+  // already spent 2, so the burst tops it out and the rest 429.
+  const limits = (await api(BACK, '/admin/api/catalog/suggest-settings', { token: TOKEN })).json
+    ?.data ?? { perIpMax: 5, windowMinutes: 10 };
   let rateLimited = false;
   const s8 = await withCsrf();
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < limits.perIpMax + 5; i += 1) {
     const r = await api(BACK, '/public/suggest-game', {
       method: 'POST',
       jar: s8.jar,
@@ -324,8 +328,8 @@ async function body() {
       break;
     }
   }
-  // The window this burst filled (the limiter's 10 min) — a later run waits it out.
-  redisCli(`SET ${BURST_KEY} ${Date.now()} EX 600`);
+  // The window this burst filled (the limiter's configured window) — a later run waits it out.
+  redisCli(`SET ${BURST_KEY} ${Date.now()} EX ${Math.max(60, limits.windowMinutes * 60)}`);
   check(
     '8. Suggest is CSRF-gated (no token → 403) and rate-limited (burst → 429)',
     noCsrf.status === 403 && rateLimited,

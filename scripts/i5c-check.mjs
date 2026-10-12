@@ -24,6 +24,7 @@
  * Run after `npm run demo:up`: `npm run verify:i5c`. Exits non-zero on any
  * failure so it doubles as a gate.
  */
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { readFileSync } from 'node:fs';
 
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;

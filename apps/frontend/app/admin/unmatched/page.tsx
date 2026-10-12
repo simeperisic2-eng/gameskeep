@@ -1,15 +1,18 @@
 import type { Metadata } from 'next';
-import { listResource, rowLabel, findResource, getMeta } from '../lib';
+import { listResource, rowLabel, findResource, getMeta, getSuggestLimits } from '../lib';
 import UnmatchedManager from '../_components/UnmatchedManager';
+import { SuggestLimitsCard } from '../_components/SuggestLimitsCard';
 
 export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Admin · Unmatched games', robots: { index: false } };
 
 export default async function UnmatchedPage() {
-  const [meta, queue, games] = await Promise.all([
+  const [meta, queue, games, limits] = await Promise.all([
     getMeta(),
     listResource('unmatched-games'),
     listResource('games'),
+    // Admin-only setting: a moderator still sees the queue, without the card.
+    getSuggestLimits().catch(() => null),
   ]);
   const gameMeta = findResource(meta, 'games');
 
@@ -46,6 +49,8 @@ export default async function UnmatchedPage() {
       </p>
 
       <UnmatchedManager items={pending} games={gameOptions} />
+
+      {limits ? <SuggestLimitsCard initial={limits} /> : null}
     </main>
   );
 }

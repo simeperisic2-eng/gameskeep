@@ -180,9 +180,26 @@ function renderSection(
     case 'focus': {
       const entries = sec.items
         .map((i): FocusEntry | null => {
+          const ranked = i.game ? data.controversial.find((g) => g.slug === i.game!.slug) : null;
+          if (i.paid && i.game) {
+            // A paid game keeps the score card; its TRUE numbers (the ranked row
+            // when it also ranks, else its two public layers — never invented).
+            return {
+              paid: i.paid,
+              game: ranked ?? {
+                slug: i.game.slug,
+                name: i.game.name,
+                our: null,
+                critics: i.game.critics,
+                community: i.game.community,
+                web: null,
+                disconnectValue: null,
+                disconnectBand: null,
+              },
+            };
+          }
           if (i.paid) return { paidItem: i };
-          const game = i.game ? data.controversial.find((g) => g.slug === i.game!.slug) : null;
-          return game ? { game } : null;
+          return ranked ? { game: ranked } : null;
         })
         .filter((e): e is FocusEntry => e !== null);
       return <GamesInFocus entries={entries} display={data.display} title={sec.title} />;

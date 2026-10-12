@@ -600,6 +600,11 @@ export interface HomepageSectionDef {
     mode: HomepageSectionMode;
     itemCount: number;
     deltaWindowHours: number | null;
+    /**
+     * Demo mode only: the Δ window a fresh demo starts with (the bundled feed is
+     * too quiet for the production window). Production uses `deltaWindowHours`.
+     */
+    demoDeltaWindowHours?: number;
     /** Positions of paid items (owner decision: any list; the count is the length). */
     paidPositions: readonly number[];
     /** Below this many qualifying items the section is hidden (null = never). */
@@ -639,6 +644,7 @@ export const HOMEPAGE_SECTIONS = {
       mode: 'pins_auto',
       itemCount: 8,
       deltaWindowHours: 48,
+      demoDeltaWindowHours: 168,
       paidPositions: [],
       minItems: 3,
     },

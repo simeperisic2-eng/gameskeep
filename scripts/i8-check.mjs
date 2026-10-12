@@ -69,6 +69,7 @@
  *
  * Run after `npm run demo:up`: `npm run verify:i8`.
  */
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
 import {
   lit,

@@ -20,6 +20,7 @@
  * Exits non-zero on any failure, so it doubles as a verification gate.
  */
 
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { restoreSettings, snapshotSettings } from './lib/fixtures.mjs';
 
 const TOKEN = process.env.ADMIN_API_TOKEN ?? 'demo-admin-token';

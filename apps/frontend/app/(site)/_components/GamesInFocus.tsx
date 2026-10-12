@@ -1,4 +1,5 @@
-import type { HomepageSectionItem, PublicDisplay, RankedGame } from '@/lib/public-api';
+import type { HomepageSectionItem, PaidInfo, PublicDisplay, RankedGame } from '@/lib/public-api';
+import { PaidLabel } from './PaidLabel';
 import { HomeGameCard } from './HomeGameCard';
 import { TopicCard } from './TopicCard';
 import { scoreToTen } from '@/lib/format';
@@ -44,8 +45,13 @@ function ScoreCol({
   );
 }
 
-/** An organic focus game, or a paid insert (owner decision B) rendered with its label. */
-export type FocusEntry = { game: RankedGame } | { paidItem: HomepageSectionItem };
+/**
+ * An organic focus game, a paid GAME (owner decision B — same score card, with
+ * its render-forced label), or a paid STORY (a story card with its label).
+ */
+export type FocusEntry =
+  | { game: RankedGame; paid?: PaidInfo | null }
+  | { paidItem: HomepageSectionItem };
 
 export function GamesInFocus({
   entries,
@@ -87,7 +93,12 @@ export function GamesInFocus({
               <HomeGameCard key={`paid:${i}`} item={e.paidItem} />
             )
           ) : (
-            <a key={e.game.slug} className="gk-gamecard" href={`/games/${e.game.slug}`}>
+            <a
+              key={`${e.paid ? 'paid' : 'org'}:${e.game.slug}:${i}`}
+              className={`gk-gamecard${e.paid ? ' is-paid' : ''}`}
+              href={`/games/${e.game.slug}`}
+            >
+              {e.paid ? <PaidLabel paid={e.paid} /> : null}
               <h3 className="gk-gamecard-name">{e.game.name}</h3>
               <div className="gk-scores">
                 <ScoreCol label="Critics" score={e.game.critics} />

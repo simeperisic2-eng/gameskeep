@@ -677,6 +677,19 @@ export const newsletterCampaignCreate = z.object({
 
 // ── homepage list / ranking config (I8 Slice 4) ───────────────────────────────
 /**
+ * The public "Suggest a missing game" rate limits (S2 review: moved from code into
+ * app_settings `suggest`). Defaults 5 per IP / 60 overall per 10 minutes.
+ */
+export const suggestSettingsPatch = z
+  .object({
+    perIpMax: z.number().int().min(1).max(1000).optional(),
+    globalMax: z.number().int().min(1).max(100_000).optional(),
+    windowMinutes: z.number().int().min(1).max(1440).optional(),
+  })
+  .strict();
+export type SuggestSettingsPatch = z.infer<typeof suggestSettingsPatch>;
+
+/**
  * The `lists` app_setting (Upcoming enrichment): the "New" window in days. The
  * homepage rail sizes + pins moved to the homepage SECTIONS (Phase P S2), and
  * `pinPromotedGames` is gone for good (paid items are labeled placements) — STRICT, so

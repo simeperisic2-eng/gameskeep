@@ -4,6 +4,7 @@ import { db } from '../db/client';
 import { unmatchedGames } from '../db/schema';
 import { coarsenIp } from '../auth/session';
 import { writeAudit } from '../admin/audit';
+import { suggestSettings } from './suggest-settings';
 
 /**
  * Public "Suggest a missing game" (Upcoming enrichment, decision 3). Files a
@@ -87,22 +88,26 @@ export async function suggestGame(input: GameSuggestionInput, ip?: string | null
  * queue-flooding (an editor dismisses junk), not a security breach.
  * [[OWNER-TODO: in production, put a trusted reverse proxy in front and forward
  * the real client IP (TRUST_PROXY) so this becomes a true per-client limit.]]
+ * The limits are admin settings (app_settings `suggest`, S2 review), read on
+ * every call so a change applies to the next suggestion.
  */
-const PER_IP_MAX = 5; // suggestions per IP per window
-const GLOBAL_MAX = 60; // suggestions across all IPs per window
-const WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const hits = new Map<string, number[]>();
 let globalHits: number[] = [];
+/** Bound the per-IP map (a flood of distinct IPs must not grow it forever). */
+const MAX_TRACKED_IPS = 10_000;
 
-export function allowSuggest(ip?: string | null): boolean {
-  const now = Date.now();
-  const cutoff = now - WINDOW_MS;
+export async function allowSuggest(ip?: string | null, now: number = Date.now()): Promise<boolean> {
+  const { perIpMax, globalMax, windowMinutes } = await suggestSettings();
+  const cutoff = now - windowMinutes * 60_000;
   globalHits = globalHits.filter((t) => t > cutoff);
-  if (globalHits.length >= GLOBAL_MAX) return false;
+  if (globalHits.length >= globalMax) return false;
 
+  if (hits.size > MAX_TRACKED_IPS) {
+    for (const [k, v] of hits) if (!v.some((t) => t > cutoff)) hits.delete(k);
+  }
   const key = coarsenIp(ip) ?? 'unknown';
   const recent = (hits.get(key) ?? []).filter((t) => t > cutoff);
-  if (recent.length >= PER_IP_MAX) {
+  if (recent.length >= perIpMax) {
     hits.set(key, recent);
     return false;
   }

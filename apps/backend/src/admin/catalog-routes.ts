@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import {
   gameResolveInput,
+  suggestSettingsPatch,
   unmatchedDismiss,
   unmatchedResolveCreate,
   unmatchedResolveLink,
@@ -17,6 +18,11 @@ import {
   retryUnmatched,
 } from '../catalog/resolve';
 import { autofillGameVideos, describeVideoProvider } from '../data-source/videos';
+import {
+  setSuggestSettings,
+  suggestSettings,
+  SuggestSettingsError,
+} from '../catalog/suggest-settings';
 import { db } from '../db/client';
 import { games, subjects } from '../db/schema';
 import { actorOf, sendError } from './http';
@@ -37,6 +43,27 @@ export async function registerCatalogAdminRoutes(admin: FastifyInstance): Promis
       const [stats, lastImport] = await Promise.all([getCatalogStats(), readCatalogImportState()]);
       reply.send({ ...stats, lastImport });
     } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // The public suggest form's rate limits (S2 review: an admin setting, audited).
+  admin.get('/catalog/suggest-settings', async (_req, reply) => {
+    try {
+      reply.send({ data: await suggestSettings() });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+  admin.patch('/catalog/suggest-settings', async (req, reply) => {
+    try {
+      const patch = suggestSettingsPatch.parse(req.body ?? {});
+      reply.send({ data: await setSuggestSettings(patch, actorOf(req)) });
+    } catch (err) {
+      if (err instanceof SuggestSettingsError) {
+        reply.code(400).send({ error: 'validation', message: err.message });
+        return;
+      }
       sendError(reply, err);
     }
   });

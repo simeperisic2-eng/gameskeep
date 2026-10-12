@@ -6512,13 +6512,14 @@ a.gk-spot-cov-title:focus-visible {
   padding: 1px 6px;
 }
 .gk-paid-by {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps rather than clips: the advertiser is part of the required disclosure. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   max-width: 100%;
 }
 .gk-topiccard.is-paid,
 .gk-rankcard.is-paid,
+.gk-gamecard.is-paid,
 .gk-srcrow.is-paid {
   border-color: rgba(var(--gk-amber), 0.45);
 }
@@ -6540,4 +6541,31 @@ a.gk-spot-cov-title:focus-visible {
 }
 .gk-srcrow.is-paid .gk-srcrow-body {
   grid-column: 1 / -1;
+}
+.gk-gamecard.is-paid > .gk-paid {
+  margin-bottom: var(--s2);
+}
+/* A paid game in a story feed (Latest): a compact row, cover beside the text. */
+.gk-hgcard.is-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 172px;
+  align-items: start;
+}
+.gk-hgcard.is-row .gk-hgcard-flag {
+  grid-column: 1 / -1;
+}
+.gk-hgcard.is-row .gk-hgcard-body {
+  grid-column: 1;
+  grid-row: 2;
+}
+.gk-hgcard.is-row .gk-hgcard-cover {
+  grid-column: 2;
+  grid-row: 2;
+  margin: var(--s4) var(--s4) var(--s4) 0;
+  border-radius: var(--r-sm);
+}
+@media (max-width: 560px) {
+  .gk-hgcard.is-row {
+    grid-template-columns: minmax(0, 1fr) 104px;
+  }
 }

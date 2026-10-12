@@ -143,7 +143,7 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
             });
             return;
           }
-          if (!allowSuggest(req.ip)) {
+          if (!(await allowSuggest(req.ip))) {
             reply.code(429).send({
               error: 'rate_limited',
               message: 'Too many suggestions — try again shortly.',

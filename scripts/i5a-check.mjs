@@ -25,6 +25,8 @@
  * failure so it doubles as a gate.
  */
 
+import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
+
 const FRONT = `http://localhost:${process.env.FRONTEND_PORT ?? 3000}`;
 const BACK = `http://localhost:${process.env.BACKEND_PORT ?? 4000}`;
 

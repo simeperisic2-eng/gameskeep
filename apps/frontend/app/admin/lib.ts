@@ -202,6 +202,16 @@ export async function getHomepagePreview(): Promise<HomepagePreview> {
   return (await adminGet<{ data: HomepagePreview }>('/lists/preview')).data;
 }
 
+// ── S2 review: the public suggest form's rate limits ─────────────────────────
+export interface SuggestLimits {
+  perIpMax: number;
+  globalMax: number;
+  windowMinutes: number;
+}
+export async function getSuggestLimits(): Promise<SuggestLimits> {
+  return (await adminGet<{ data: SuggestLimits }>('/catalog/suggest-settings')).data;
+}
+
 // ── Phase P S2: homepage sections ─────────────────────────────────────────────
 export type HomepageRuleDimension = 'categories' | 'tags' | 'genres' | 'sources';
 export type HomepageRuleLists = Partial<Record<HomepageRuleDimension, string[]>>;
