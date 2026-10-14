@@ -1,6 +1,7 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '../db/client';
 import { sourceTypes } from '../db/schema';
+import { rulesSettings } from '../rules/settings';
 
 /**
  * Source data rules (Phase P hygiene 3 → S2). The source type shown publicly as
@@ -17,6 +18,8 @@ export async function sourceRuleViolation(next: {
   parentCompany?: unknown;
   typeId?: unknown;
 }): Promise<string | null> {
+  // Phase P S3b: the rule itself is a setting (Rules & limits; default on).
+  if (!(await rulesSettings()).sources.parentBlocksStandalone) return null;
   const parent = typeof next.parentCompany === 'string' ? next.parentCompany.trim() : '';
   if (!parent || typeof next.typeId !== 'string' || !next.typeId) return null;
   const [type] = await db

@@ -6,6 +6,7 @@ import {
   type IntegritySignalStatus,
 } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
+import { rulesSettings } from '../rules/settings';
 import { articleIntegritySignals, articles, sources } from '../db/schema';
 import { diffRows, writeAudit, type AuditActor } from '../admin/audit';
 import type { IntegrityLexicon } from '../display/settings';
@@ -83,7 +84,10 @@ function clausesOf(sentence: string): string[] {
 export function detectIntegrity(
   text: IntegrityText,
   lexicon: IntegrityLexicon,
+  snippetMax: number = INTEGRITY_SNIPPET_MAX,
 ): DetectedIntegrity[] {
+  // Phase P S3b: the clip length is a rule (Rules & limits), capped at the column.
+  const max = Math.min(240, Math.max(40, Math.round(snippetMax)));
   const parts = [text.disclosure, text.excerpt, text.title].filter(
     (p): p is string => typeof p === 'string' && p.trim().length > 0,
   );
@@ -99,7 +103,7 @@ export function detectIntegrity(
           const lc = clause.toLowerCase();
           if (!phrases.some((p) => lc.includes(p))) continue;
           if (negations.some((n) => lc.includes(n))) continue;
-          snippet = clipSnippet(sentence);
+          snippet = clipSnippet(sentence, max);
           break outer;
         }
       }
@@ -126,6 +130,7 @@ export async function scanIntegrity(
 ): Promise<{ reviewsScanned: number; signalsFiled: number }> {
   const byGuid = new Map(items.map((i) => [i.guid, i]));
   const guids = [...byGuid.keys()];
+  const snippetMax = (await rulesSettings()).display.integritySnippetMax;
   let reviewsScanned = 0;
   let signalsFiled = 0;
   for (let i = 0; i < guids.length; i += 500) {
@@ -144,7 +149,7 @@ export async function scanIntegrity(
       const item = row.guid ? byGuid.get(row.guid) : undefined;
       if (!item) continue;
       reviewsScanned += 1;
-      for (const d of detectIntegrity(item, lexicon)) {
+      for (const d of detectIntegrity(item, lexicon, snippetMax)) {
         const inserted = await db
           .insert(articleIntegritySignals)
           .values({

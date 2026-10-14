@@ -1,56 +1,48 @@
 import type { Metadata } from 'next';
+import { getSite, siteDoc, siteText } from '@/lib/site';
 import { DocPage } from '../_components/DocPage';
+import { DocBody, docHasSlot } from '../_components/DocBody';
 import { PromoteForm } from '../_components/PromoteForm';
+import { brand } from '@/lib/labels';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Promote your game',
-  description:
-    'Promote your game on GamesKeep. Placements are always clearly labeled “Promoted” — transparency is the brand. Get in touch to arrange one.',
-  alternates: { canonical: `${siteUrl}/promote` },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/promote`,
-    title: 'Promote your game on GamesKeep',
-    description: 'Paid placements, always clearly labeled. Arrange one by email.',
-  },
-  twitter: { card: 'summary_large_image', title: 'Promote your game on GamesKeep' },
-};
+/**
+ * Promote (SPEC 3.13) — an editable document in the copy registry (Phase P
+ * S3b; Control Panel → Copy → Documents). The text defaults to what this page
+ * said before; the brand / contact placeholders fill in from settings.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  const shareTitle = siteText(site, 'promote.shareTitle');
+  return {
+    title: 'Promote your game',
+    description: siteText(site, 'promote.metaDescription'),
+    alternates: { canonical: `${siteUrl}/promote` },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/promote`,
+      title: shareTitle,
+      description: siteText(site, 'promote.shareDescription'),
+    },
+    twitter: { card: 'summary_large_image', title: shareTitle },
+  };
+}
 
-export default function PromotePage(): React.JSX.Element {
+export default async function PromotePage(): Promise<React.JSX.Element> {
+  const site = await getSite();
+  const body = siteDoc(site, 'promote.body');
   return (
     <DocPage
-      eyebrow="Advertise with GamesKeep"
-      title="Promote your game"
-      lede="Reach players who come here to judge games for themselves. Every paid placement is clearly labeled — the same transparency we hold everyone else to."
+      eyebrow={siteText(site, 'promote.eyebrow')}
+      title={siteText(site, 'promote.title')}
+      lede={siteText(site, 'promote.lede')}
       crumbLabel="Promote"
       crumbPath="/promote"
     >
-      <h2>How it works</h2>
-      <p>
-        Tell us what you’d like to promote and we’ll arrange a placement — a slot on the site, or a{' '}
-        <strong>Promoted</strong> flag on your game’s page. Payment is handled off-site (invoice or
-        transfer); once it’s settled, we activate the placement. There’s no self-serve checkout — at
-        our size a quick email is faster for everyone.
-      </p>
-
-      <h2>Always labeled — no exceptions</h2>
-      <p>
-        Whoever pays gets the promotion, but the reader always knows it’s paid: every placement
-        carries a <strong>“Promoted” / “Sponsored”</strong> label as prominent as our bias flags. We
-        flag other people’s undisclosed influence; we’re not going to hide our own. That’s
-        non-negotiable — it’s what makes the rest of the site trustworthy.
-      </p>
-
-      <h2>Get in touch</h2>
-      <p>Send us the details and we’ll take it from there.</p>
-      <PromoteForm />
-
-      <div className="gk-doc-note">
-        Prefer to just email? Reach us at <a href="/contact">Contact</a>. A self-serve booking flow
-        may come later; for now it’s personal and by arrangement.
-      </div>
+      <DocBody blocks={body} ctx={{ slots: { 'promote-form': <PromoteForm /> } }} />
+      {docHasSlot(body, 'promote-form') ? null : <PromoteForm />}
     </DocPage>
   );
 }

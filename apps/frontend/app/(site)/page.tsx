@@ -22,6 +22,8 @@ import { AdSlot } from './_components/AdSlot';
 import { HomeGameCard } from './_components/HomeGameCard';
 import { PaidLabel } from './_components/PaidLabel';
 import { TagChips } from './_components/TagChips';
+import { getSite, siteText, type PublicSite } from '@/lib/site';
+import { brand, label } from '@/lib/labels';
 
 // Trending is live state + server-rotated — render per request (also guarantees
 // crawlers get full SSR content, not a cached shell).
@@ -29,29 +31,31 @@ export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: {
-    absolute: 'GamesKeep — Gaming News with a Bias Lens & Honest Game Ratings',
-  },
-  description:
-    'GamesKeep clusters gaming news from many outlets into stories, shows the signals we found in the coverage (sponsorship, affiliate links, review copies), and pairs every game with separated critic and community ratings.',
-  alternates: { canonical: siteUrl },
-  openGraph: {
-    type: 'website',
-    url: siteUrl,
-    title: 'GamesKeep — Gaming News with a Bias Lens & Honest Game Ratings',
-    description:
-      'See the same gaming event across every outlet at once, with the coverage signals we found, alongside separated critic/community scores.',
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  const title = `${site.brand} — ${site.tagline}`;
+  return {
+    title: { absolute: title },
+    description: siteText(site, 'home.metaDescription'),
+    alternates: { canonical: siteUrl },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: siteUrl,
+      title,
+      description: siteText(site, 'home.shareDescription'),
+    },
+  };
+}
 
 /**
  * Which Trending story is highlighted first rotates at server render (no client
  * timer). The LIST ORDER never rotates (Phase P S2: pins hold their position).
+ * Phase P S3b: the period is a rule (Rules & limits; 0 = never rotate).
  */
-const ROTATE_MS = 5 * 60 * 1000;
-function rotationIndex(length: number): number {
-  return length < 2 ? 0 : Math.floor(Date.now() / ROTATE_MS) % length;
+function rotationIndex(length: number, minutes: number): number {
+  if (length < 2 || !(minutes > 0)) return 0;
+  return Math.floor(Date.now() / (minutes * 60 * 1000)) % length;
 }
 
 /**
@@ -81,7 +85,7 @@ function RankCard({
       >
         {head}
         <span className="gk-rankcard-name">{item.topic.title}</span>
-        <span className="gk-rankcard-sub">Story</span>
+        <span className="gk-rankcard-sub">{label('label.story')}</span>
       </a>
     );
   }
@@ -101,7 +105,7 @@ function RankCard({
         <span className="gk-score">{headline ?? '—'}</span>
         <span className="gk-score-of">/ 10</span>
       </span>
-      <span className="gk-rankcard-sub">Critics + community</span>
+      <span className="gk-rankcard-sub">{label('label.criticsCommunity')}</span>
       <TagChips tags={item.tags ?? []} asLinks={false} />
     </a>
   );
@@ -120,19 +124,23 @@ function renderSection(
   next: HomepageSection | undefined,
   prev: HomepageSection | undefined,
   data: HomepageData,
+  site: PublicSite,
 ): React.JSX.Element | null {
+  const t = (key: string): string => siteText(site, key);
   switch (sec.key) {
     case 'briefing':
       return (
         <section className="gk-container gk-home-brief" aria-label={sec.title}>
-          <span className="gk-eyebrow">The story, and how it&apos;s being told</span>
+          <span className="gk-eyebrow">{t('home.briefing.eyebrow')}</span>
           <BriefingStrip briefing={data.briefing} />
         </section>
       );
     case 'trending': {
       const rows = sec.items.filter((i) => i.topic || i.game);
       if (rows.length === 0) return null;
-      const secondary = sec.items.filter((i) => i.topic).slice(1, 4);
+      const secondary = sec.items
+        .filter((i) => i.topic)
+        .slice(1, 1 + Math.max(0, site.layout.heroSecondaryCount));
       return (
         <section className="gk-container gk-hero" aria-label={sec.title}>
           <Hero
@@ -140,7 +148,7 @@ function renderSection(
             windowHours={sec.windowHours}
             title={sec.title}
             display={data.display}
-            initial={rotationIndex(rows.length)}
+            initial={rotationIndex(rows.length, site.layout.heroRotateMinutes)}
           />
           {secondary.length > 0 && (
             <div className="gk-hero-secondary">
@@ -164,7 +172,7 @@ function renderSection(
         <section className="gk-container gk-section" aria-label={sec.title}>
           <div className="gk-section-head">
             <div>
-              <span className="gk-eyebrow">Across the industry</span>
+              <span className="gk-eyebrow">{t('home.latest.eyebrow')}</span>
               <h2 className="gk-section-title">{sec.title}</h2>
             </div>
             <a className="gk-readlink" href="/topics">
@@ -218,7 +226,7 @@ function renderSection(
         <section className="gk-container gk-section-tight" aria-label={sec.title}>
           <div className="gk-section-head">
             <div>
-              <span className="gk-eyebrow">Ratings, not just news</span>
+              <span className="gk-eyebrow">{t('home.topRated.eyebrow')}</span>
               <h2 className="gk-section-title">{sec.title}</h2>
             </div>
             <a className="gk-readlink" href="/games/browse">
@@ -262,8 +270,7 @@ function renderSection(
               <h2 className="gk-section-title">{sec.title}</h2>
               {sec.key === 'by_players' ? (
                 <p className="gk-section-sub" style={{ margin: 0 }}>
-                  Average concurrent players on Steam over the last window, vs the window before.
-                  Steam only — consoles publish no live counts.
+                  {t('note.steamHome')}
                 </p>
               ) : null}
             </div>
@@ -303,7 +310,7 @@ function renderSection(
 }
 
 export default async function HomePage(): Promise<React.JSX.Element> {
-  const data = await getHomepage();
+  const [data, site] = await Promise.all([getHomepage(), getSite()]);
   const trendingTopics =
     data.sections
       .find((s) => s.key === 'trending')
@@ -316,11 +323,10 @@ export default async function HomePage(): Promise<React.JSX.Element> {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: 'GamesKeep',
+    name: site.brand,
     url: siteUrl,
-    description:
-      'Gaming news with a bias lens and honest, separated game ratings (critic vs community).',
-    publisher: { '@type': 'Organization', name: 'GamesKeep', url: siteUrl },
+    description: siteText(site, 'home.siteSummary'),
+    publisher: { '@type': 'Organization', name: site.brand, url: siteUrl },
   };
 
   return (
@@ -332,12 +338,12 @@ export default async function HomePage(): Promise<React.JSX.Element> {
 
       {data.sections.length === 0 ? (
         <section className="gk-container gk-section">
-          <p className="gk-section-sub">The homepage is being prepared — check back in a moment.</p>
+          <p className="gk-section-sub">{siteText(site, 'empty.home')}</p>
         </section>
       ) : null}
 
       {data.sections.map((sec, i) => {
-        const node = renderSection(sec, data.sections[i + 1], data.sections[i - 1], data);
+        const node = renderSection(sec, data.sections[i + 1], data.sections[i - 1], data, site);
         return node ? (
           <div key={sec.key} className="gk-home-section" data-section={sec.key}>
             {node}

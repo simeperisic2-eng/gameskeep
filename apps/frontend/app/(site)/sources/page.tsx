@@ -5,30 +5,35 @@ import { breadcrumbLd } from '@/lib/schema';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { SourceCardItem } from '../_components/SourceCardItem';
 import { AdSlot } from '../_components/AdSlot';
+import { getSite, siteText } from '@/lib/site';
+import { brand } from '@/lib/labels';
 
 export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Sources',
-  description:
-    'Every outlet GamesKeep aggregates — who owns them, where ownership is shared, and the signals we found in their coverage. Transparency on who is telling the story.',
-  alternates: { canonical: `${siteUrl}/sources` },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/sources`,
-    title: 'Sources — who covers games, and who owns them',
-    description:
-      'Ownership, shared-ownership conflicts and coverage signals for every outlet we aggregate.',
-  },
-  twitter: { card: 'summary_large_image', title: 'Sources' },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  return {
+    title: 'Sources',
+    description: siteText(site, 'sources.metaDescription'),
+    alternates: { canonical: `${siteUrl}/sources` },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/sources`,
+      title: 'Sources — who covers games, and who owns them',
+      description: siteText(site, 'sources.shareDescription'),
+    },
+    twitter: { card: 'summary_large_image', title: 'Sources' },
+  };
+}
 
 export default async function SourcesPage(): Promise<React.JSX.Element> {
-  const [{ sources, owners, articleTotal }, display] = await Promise.all([
+  const [{ sources, owners, articleTotal }, display, site] = await Promise.all([
     getSources(),
     getDisplay(),
+    getSite(),
   ]);
 
   const crumbs = [
@@ -48,12 +53,9 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
 
         <header className="gk-catalog-head">
           <div>
-            <span className="gk-eyebrow">Who&apos;s covering games</span>
+            <span className="gk-eyebrow">{siteText(site, 'sources.eyebrow')}</span>
             <h1 className="gk-catalog-title">Sources</h1>
-            <p className="gk-section-sub">
-              Who tells the story matters as much as the story. Every outlet we aggregate — its
-              ownership, where that ownership is shared, and the signals we found in its coverage.
-            </p>
+            <p className="gk-section-sub">{siteText(site, 'sources.intro')}</p>
           </div>
           <span className="gk-catalog-count">
             <b>{sources.length}</b> {sources.length === 1 ? 'outlet' : 'outlets'}
@@ -68,10 +70,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
           <section className="gk-owners" aria-label="Ownership concentration">
             <div className="gk-owners-head">
               <h2 className="gk-owners-title">Ownership concentration</h2>
-              <p className="gk-owners-sub">
-                Several outlets we index share a parent company — worth knowing when their coverage
-                lines up.
-              </p>
+              <p className="gk-owners-sub">{siteText(site, 'sources.owners.sub')}</p>
             </div>
             <div className="gk-owners-list">
               {owners.map((o) => (
@@ -95,7 +94,7 @@ export default async function SourcesPage(): Promise<React.JSX.Element> {
         ) : (
           <div className="gk-catalog-empty">
             <p className="gk-section-sub" style={{ margin: 0 }}>
-              No sources are configured yet — outlets appear here as the feed is set up.
+              {siteText(site, 'empty.sources')}
             </p>
           </div>
         )}

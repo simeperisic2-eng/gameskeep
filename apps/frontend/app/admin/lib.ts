@@ -25,6 +25,18 @@ export interface ResourceMeta {
   labelColumn: string;
   hasSlug: boolean;
   fields: FieldSpec[];
+  /**
+   * Phase P S3b: third-party data (shown as received). Editing these fields, or
+   * deleting the row, needs an import-error reason (`conditional`: only for rows
+   * that came from an import).
+   */
+  thirdParty?: {
+    fields: string[] | 'all';
+    conditional: boolean;
+    reasons: { value: string; label: string }[];
+  } | null;
+  /** Phase P S3b: a staff edit of these fields locks them against the engines. */
+  fieldLocks?: { column: string; fields: readonly string[] } | null;
 }
 
 export interface AdminMeta {
@@ -235,6 +247,8 @@ export interface TagQueue {
   threshold: number;
   pending: TagQueueRow[];
   published: TagQueueRow[];
+  /** Phase P S3b: tags an editor removed that readers keep voting for. */
+  pushback?: (TagQueueRow & { removedAt: string | null; votesSinceRemoval: number })[];
   suggestions: TagSuggestionRow[];
 }
 export interface TagSettingsConfig {
@@ -288,6 +302,10 @@ export interface HomepageSectionConfig {
   mode: 'auto' | 'manual' | 'pins_auto';
   itemCount: number;
   deltaWindowHours: number | null;
+  /** Phase P S3b: show the Δ chip on this section's cards. */
+  showDelta: boolean;
+  /** Phase P S3b: slugs whose Δ chip is hidden. */
+  hideDeltaRefs: string[];
   cardTagFamilies: string[];
   cardTagCount: number;
   rules: { include: HomepageRuleLists; exclude: HomepageRuleLists };
@@ -569,6 +587,9 @@ export interface AdminGameRating {
   disconnect: {
     value: number | null;
     band: string | null;
+    /** Phase P S3b: an editor's band override (null = computed) + its reason. */
+    bandOverride?: string | null;
+    bandOverrideReason?: string | null;
     contextTag: string | null;
     ourVsCritics: number | null;
     communityVsWeb: number | null;
@@ -628,4 +649,51 @@ export function rowLabel(meta: ResourceMeta | undefined, row: Row): string {
   const value = row[col];
   if (value === null || value === undefined || value === '') return String(row.id ?? '—');
   return String(value);
+}
+
+// ── Phase P S3b: rules & limits, briefing override, copy registry ────────────
+export type RuleLeaf = boolean | number | number[];
+export interface RuleTree {
+  [k: string]: RuleLeaf | RuleTree;
+}
+export interface RulesConfig {
+  settings: RuleTree;
+  defaults: RuleTree;
+  bounds: Record<string, [number, number]>;
+}
+export async function getRulesConfig(): Promise<RulesConfig> {
+  return (await adminGet<{ data: RulesConfig }>('/rules')).data;
+}
+
+export interface BriefingOverrideConfig {
+  date: string | null;
+  text: string | null;
+  hidden: boolean;
+}
+export async function getBriefingOverride(): Promise<BriefingOverrideConfig> {
+  return (await adminGet<{ data: BriefingOverrideConfig }>('/rules/briefing')).data;
+}
+
+export interface CopyDefView {
+  key: string;
+  group: string;
+  label: string;
+  kind: 'text' | 'longtext' | 'rich' | 'doc' | 'email' | 'domain' | 'brand';
+  default: string;
+  max: number;
+  locked?: boolean;
+  ownerOnly?: boolean;
+  required?: boolean;
+}
+export interface CopyConfig {
+  groups: { key: string; label: string }[];
+  defs: CopyDefView[];
+  stored: Record<string, string>;
+  values: Record<string, string>;
+  tokens: string[];
+  lockedPages: { label: string; path: string; note: string }[];
+  canEditIdentity: boolean;
+}
+export async function getCopyConfig(): Promise<CopyConfig> {
+  return (await adminGet<{ data: CopyConfig }>('/copy')).data;
 }

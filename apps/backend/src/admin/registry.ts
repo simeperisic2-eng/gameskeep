@@ -16,11 +16,17 @@ import {
   SOURCE_STATUSES,
   SUBJECT_TYPES,
   TAG_FAMILIES,
+  TOPIC_LOCKABLE_FIELDS,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
   UPCOMING_OVERRIDES,
   USER_STATUSES,
   VIDEO_PROVIDERS,
+  BADGE_OVERRIDE_STATES,
+  CURATION_LISTS,
+  CURATION_PAGES,
+  IMPORT_FIX_REASON_LABELS,
+  IMPORT_FIX_REASONS,
 } from '@gameskeep/shared/constants';
 import {
   adPlacementCreate,
@@ -33,6 +39,7 @@ import {
   awardNominationCreate,
   awardOutcomeCreate,
   badgeCreate,
+  curationCreate,
   gameCreate,
   gameContentFlagsCreate,
   gameCriticReviewCreate,
@@ -53,6 +60,7 @@ import {
   topicCreate,
   topicTypeCreate,
   unmatchedGameCreate,
+  userBadgeOverrideCreate,
   userCreate,
   userLevelCreate,
 } from '@gameskeep/shared/validation';
@@ -100,6 +108,33 @@ const F = {
   }),
 };
 
+/** Imported game metadata columns (Phase P S3b — third-party, import fixes only). */
+const GAME_IMPORTED_FIELDS = [
+  'name',
+  'summary',
+  'description',
+  'releaseDate',
+  'developer',
+  'publisher',
+  'engine',
+  'ageRatingSystem',
+  'ageRatingValue',
+  'series',
+  'mode',
+  'genres',
+  'platforms',
+  'tags',
+  'screenshots',
+  'coverUrl',
+  'backgroundUrl',
+  'socialLinks',
+  'steamAppId',
+  'hltbMainHours',
+  'hltbCompletionistHours',
+  'steamCompletionRate',
+  'externalRefs',
+] as const;
+
 /** Custom per-operation overrides (used by the Game composite resource). */
 export interface ResourceOps {
   list?: () => Promise<Row[]>;
@@ -130,6 +165,21 @@ export interface ResourceDef {
    * current row + patch). Returns a message to reject with 400, or null.
    */
   validate?: (next: Row) => Promise<string | null>;
+  /**
+   * Phase P S3b — an edit LOCKS the field against the automatic passes: changing
+   * any of `fields` adds its name to the array column `column` (unless the
+   * request itself changes that column — the editor managing locks).
+   */
+  fieldLocks?: { column: string; fields: readonly string[] };
+  /** Phase P S3b — changing any of `fields` sets the boolean column `column`. */
+  boolLock?: { column: string; fields: readonly string[] };
+  /**
+   * Phase P S3b — THIRD-PARTY data (owner rule): an update that changes one of
+   * `fields` (`all` = every column), or a delete, needs `_reason` — an import
+   * fix (IMPORT_FIX_REASONS) — recorded on the audit row. `applies` narrows it
+   * to imported rows (e.g. a game with provider refs, an aggregated article).
+   */
+  thirdParty?: { fields: readonly string[] | 'all'; applies?: (row: Row) => boolean };
   /**
    * I6 hardening (MED): secret columns stripped from every CRUD payload and
    * every audit snapshot (e.g. users.passwordHash). Values render as
@@ -365,6 +415,15 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.games,
     create: gameCreate,
     update: gameCreate.partial(),
+    // Phase P S3b: imported game metadata (IGDB/RAWG) is corrected only to fix an
+    // import error, with a reason; editor-created games are ours.
+    thirdParty: {
+      fields: GAME_IMPORTED_FIELDS,
+      applies: (row) =>
+        Boolean(row.externalRefs) &&
+        typeof row.externalRefs === 'object' &&
+        Object.keys(row.externalRefs as object).length > 0,
+    },
     labelColumn: 'name',
     ops: {
       list: gameList,
@@ -404,6 +463,7 @@ export const RESOURCES: ResourceDef[] = [
       F.enum('upcomingOverride', UPCOMING_OVERRIDES),
       F.bool('upcomingFeatured'),
       F.bool('isIndie'),
+      F.bool('noindex'),
     ],
   },
   {
@@ -442,6 +502,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.topics,
     create: topicCreate,
     update: topicCreate.partial(),
+    fieldLocks: { column: 'lockedFields', fields: TOPIC_LOCKABLE_FIELDS },
     labelColumn: 'title',
     hasSlug: true,
     slugFrom: 'title',
@@ -452,6 +513,9 @@ export const RESOURCES: ResourceDef[] = [
       F.area('aiSummary'),
       F.enum('status', TOPIC_STATUSES),
       F.ref('typeId', 'topic-types'),
+      // Phase P S3b: edited fields lock automatically; remove a name to unlock it.
+      F.json('lockedFields'),
+      F.bool('noindex'),
     ],
   },
   {
@@ -460,6 +524,20 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.articles,
     create: articleCreate,
     update: articleUpdate,
+    // An outlet's article as received; our own CMS articles are ours.
+    thirdParty: {
+      fields: [
+        'title',
+        'excerpt',
+        'url',
+        'publishDate',
+        'author',
+        'thumbnailUrl',
+        'sourceId',
+        'externalGuid',
+      ],
+      applies: (row) => row.origin === 'aggregated',
+    },
     labelColumn: 'title',
     hasSlug: true,
     slugFrom: 'title',
@@ -493,6 +571,7 @@ export const RESOURCES: ResourceDef[] = [
     update: userCreate.partial(),
     redactFields: ['passwordHash'],
     minRank: 50, // owner-only: editing a user can re-assign a role (privilege escalation)
+    boolLock: { column: 'reputationLocked', fields: ['reputation', 'levelId'] },
     labelColumn: 'username',
     fields: [
       F.text('username', true),
@@ -503,6 +582,8 @@ export const RESOURCES: ResourceDef[] = [
       F.ref('roleId', 'roles', true),
       F.ref('levelId', 'user-levels'),
       F.num('reputation'),
+      // Phase P S3b: a staff edit of reputation / level locks them against the job.
+      F.bool('reputationLocked'),
       F.bool('isEmailVerified'),
       F.enum('status', USER_STATUSES),
     ],
@@ -675,6 +756,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gameCriticReviews,
     create: gameCriticReviewCreate,
     update: gameCriticReviewCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'outletName',
     fields: [
       F.ref('gameId', 'games', true),
@@ -694,6 +776,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gameExternalRatings,
     create: gameExternalRatingCreate,
     update: gameExternalRatingCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'label',
     fields: [
       F.ref('gameId', 'games', true),
@@ -732,6 +815,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gameDlc,
     create: gameDlcCreate,
     update: gameDlcCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'name',
     fields: [
       F.ref('gameId', 'games', true),
@@ -781,6 +865,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gamePrices,
     create: gamePriceCreate,
     update: gamePriceCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'store',
     fields: [
       F.ref('gameId', 'games', true),
@@ -799,6 +884,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gameSystemRequirements,
     create: gameSystemRequirementCreate,
     update: gameSystemRequirementCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'kind',
     fields: [
       F.ref('gameId', 'games', true),
@@ -818,6 +904,7 @@ export const RESOURCES: ResourceDef[] = [
     table: schema.gamePlayerCounts,
     create: gamePlayerCountCreate,
     update: gamePlayerCountCreate.partial(),
+    thirdParty: { fields: 'all' },
     labelColumn: 'source',
     fields: [
       F.ref('gameId', 'games', true),
@@ -861,6 +948,60 @@ export const RESOURCES: ResourceDef[] = [
       F.area('resolutionNote'),
     ],
   },
+
+  // Phase P S3b — people + list overrides.
+  {
+    // A staff badge decision: GRANTED shows a badge the job never awarded,
+    // REVOKED hides one it did. Applied at read time (effectiveBadges), so the
+    // reputation job can never undo it. Owner-gated like `users` (the user
+    // picker reads the owner-only users table); the rbac setting can lower it.
+    name: 'user-badge-overrides',
+    label: 'Badge grants / revokes',
+    table: schema.userBadgeOverrides,
+    create: userBadgeOverrideCreate,
+    update: userBadgeOverrideCreate.partial(),
+    minRank: 50,
+    labelColumn: 'state',
+    fields: [
+      F.ref('userId', 'users', true),
+      F.ref('badgeId', 'badges', true),
+      F.enum('state', BADGE_OVERRIDE_STATES, true),
+      F.area('reason'),
+    ],
+  },
+  {
+    // Editor pins / excludes for a computed list on a page (Phase P S3b). Keys
+    // are slugs (stories, games) or source slugs ("ours" = our own articles) for
+    // coverage rows. Discovery rails (/games) use page key "main".
+    name: 'curation',
+    label: 'List curation (pins / excludes)',
+    table: schema.curation,
+    create: curationCreate,
+    update: curationCreate.partial(),
+    validate: async (next) => {
+      const pageKind = typeof next.pageKind === 'string' ? next.pageKind : null;
+      const listKey = typeof next.listKey === 'string' ? next.listKey : null;
+      if (!pageKind || !listKey) return null;
+      const allowed: Record<string, readonly string[]> = {
+        topic: ['related-stories', 'coverage-rows'],
+        game: ['related-stories', 'related-games'],
+        discovery: ['top-rated', 'most-discussed', 'coming-soon'],
+      };
+      if (!(allowed[pageKind] ?? []).includes(listKey)) {
+        return `List "${listKey}" does not exist on a ${pageKind} page (allowed: ${(allowed[pageKind] ?? []).join(', ')}).`;
+      }
+      return null;
+    },
+    labelColumn: 'pageKey',
+    fields: [
+      F.enum('pageKind', CURATION_PAGES, true),
+      F.text('pageKey', true),
+      F.enum('listKey', CURATION_LISTS, true),
+      F.json('pins'),
+      F.json('excludes'),
+      F.area('note'),
+    ],
+  },
 ];
 
 export const RESOURCE_BY_NAME = new Map(RESOURCES.map((r) => [r.name, r]));
@@ -888,5 +1029,16 @@ export function listResourceMeta() {
     labelColumn: r.labelColumn,
     hasSlug: Boolean(r.hasSlug),
     fields: r.fields,
+    thirdParty: r.thirdParty
+      ? {
+          fields: r.thirdParty.fields,
+          conditional: Boolean(r.thirdParty.applies),
+          reasons: IMPORT_FIX_REASONS.map((value) => ({
+            value,
+            label: IMPORT_FIX_REASON_LABELS[value],
+          })),
+        }
+      : null,
+    fieldLocks: r.fieldLocks ?? null,
   }));
 }

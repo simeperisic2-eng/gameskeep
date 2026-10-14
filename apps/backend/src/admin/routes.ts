@@ -8,6 +8,7 @@ import {
 } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
 import { articleSubjects, articleTopics, auditLogs, topicSubjects } from '../db/schema';
+import { IMPORT_FIX_REASONS, type ImportFixReason } from '@gameskeep/shared/constants';
 import { diffRows, writeAudit } from './audit';
 import { registerArticleAdminRoutes } from './article-routes';
 import { registerAwardAdminRoutes } from './award-routes';
@@ -22,6 +23,7 @@ import { registerDashboardRoutes } from './dashboard-routes';
 import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerTagAdminRoutes } from './tag-routes';
+import { registerRulesAdminRoutes } from './rules-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
@@ -118,17 +120,94 @@ async function createOne(resource: ResourceDef, body: unknown, actor: Actor): Pr
   return redactRow(resource, row)!;
 }
 
+/**
+ * Same value? Dates compare by instant, numbers by value (Postgres `numeric`
+ * comes back as a string — "7.50" equals the form's 7.5), JSON by content.
+ * Exported for the unit tests.
+ */
+export function sameValue(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown): unknown => {
+    if (v instanceof Date) return v.toISOString();
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
+      const t = Date.parse(v);
+      return Number.isFinite(t) ? new Date(t).toISOString() : v;
+    }
+    return v === undefined ? null : v;
+  };
+  const numeric = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? v
+      : typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())
+        ? Number(v)
+        : null;
+  const na = numeric(a);
+  const nb = numeric(b);
+  if (na !== null && nb !== null && (typeof a === 'number' || typeof b === 'number')) {
+    return na === nb;
+  }
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+
+/**
+ * Phase P S3b — third-party data: an update changing a third-party field, or a
+ * delete, must carry an import-fix reason. Returns the reason (or null when the
+ * rule doesn't apply); throws a 400 when it applies and none is given.
+ */
+export function importFixReason(
+  resource: ResourceDef,
+  before: Row,
+  changed: string[] | 'delete',
+  reason: unknown,
+): ImportFixReason | null {
+  const tp = resource.thirdParty;
+  if (!tp || (tp.applies && !tp.applies(before))) return null;
+  const touched =
+    changed === 'delete' ? true : changed.some((k) => tp.fields === 'all' || tp.fields.includes(k));
+  if (!touched) return null;
+  if (typeof reason === 'string' && (IMPORT_FIX_REASONS as readonly string[]).includes(reason)) {
+    return reason as ImportFixReason;
+  }
+  throw new ZodError([
+    {
+      code: 'custom',
+      path: ['_reason'],
+      message: `This is third-party data, shown as received — it can only be corrected to fix an import error. Give a reason: ${IMPORT_FIX_REASONS.join(' | ')}.`,
+    },
+  ]);
+}
+
 async function updateOne(
   resource: ResourceDef,
   id: string,
-  body: Record<string, unknown>,
+  rawBody: Record<string, unknown>,
   actor: Actor,
 ): Promise<Row | null> {
+  const { _reason, _note, ...body } = rawBody ?? {};
+  const note = typeof _note === 'string' ? _note.slice(0, 500) : null;
   const parsed = resource.update.parse(body) as Row;
   const rawKeys = Object.keys(body ?? {});
-  if (resource.ops?.update) return resource.ops.update(id, parsed, rawKeys, actor);
+  if (resource.ops?.update) {
+    const prior = resource.ops.get ? await resource.ops.get(id) : await getRow(resource.table, id);
+    if (!prior) return null;
+    const changedKeys = rawKeys.filter((k) => k in parsed && !sameValue(prior[k], parsed[k]));
+    const reason = importFixReason(resource, prior, changedKeys, _reason);
+    const out = await resource.ops.update(id, parsed, rawKeys, actor);
+    if (out && reason) {
+      await writeAudit({
+        action: 'update',
+        entityType: resource.name,
+        entityId: id,
+        changes: { _reason: reason, _note: note, fields: changedKeys },
+        summary: `import fix (${reason}) on ${changedKeys.join(', ')}`,
+        actor,
+      });
+    }
+    return out;
+  }
   const before = await getRow(resource.table, id);
   if (!before) return null;
+  const changed = rawKeys.filter((k) => k in parsed && !sameValue(before[k], parsed[k]));
+  const reason = importFixReason(resource, before, changed, _reason);
   if (resource.validate) {
     const next: Row = { ...before };
     for (const key of rawKeys) if (key in parsed) next[key] = parsed[key];
@@ -137,28 +216,64 @@ async function updateOne(
   // Apply only the fields the client actually sent (no default-injection on PATCH).
   const patch: Row = {};
   for (const key of rawKeys) if (key in parsed) patch[key] = parsed[key];
+  // Phase P S3b: an edit locks the field (unless the editor is managing the locks).
+  if (resource.fieldLocks) {
+    const { column, fields } = resource.fieldLocks;
+    if (!changed.includes(column)) {
+      const add = changed.filter((k) => fields.includes(k));
+      if (add.length) {
+        const current = Array.isArray(before[column]) ? (before[column] as string[]) : [];
+        patch[column] = [...new Set([...current, ...add])];
+      } else {
+        delete patch[column];
+      }
+    }
+  }
+  if (resource.boolLock) {
+    const { column, fields } = resource.boolLock;
+    if (!changed.includes(column)) {
+      if (changed.some((k) => fields.includes(k))) patch[column] = true;
+      else delete patch[column];
+    }
+  }
   const after = await updateRow(resource.table, id, patch);
   if (!after) return null;
   await writeAudit({
     action: 'update',
     entityType: resource.name,
     entityId: id,
-    changes: redactDiff(resource, diffRows(before, after)),
+    changes: reason
+      ? { ...redactDiff(resource, diffRows(before, after)), _reason: reason, _note: note }
+      : redactDiff(resource, diffRows(before, after)),
+    summary: reason ? `import fix (${reason})` : undefined,
     actor,
   });
   return redactRow(resource, after)!;
 }
 
-async function deleteOne(resource: ResourceDef, id: string, actor: Actor): Promise<Row | null> {
-  if (resource.ops?.remove) return resource.ops.remove(id, actor);
+async function deleteOne(
+  resource: ResourceDef,
+  id: string,
+  actor: Actor,
+  rawReason?: unknown,
+): Promise<Row | null> {
+  if (resource.ops?.remove) {
+    const prior = resource.ops.get ? await resource.ops.get(id) : null;
+    if (prior) importFixReason(resource, prior, 'delete', rawReason);
+    return resource.ops.remove(id, actor);
+  }
   const before = await getRow(resource.table, id);
   if (!before) return null;
+  const reason = importFixReason(resource, before, 'delete', rawReason);
   await deleteRow(resource.table, id);
   await writeAudit({
     action: 'delete',
     entityType: resource.name,
     entityId: id,
-    changes: { deleted: redactRow(resource, before) },
+    changes: reason
+      ? { deleted: redactRow(resource, before), _reason: reason }
+      : { deleted: redactRow(resource, before) },
+    summary: reason ? `import fix (${reason}) — removed` : undefined,
     actor,
   });
   return redactRow(resource, before);
@@ -403,6 +518,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       await registerJobAdminRoutes(admin);
       // Phase P S2: homepage sections (order / config / pins / promotions / switches).
       await registerHomepageAdminRoutes(admin);
+      // Phase P S3b: rules & limits, briefing override, copy registry.
+      await registerRulesAdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {
@@ -480,7 +597,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         if (!resource) return;
         if (!enforceRank(req, reply, resource)) return;
         try {
-          const row = await deleteOne(resource, id, actorOf(req));
+          const reason = (req.query as { reason?: unknown } | undefined)?.reason;
+          const row = await deleteOne(resource, id, actorOf(req), reason);
           if (!row) {
             reply.code(404).send({ error: 'not_found' });
             return;

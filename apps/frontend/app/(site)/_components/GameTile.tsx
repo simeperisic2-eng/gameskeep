@@ -1,5 +1,6 @@
 import type { CatalogGame } from '@/lib/public-api';
 import { scoreToTen } from '@/lib/format';
+import { bandLabel, gameStatusLabel } from '@/lib/labels';
 import { CoverArt } from './CoverArt';
 import { TagChips } from './TagChips';
 import { QuickView } from './QuickView';
@@ -11,21 +12,6 @@ import { QuickView } from './QuickView';
  * real (notable/large) — the one signal worth surfacing at a glance. Red is used
  * only for a large gap (the brand rule); everything else stays calm.
  */
-const STATUS_LABEL: Record<string, string> = {
-  announced: 'Announced',
-  in_development: 'In development',
-  early_access: 'Early access',
-  released: 'Released',
-  delisted: 'Delisted',
-};
-
-const BAND_LABEL: Record<string, string> = {
-  agree: 'Aligned',
-  mild: 'Mild gap',
-  notable: 'Notable gap',
-  large: 'Large gap',
-};
-
 function TileScore({
   label,
   score,
@@ -54,7 +40,7 @@ export function GameTile({
   /** Optional factual context line (A1 discovery — e.g. "12 articles · 6 outlets"). */
   note?: string;
 }): React.JSX.Element {
-  const statusLabel = STATUS_LABEL[game.status] ?? game.status;
+  const statusLabel = gameStatusLabel(game.status);
   // Only surface the gap chip when it actually signals disagreement.
   const showBand =
     game.disconnectValue != null &&
@@ -73,7 +59,7 @@ export function GameTile({
         {showBand ? (
           <span className={`gk-tile-band gk-gd-${game.disconnectBand}`}>
             <span className="gk-tile-band-dot" aria-hidden />
-            {BAND_LABEL[game.disconnectBand ?? 'mild']}
+            {bandLabel(game.disconnectBand ?? 'mild', true)}
           </span>
         ) : null}
       </a>

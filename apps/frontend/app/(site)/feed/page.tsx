@@ -5,6 +5,8 @@ import { getFeed, type FeedItem } from '@/lib/feed-api';
 import { relativeTime, truncateWords } from '@/lib/format';
 import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { FollowButton } from '../_components/FollowButton';
+import { getSite, siteText } from '@/lib/site';
+import { excerptRule, label } from '@/lib/labels';
 
 // PER-USER — must never sit on the anonymous edge cache (decision 9). Logged-out
 // visitors keep the curated cached homepage untouched; this page is always fresh.
@@ -12,12 +14,15 @@ export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Your Feed',
-  description: 'Your personal GamesKeep feed — the latest from the games and topics you follow.',
-  robots: { index: false }, // a private, per-user page is never indexed
-  alternates: { canonical: `${siteUrl}/feed` },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  return {
+    title: 'Your Feed',
+    description: siteText(site, 'feed.metaDescription'),
+    robots: { index: false }, // a private, per-user page is never indexed
+    alternates: { canonical: `${siteUrl}/feed` },
+  };
+}
 
 function FeedCard({ item }: { item: FeedItem }): React.JSX.Element {
   const when = relativeTime(item.publishDate);
@@ -39,7 +44,7 @@ function FeedCard({ item }: { item: FeedItem }): React.JSX.Element {
         )}
       </h3>
       {item.excerpt ? (
-        <p className="gk-feed-item-excerpt">{truncateWords(item.excerpt, 180)}</p>
+        <p className="gk-feed-item-excerpt">{truncateWords(item.excerpt, excerptRule('feed'))}</p>
       ) : null}
       <div className="gk-feed-item-meta">
         {item.sourceName ? (
@@ -155,9 +160,7 @@ export default async function FeedPage(): Promise<React.JSX.Element> {
             {feed!.items.length > 0 ? (
               feed!.items.map((item) => <FeedCard key={item.id} item={item} />)
             ) : (
-              <p className="gk-feed-quiet">
-                Nothing new from your follows yet — check back after the next pull.
-              </p>
+              <p className="gk-feed-quiet">{label('empty.feed')}</p>
             )}
           </section>
         </div>

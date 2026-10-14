@@ -3,7 +3,6 @@ import { desc, eq } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
   articleTrustVotes,
-  badges,
   comments,
   follows,
   gameHypeVotes,
@@ -19,6 +18,7 @@ import {
   tags,
   topicBiasVotes,
   topics,
+  userBadgeOverrides,
   userBadges,
   userConsents,
   userLevels,
@@ -26,6 +26,7 @@ import {
   users,
 } from '../db/schema';
 import { coarsenIp } from '../auth/session';
+import { effectiveBadges } from '../reputation/engine';
 
 /**
  * GDPR operations (SPEC I6, Slice 7, decision 7). TWO rights:
@@ -88,6 +89,8 @@ export async function deleteAccount(userId: string): Promise<DeleteResult | null
     await tx.delete(follows).where(eq(follows.userId, userId));
     await tx.delete(userConsents).where(eq(userConsents.userId, userId));
     await tx.delete(userBadges).where(eq(userBadges.userId, userId));
+    // Phase P S3b: staff badge decisions about this user (they carry a reason).
+    await tx.delete(userBadgeOverrides).where(eq(userBadgeOverrides.userId, userId));
     // The subscription carries the email (PII) — remove any row tied to this user.
     await tx.delete(newsletterSubscriptions).where(eq(newsletterSubscriptions.userId, userId));
 
@@ -148,11 +151,12 @@ export async function exportAccount(userId: string): Promise<AccountExport | nul
     .limit(1);
   if (!profile) return null;
 
-  const badgeRows = await db
-    .select({ key: badges.key, label: badges.label, awardedAt: userBadges.awardedAt })
-    .from(userBadges)
-    .innerJoin(badges, eq(badges.id, userBadges.badgeId))
-    .where(eq(userBadges.userId, userId));
+  // Phase P S3b: the badges as shown (earned − revoked + granted).
+  const badgeRows = (await effectiveBadges(userId)).map((b) => ({
+    key: b.key,
+    label: b.label,
+    awardedAt: b.awardedAt ?? null,
+  }));
 
   const ratings = await db
     .select({

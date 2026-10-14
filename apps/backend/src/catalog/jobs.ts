@@ -4,7 +4,7 @@ import { redis } from '../redis/client';
 import { syncDerivedGameStatuses } from './status';
 import { recomputeHomepageQuietly } from '../homepage/jobs';
 import { importCatalog, type CatalogImportResult } from './import';
-import { syncImportedTags } from '../tags/service';
+import { enqueueTagSync } from '../tags/jobs';
 
 /**
  * Catalog-import background job (SPEC I2 §2; CLAUDE.md "nothing heavy on user
@@ -89,8 +89,8 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
       await redis.set(CATALOG_STATE_KEY, JSON.stringify(state));
       // Newly imported games get their status derived from the release date too.
       await syncDerivedGameStatuses();
-      // …and their free-form tags mapped onto the taxonomy (or queued) — S3.
-      await syncImportedTags().catch(() => undefined);
+      // …and their free-form tags mapped onto the taxonomy (or queued) — its own job (S3b).
+      await enqueueTagSync({ reason: 'catalog' }).catch(() => undefined);
       await recomputeHomepageQuietly('catalog');
       return result;
     },

@@ -14,6 +14,17 @@ export interface EmailMessage {
   purpose: EmailPurpose;
 }
 
+/**
+ * The public identity an email is sent under (Phase P S3b — the copy registry's
+ * brand name + display domain; a rename is a settings change). Defaults keep the
+ * pure builders callable without it.
+ */
+export interface EmailBrand {
+  name: string;
+  domain: string;
+}
+export const DEFAULT_EMAIL_BRAND: EmailBrand = { name: 'GamesKeep', domain: 'gameskeep.com' };
+
 /** Trim a trailing slash so `${base}/path` never doubles up. */
 function origin(base: string): string {
   return base.replace(/\/+$/, '');
@@ -23,14 +34,15 @@ export function verificationEmail(
   toEmail: string,
   rawToken: string,
   siteUrl: string,
+  brand: EmailBrand = DEFAULT_EMAIL_BRAND,
 ): EmailMessage {
   const link = `${origin(siteUrl)}/verify-email?token=${rawToken}`;
   return {
     toEmail,
     purpose: 'verify_email',
-    subject: 'Confirm your GamesKeep email',
+    subject: `Confirm your ${brand.name} email`,
     bodyText: [
-      'Welcome to GamesKeep.',
+      `Welcome to ${brand.name}.`,
       '',
       'Confirm this email address to activate rating, voting and commenting:',
       link,
@@ -44,14 +56,15 @@ export function passwordResetEmail(
   toEmail: string,
   rawToken: string,
   siteUrl: string,
+  brand: EmailBrand = DEFAULT_EMAIL_BRAND,
 ): EmailMessage {
   const link = `${origin(siteUrl)}/reset-password?token=${rawToken}`;
   return {
     toEmail,
     purpose: 'password_reset',
-    subject: 'Reset your GamesKeep password',
+    subject: `Reset your ${brand.name} password`,
     bodyText: [
-      'We received a request to reset your GamesKeep password.',
+      `We received a request to reset your ${brand.name} password.`,
       '',
       'Set a new password here:',
       link,
@@ -75,6 +88,7 @@ export function newsletterEmail(
   body: string,
   unsubscribeToken: string,
   siteUrl: string,
+  brand: EmailBrand = DEFAULT_EMAIL_BRAND,
 ): EmailMessage {
   const unsubscribe = `${origin(siteUrl)}/unsubscribe?token=${unsubscribeToken}`;
   return {
@@ -89,7 +103,7 @@ export function newsletterEmail(
       body.trim(),
       '',
       '—',
-      'You are receiving this because you subscribed to GamesKeep updates.',
+      `You are receiving this because you subscribed to ${brand.name} updates (${brand.domain}).`,
       `Unsubscribe at any time: ${unsubscribe}`,
     ].join('\n'),
   };
@@ -101,15 +115,19 @@ export function newsletterEmail(
  * notice goes to the real address owner instead, never confirming existence to
  * the requester. Carries NO token (the owner requests their own reset).
  */
-export function accountExistsEmail(toEmail: string, siteUrl: string): EmailMessage {
+export function accountExistsEmail(
+  toEmail: string,
+  siteUrl: string,
+  brand: EmailBrand = DEFAULT_EMAIL_BRAND,
+): EmailMessage {
   const login = `${origin(siteUrl)}/login`;
   const reset = `${origin(siteUrl)}/reset-password`;
   return {
     toEmail,
     purpose: 'account_exists',
-    subject: 'Someone tried to register with your GamesKeep email',
+    subject: `Someone tried to register with your ${brand.name} email`,
     bodyText: [
-      'Someone just tried to create a GamesKeep account using this email address,',
+      `Someone just tried to create a ${brand.name} account using this email address,`,
       'which already has an account.',
       '',
       `If this was you, simply sign in: ${login}`,

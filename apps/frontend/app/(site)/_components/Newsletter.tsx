@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { apiPost } from '@/lib/client';
+import { RichText } from './DocBody';
+import { useSite } from './SiteProvider';
 
 /**
  * Newsletter sign-up (Phase P S2): the SAME explicit-opt-in path as the Awards
@@ -15,6 +17,7 @@ export function Newsletter({
 }: {
   title?: string;
 }): React.JSX.Element {
+  const site = useSite();
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
   const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
@@ -40,12 +43,9 @@ export function Newsletter({
 
   return (
     <section className="gk-newsletter" aria-label="Newsletter signup">
-      <span className="gk-eyebrow">Newsletter</span>
+      <span className="gk-eyebrow">{site.t('home.newsletter.eyebrow')}</span>
       <h3>{title}</h3>
-      <p>
-        A short briefing in your inbox: the biggest stories, our AI summaries, and the coverage
-        signals we found. No hype, no spam.
-      </p>
+      <p>{site.t('home.newsletter.sub')}</p>
       {state === 'done' ? (
         <p className="gk-news-done" role="status">
           ✓ {msg}
@@ -73,9 +73,9 @@ export function Newsletter({
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
             />
+            {/* Locked consent wording (legally required) — the brand fills in. */}
             <span>
-              Email me the GamesKeep briefing. This is marketing consent, separate from any account
-              — I can unsubscribe anytime (see our <a href="/privacy">Privacy notice</a>).
+              <RichText nodes={site.rich['consent.newsletter'] ?? []} />
             </span>
           </label>
           {state === 'error' ? (

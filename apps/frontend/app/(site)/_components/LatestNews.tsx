@@ -1,5 +1,6 @@
 import type { LatestArticle } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
+import { brand, excerptRule, label } from '@/lib/labels';
 import { ArticleBiasTag } from './BiasBar';
 import { NoSignalsNote } from './IntegrityBlock';
 
@@ -24,7 +25,7 @@ export function LatestNews({ articles }: { articles: LatestArticle[] }): React.J
       </div>
 
       {articles.length === 0 ? (
-        <p className="gk-section-sub">No articles yet.</p>
+        <p className="gk-section-sub">{label('empty.latest')}</p>
       ) : (
         <div>
           {articles.map((a) => {
@@ -35,13 +36,13 @@ export function LatestNews({ articles }: { articles: LatestArticle[] }): React.J
                 <div className="gk-artrow-top">
                   <span className="gk-source">
                     <span className="gk-source-dot" aria-hidden />
-                    {a.sourceName ?? (a.origin === 'ours' ? 'GamesKeep' : 'Source')}
+                    {a.sourceName ?? (a.origin === 'ours' ? brand() : 'Source')}
                   </span>
                 </div>
                 <h3 className="gk-artrow-title">{a.title}</h3>
                 {a.excerpt ? (
                   <p className="gk-topiccard-tldr" style={{ marginTop: 6 }}>
-                    {truncateWords(a.excerpt, 110)}
+                    {truncateWords(a.excerpt, excerptRule('latest'))}
                   </p>
                 ) : null}
                 <div className="gk-artrow-foot">

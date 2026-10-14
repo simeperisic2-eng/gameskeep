@@ -1,3 +1,4 @@
+import { bandLabel, label } from '@/lib/labels';
 import type {
   CardTag,
   HomepageSectionItem,
@@ -16,19 +17,12 @@ import { scoreToTen } from '@/lib/format';
  * a big critic↔community gap. This is where the DISCONNECT differentiator
  * surfaces on the homepage, bridging the news side to the catalog.
  */
-const BAND_LABEL: Record<string, string> = {
-  agree: 'In agreement',
-  mild: 'Mild gap',
-  notable: 'Notable gap',
-  large: 'Large gap',
-};
-
 function Disconnect({ value, band }: { value: number; band: string | null }): React.JSX.Element {
   const key = band ?? 'mild';
   return (
     <span className={`gk-disconnect gk-disc-${key}`}>
       <span className="num">{(value / 10).toFixed(1)}</span>
-      {BAND_LABEL[key] ?? 'Gap'}
+      {bandLabel(key) ?? 'Gap'}
     </span>
   );
 }
@@ -74,11 +68,9 @@ export function GamesInFocus({
     <section className="gk-container gk-section" aria-label="Games in focus">
       <div className="gk-section-head">
         <div>
-          <span className="gk-eyebrow">The disconnect</span>
+          <span className="gk-eyebrow">{label('home.focus.eyebrow')}</span>
           <h2 className="gk-section-title">{title}</h2>
-          <p className="gk-section-sub">
-            Where critics and players don&apos;t agree — the gap, with context.
-          </p>
+          <p className="gk-section-sub">{label('home.focus.sub')}</p>
         </div>
         <a className="gk-readlink" href="/games">
           All ratings →

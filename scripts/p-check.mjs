@@ -112,6 +112,20 @@
  *   S3.9  the owner's migration decisions; an editor's removal sticks
  *   S3.10 reader vote rules, suggestions, GDPR export
  *   S3.11 RBAC + audit
+ *   S3b.1  story overrides stick (locks, stale sweep, summary refresh, FULL re-cluster)
+ *   S3b.2  people overrides: reputation lock; badge grant / revoke
+ *   S3b.3  Δ section switch + per-item hide; one-day briefing override
+ *   S3b.4  "How it's being covered": per-story pick / exclude + row-count rule
+ *   S3b.5  curation of related stories / games / discovery rails + list sizes
+ *   S3b.6  disconnect band override with a reason
+ *   S3b.7  per-page noindex (story, game) — robots + sitemap
+ *   S3b.8  hardcoded rules → settings: validated, RBAC, applied, audited
+ *   S3b.9  copy registry: rename by setting, locks, owner-only identity, docs
+ *   S3b.10 third-party data needs an import-error reason
+ *   S3b.11 (gap 1) import mapping = background job with its own id
+ *   S3b.12 (gap 2) predatory monetization only as the Pay-to-win issue tag
+ *   S3b.13 (gap 3) votes on a removed tag → the pushback group
+ *   S3b.14 (gap 4) demo issue dates relative to boot
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -2461,7 +2475,7 @@ const s3Restore = {
   settings: null,
   pairs: [],
   section: null, // by_players card-tag config
-  predatoryWas: null,
+  legacyKey: false, // S3.9 parked a legacy predatory flag (consumed by the sync)
   reopenImport: null, // { id, state } of the import row the sticky-removal check touched
 };
 const tagRow = (game, tag) => {
@@ -2878,33 +2892,47 @@ COMMIT;`,
   const rogue = tagRow('hades-ii', 'roguelike');
   s3Restore.reopenImport = rogue ? { id: rogue.id, state: rogue.state } : null;
   const removed = rogue ? await modAct(mod, `tag-queue/${rogue.id}/reject`) : { status: 0 };
-  // Pay-to-win: the legacy predatory flag becomes the issue tag on (re-)sync.
-  s3Restore.predatoryWas = psql(
-    "SELECT f.predatory_monetization::text FROM game_content_flags f JOIN games g ON g.id = f.game_id JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter';",
+  // Pay-to-win: a legacy predatory flag becomes the issue tag on sync. S3b
+  // dropped the column — migration 0023 parks every set flag in app_settings
+  // `legacy-predatory` first, and the tags JOB hands it over (then deletes it).
+  const sdGameId = psql(
+    "SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter';",
   );
+  s3Restore.legacyKey = true;
   psql(
     `BEGIN;
-UPDATE game_content_flags SET predatory_monetization = true WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter');
-${auditSql({ entityType: 'game-content-flags', entityId: 'stellar-drifter', summary: 'verify fixture: set the legacy predatory flag (Pay-to-win migration check)' })}
+INSERT INTO app_settings (key, value) VALUES ('legacy-predatory', ${lit(JSON.stringify({ gameIds: [sdGameId], at: new Date().toISOString(), verifyRun: RUN }))}::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+${auditSql({ entityType: 'app-settings', entityId: 'legacy-predatory', summary: 'verify fixture: a parked legacy predatory flag (Pay-to-win migration check)' })}
 COMMIT;`,
   );
   const sync = await adminApi('/tag-queue/sync', 'POST', {});
+  const syncRun = sync.json?.jobId
+    ? await waitForJobLib('tags', sync.json.jobId, 120_000)
+    : { ok: false, state: 'no job id' };
+  const syncResult = sync.json?.jobId
+    ? (await adminApi(`/jobs/tags/${sync.json.jobId}`)).json?.data?.result
+    : null;
+  const legacyLeft = Number(
+    psql("SELECT count(*) FROM app_settings WHERE key = 'legacy-predatory';"),
+  );
   const rogueAfter = tagRow('hades-ii', 'roguelike');
   const sd = await api(BACK, '/public/game/stellar-drifter');
   const p2w = (sd.json?.data?.tagGroups?.issues ?? []).find((t) => t.slug === 'pay-to-win');
   check(
-    'S3.9 owner migration decisions: a matching imported tag is published (source import, no provenance claim); an unmatched one waits as a suggestion; "indie" is never a tag (is_indie stays a property); the predatory content flag becomes the Pay-to-win ISSUE tag ("Added by editors", no expiry) and leaves the public content flags; an editor\'s removal survives a re-sync',
+    'S3.9 owner migration decisions: a matching imported tag is published (source import, no provenance claim); an unmatched one waits as a suggestion; "indie" is never a tag (is_indie stays a property); a parked legacy predatory flag becomes the Pay-to-win ISSUE tag ("Added by editors", no expiry) through the tags job (and is consumed) and is not a public content flag; an editor\'s removal survives a re-sync',
     importRow[1] === 'import' &&
       queuedUnmatched >= 1 &&
       indieTouched === 0 &&
-      sync.status === 200 &&
-      (sync.json?.data?.payToWin ?? 0) >= 1 &&
+      sync.status === 202 &&
+      syncRun.ok &&
+      (syncResult?.payToWin ?? 0) >= 1 &&
+      legacyLeft === 0 &&
       p2w?.provenance === 'Added by editors' &&
       p2w?.status === 'active' &&
       !('payToWinPredatory' in (sd.json?.data?.contentFlags?.monetization ?? {})) &&
       removed.status === 200 &&
       rogueAfter?.state === 'rejected',
-    `import=${importRow.join('/')} unmatched queued=${queuedUnmatched} indie=${indieTouched} · sync=${sync.status} p2w=${sync.json?.data?.payToWin} "${p2w?.provenance}" · removal ${rogue?.state}→${rogueAfter?.state}`,
+    `import=${importRow.join('/')} unmatched queued=${queuedUnmatched} indie=${indieTouched} · sync=${sync.status} job=${syncRun.state} p2w=${syncResult?.payToWin} legacy left=${legacyLeft} "${p2w?.provenance}" · removal ${rogue?.state}→${rogueAfter?.state}`,
   );
 
   // ── S3.10 reader vote rules + suggestions + GDPR export ─────────────────────
@@ -3011,6 +3039,741 @@ COMMIT;`,
   );
 }
 
+// ═══════════════════════ Phase P S3b — overrides that stick, rules, copy ═════
+// Restored in restoreS3b (finally) THROUGH THE API, so the backend's short
+// in-process caches (rules / copy, 10 s) drop at once; then audited cleanup.
+const s3bRestore = {
+  topic: null, // { slug, title, tldr, status } — undone by slug after the re-cluster
+  gameNoindex: null, // { id }
+  rules: null, // the settings tree before the run (PATCHed back)
+  copyKeys: new Set(),
+  curationIds: [],
+  badgeOverrideIds: [],
+  sections: new Map(), // key → { showDelta, hideDeltaRefs }
+  briefing: false,
+  bandGameId: null,
+  critic: null, // { id, score }
+  sourceIds: [],
+  settings: null,
+};
+const topicRowBySlug = (slug) => {
+  const r = psql(
+    `SELECT row_to_json(x) FROM (SELECT id, slug, title, tldr, status::text AS status, locked_fields AS "lockedFields", noindex FROM topics WHERE slug = ${lit(slug)}) x;`,
+  );
+  return r ? JSON.parse(r) : null;
+};
+const robotsOf = (h) => h.match(/<meta name="robots" content="([^"]*)"/)?.[1] ?? '';
+const copyPatch = (who, values) =>
+  who === 'token'
+    ? adminApi('/copy', 'PATCH', { values })
+    : uiApi(who, '/admin/api/copy', 'PATCH', { values });
+const isoDay = () => new Date().toISOString().slice(0, 10);
+const deepEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+async function s3b() {
+  s3bRestore.settings = snapshotSettings(['rules', 'copy', 'briefing-override']);
+  const rulesGet = (await adminApi('/rules')).json?.data ?? null;
+  s3bRestore.rules = rulesGet?.settings ?? null;
+  const mod = await login('demo-moderator', DEMO_PW);
+  const adminUi = await uiLogin('demo-admin');
+  const ownerUi = await uiLogin('demo-owner');
+
+  // ── S3b.1 story overrides stick: field locks + the stale sweep + a FULL re-cluster
+  const pick = psql(
+    "SELECT t.slug FROM topics t WHERE t.embedding IS NOT NULL AND (SELECT count(*) FROM article_topics at WHERE at.topic_id = t.id) >= 2 ORDER BY (t.status = 'resolved') DESC, t.last_activity_at ASC LIMIT 1;",
+  );
+  const before = topicRowBySlug(pick);
+  s3bRestore.topic = before
+    ? { slug: pick, title: before.title, tldr: before.tldr, status: before.status }
+    : null;
+  const edited = {
+    title: `Editor title S3b ${RUN}`,
+    tldr: `Editor TL;DR S3b ${RUN}`,
+    status: 'developing',
+  };
+  const topicPatch = before
+    ? await adminApi(`/topics/${before.id}`, 'PATCH', { ...edited, noindex: true })
+    : { status: 0 };
+  const locked = new Set(topicRowBySlug(pick)?.lockedFields ?? []);
+  const reset = await api(BACK, '/admin/api/clustering/ingest', {
+    method: 'POST',
+    token: TOKEN,
+    body: { reset: true },
+  });
+  const resetState = await waitForJob(reset.json?.jobId);
+  const after = topicRowBySlug(pick);
+  const carryLeft = Number(
+    psql(`SELECT count(*) FROM topic_editorial_carryover WHERE slug = ${lit(pick)};`),
+  );
+  const pubTopic = (await api(BACK, `/public/topic/${pick}`)).json?.data;
+  const LOCKS = ['title', 'tldr', 'status'];
+  check(
+    'S3b.1 story overrides stick: an editor edit of title / TL;DR / status locks those fields; the stale → resolved sweep, the summary refresh and a FULL re-cluster keep them — the recreated story gets back its editor fields, its locks, its noindex and its slug (carry-over row consumed)',
+    topicPatch.status === 200 &&
+      LOCKS.every((f) => locked.has(f)) &&
+      resetState === 'completed' &&
+      after !== null &&
+      after.id !== before?.id &&
+      after.title === edited.title &&
+      after.tldr === edited.tldr &&
+      after.status === 'developing' &&
+      LOCKS.every((f) => (after.lockedFields ?? []).includes(f)) &&
+      after.noindex === true &&
+      carryLeft === 0 &&
+      pubTopic?.title === edited.title,
+    `patch=${topicPatch.status} locks=[${[...locked]}] was=${before?.status} reset=${resetState} recreated=${after?.id !== before?.id} title=${after?.title === edited.title} tldr=${after?.tldr === edited.tldr} status=${after?.status} noindex=${after?.noindex} carryLeft=${carryLeft}`,
+  );
+
+  // ── S3b.2 people overrides: reputation lock; badge grant / revoke ──────────
+  const rep = await makeVerified('s3brep');
+  // 77 is a mid-ladder reputation; the staff-set level is the top one (legend).
+  const legendId = psql("SELECT id FROM user_levels WHERE key = 'legend';");
+  const repPatch = await adminApi(`/users/${rep.id}`, 'PATCH', {
+    reputation: 77,
+    levelId: legendId,
+  });
+  const repJob = await runJobAndWait('/reputation/recompute', 'reputation', {}, 120_000);
+  const [repAfter, repLocked] = psql(
+    `SELECT reputation || '|' || reputation_locked FROM users WHERE id = ${lit(rep.id)};`,
+  ).split('|');
+  const [badgeA, badgeB] = psql(
+    "SELECT id || E'\\t' || key FROM badges WHERE is_active ORDER BY key LIMIT 2;",
+  )
+    .split('\n')
+    .map((l) => l.split('\t'));
+  // B is EARNED (fixture row, audited) and then revoked; A is granted.
+  psql(
+    `BEGIN;
+INSERT INTO user_badges (user_id, badge_id) VALUES (${lit(rep.id)}, ${lit(badgeB?.[0])}) ON CONFLICT DO NOTHING;
+${auditSql({ entityType: 'user-badges', entityId: rep.id, summary: 'verify fixture: an earned badge to revoke (S3b.2)' })}
+COMMIT;`,
+  );
+  const grant = await adminApi('/user-badge-overrides', 'POST', {
+    userId: rep.id,
+    badgeId: badgeA?.[0],
+    state: 'granted',
+    reason: `S3b grant ${RUN}`,
+  });
+  const revoke = await adminApi('/user-badge-overrides', 'POST', {
+    userId: rep.id,
+    badgeId: badgeB?.[0],
+    state: 'revoked',
+    reason: `S3b revoke ${RUN}`,
+  });
+  for (const r of [grant, revoke])
+    if (r.json?.data?.id) s3bRestore.badgeOverrideIds.push(r.json.data.id);
+  const noReason = await adminApi('/user-badge-overrides', 'POST', {
+    userId: rep.id,
+    badgeId: badgeA?.[0],
+    state: 'granted',
+  });
+  const adminBadge = await uiApi(adminUi, '/admin/api/user-badge-overrides', 'GET');
+  const profile = (await api(BACK, `/public/user/${rep.u.username}`)).json?.data;
+  const shown = (profile?.badges ?? []).map((b) => b.key);
+  check(
+    'S3b.2 people overrides: a staff-set reputation / level locks them — the reputation job leaves 77 alone and the profile shows the staff-set level; a badge GRANT shows a badge the job never awarded, a REVOKE hides an earned one (applied at read time, so the job can never undo it); a decision needs a reason; badge decisions are owner-gated like users',
+    repPatch.status === 200 &&
+      repJob.ok &&
+      repAfter === '77' &&
+      (repLocked === 'true' || repLocked === 't') &&
+      grant.status === 201 &&
+      revoke.status === 201 &&
+      noReason.status === 400 &&
+      adminBadge.status === 403 &&
+      shown.includes(badgeA?.[1]) &&
+      !shown.includes(badgeB?.[1]) &&
+      profile?.level?.key === 'legend',
+    `rep patch=${repPatch.status} job=${repJob.state} rep=${repAfter} locked=${repLocked} level=${profile?.level?.key} · grant=${grant.status} revoke=${revoke.status} noReason=${noReason.status} admin=${adminBadge.status} · shown=[${shown}] A=${badgeA?.[1]} B=${badgeB?.[1]}`,
+  );
+
+  // ── S3b.3 display overrides: Δ section switch + per-item hide; briefing day ─
+  const cfg = await sectionsConfig();
+  for (const k of ['trending', 'by_players']) {
+    const c = cfg.find((x) => x.key === k);
+    if (c) s3bRestore.sections.set(k, { showDelta: c.showDelta, hideDeltaRefs: c.hideDeltaRefs });
+  }
+  const bpBefore = (await homeSections()).find((s) => s.key === 'by_players')?.items ?? [];
+  const deltaItems = bpBefore.filter((i) => !i.paid && i.delta && i.delta.kind !== 'none');
+  const hideSlug = deltaItems[0] ? itemSlug(deltaItems[0]) : null;
+  const offTrend = await adminApi('/homepage/sections/trending', 'PATCH', { showDelta: false });
+  await waitHomepage(offTrend);
+  const hideOne = await adminApi('/homepage/sections/by_players', 'PATCH', {
+    hideDeltaRefs: hideSlug ? [hideSlug] : [],
+  });
+  await waitHomepage(hideOne);
+  const secs = await homeSections();
+  const trendItems = secs.find((s) => s.key === 'trending')?.items ?? [];
+  const bpAfter = secs.find((s) => s.key === 'by_players')?.items ?? [];
+  const hiddenNull = bpAfter.find((i) => itemSlug(i) === hideSlug)?.delta ?? null;
+  const othersKept =
+    deltaItems.length < 2 || bpAfter.some((i) => itemSlug(i) !== hideSlug && i.delta);
+  const badKind = await adminApi('/homepage/sections/top_rated', 'PATCH', { showDelta: false });
+  // Briefing: an editor's line for TODAY, then hidden, then cleared.
+  s3bRestore.briefing = true;
+  const line = `Editor briefing S3b ${RUN}`;
+  const setLine = await adminApi('/rules/briefing', 'PUT', {
+    date: isoDay(),
+    text: line,
+    hidden: false,
+  });
+  const homeData = (await api(BACK, '/public/homepage')).json?.data;
+  const homeHtml = await html('/');
+  const setHidden = await adminApi('/rules/briefing', 'PUT', { date: isoDay(), hidden: true });
+  const hiddenSecs = (await homeSections()).map((s) => s.key);
+  const clearB = await adminApi('/rules/briefing', 'PUT', { date: null });
+  const back = (await homeSections()).map((s) => s.key);
+  const badDate = await adminApi('/rules/briefing', 'PUT', { date: 'tomorrow' });
+  check(
+    'S3b.3 display overrides: a section "show Δ" switch (off → no Δ on any Trending card) and a per-item hide (only that By-players card loses its Δ); Δ fields on a non-Δ section → 400; a one-day briefing override shows the editor line instead of the counts (API + SSR), can hide the briefing that day, and clears',
+    offTrend.status === 200 &&
+      trendItems.length > 0 &&
+      trendItems.every((i) => i.delta === null) &&
+      hideOne.status === 200 &&
+      hideSlug !== null &&
+      hiddenNull === null &&
+      othersKept &&
+      badKind.status === 400 &&
+      setLine.status === 200 &&
+      homeData?.briefing?.overrideText === line &&
+      homeHtml.includes(line) &&
+      setHidden.status === 200 &&
+      !hiddenSecs.includes('briefing') &&
+      clearB.status === 200 &&
+      back.includes('briefing') &&
+      badDate.status === 400,
+    `trend off=${offTrend.status} Δ left=${trendItems.filter((i) => i.delta).length}/${trendItems.length} · hide ${hideSlug}=${hideOne.status} hidden=${hiddenNull === null} others=${othersKept} · non-Δ=${badKind.status} · briefing line=${setLine.status}/${homeData?.briefing?.overrideText === line}/ssr=${homeHtml.includes(line)} hidden=${!hiddenSecs.includes('briefing')} cleared=${back.includes('briefing')} badDate=${badDate.status}`,
+  );
+
+  // ── S3b.4 "How it's being covered": row count rule + per-story pick / exclude ─
+  const trendCov = (await homeSections()).find((s) => s.key === 'trending')?.items ?? [];
+  const covStory = trendCov.find((i) => i.topic && (i.coverage?.length ?? 0) >= 2);
+  const covSlug = covStory?.topic?.slug ?? null;
+  const srcSlugOf = (name) => psql(`SELECT slug FROM sources WHERE name = ${lit(name)} LIMIT 1;`);
+  const firstSrc = covStory ? srcSlugOf(covStory.coverage[0].source) : null;
+  const secondSrc = covStory ? covStory.coverage[1].source : null;
+  const cur = covSlug
+    ? await adminApi('/curation', 'POST', {
+        pageKind: 'topic',
+        pageKey: covSlug,
+        listKey: 'coverage-rows',
+        excludes: [firstSrc],
+        pins: [srcSlugOf(secondSrc)],
+      })
+    : { status: 0 };
+  if (cur.json?.data?.id) s3bRestore.curationIds.push(cur.json.data.id);
+  const covAfter = (await homeSections())
+    .find((s) => s.key === 'trending')
+    ?.items.find((i) => i.topic?.slug === covSlug)?.coverage;
+  const rowsRule = await adminApi('/rules', 'PATCH', { homepage: { coverageRows: 1 } });
+  const covOne = ((await homeSections()).find((s) => s.key === 'trending')?.items ?? []).filter(
+    (i) => i.topic,
+  );
+  const badList = await adminApi('/curation', 'POST', {
+    pageKind: 'discovery',
+    pageKey: 'main',
+    listKey: 'coverage-rows',
+  });
+  check(
+    'S3b.4 "How it\'s being covered": an editor excludes an outlet (gone) and picks another (first) for one story; the row count is a rule (1 → every Trending story shows at most one row); a list that doesn\'t exist on that page kind → 400',
+    cur.status === 201 &&
+      Array.isArray(covAfter) &&
+      covAfter[0]?.source === secondSrc &&
+      !covAfter.some((r) => srcSlugOf(r.source) === firstSrc) &&
+      rowsRule.status === 200 &&
+      covOne.length > 0 &&
+      covOne.every((i) => (i.coverage?.length ?? 0) <= 1) &&
+      badList.status === 400,
+    `story=${covSlug} curation=${cur.status} first=${covAfter?.[0]?.source} (want ${secondSrc}) excluded=${firstSrc} · rows rule=${rowsRule.status} max=${Math.max(0, ...covOne.map((i) => i.coverage?.length ?? 0))} · bad list=${badList.status}`,
+  );
+
+  // ── S3b.5 curation of related stories / related games / discovery + sizes ──
+  const relTopic = psql(
+    'SELECT t.slug FROM topics t WHERE t.embedding IS NOT NULL ORDER BY t.last_activity_at DESC LIMIT 12;',
+  )
+    .split('\n')
+    .filter(Boolean);
+  let relSlug = null;
+  let relBefore = [];
+  for (const s of relTopic) {
+    const r = (await api(BACK, `/public/topic/${s}`)).json?.data?.related ?? [];
+    if (r.length >= 2) {
+      relSlug = s;
+      relBefore = r.map((x) => x.slug);
+      break;
+    }
+  }
+  const relCur = relSlug
+    ? await adminApi('/curation', 'POST', {
+        pageKind: 'topic',
+        pageKey: relSlug,
+        listKey: 'related-stories',
+        excludes: [relBefore[0]],
+        pins: [relBefore[relBefore.length - 1]],
+      })
+    : { status: 0 };
+  if (relCur.json?.data?.id) s3bRestore.curationIds.push(relCur.json.data.id);
+  const relAfter = relSlug
+    ? ((await api(BACK, `/public/topic/${relSlug}`)).json?.data?.related ?? []).map((x) => x.slug)
+    : [];
+  const disco = (await api(BACK, '/public/discovery')).json?.data;
+  const tr = (disco?.topRated ?? []).map((g) => g.slug);
+  const dCur =
+    tr.length >= 4
+      ? await adminApi('/curation', 'POST', {
+          pageKind: 'discovery',
+          pageKey: 'main',
+          listKey: 'top-rated',
+          excludes: [tr[0]],
+          pins: [tr[3]],
+        })
+      : { status: 0 };
+  if (dCur.json?.data?.id) s3bRestore.curationIds.push(dCur.json.data.id);
+  const sizes = await adminApi('/rules', 'PATCH', {
+    lists: { discoveryTopRated: 3, topicRelatedStories: 1 },
+  });
+  const trAfter = ((await api(BACK, '/public/discovery')).json?.data?.topRated ?? []).map(
+    (g) => g.slug,
+  );
+  const relSized = relSlug
+    ? ((await api(BACK, `/public/topic/${relSlug}`)).json?.data?.related ?? []).length
+    : -1;
+  const gameRel = psql(
+    'SELECT s.slug FROM games g JOIN subjects s ON s.id = g.subject_id ORDER BY s.slug LIMIT 40;',
+  )
+    .split('\n')
+    .filter(Boolean);
+  let gSlug = null;
+  let gRel = [];
+  for (const s of gameRel) {
+    const r = (await api(BACK, `/public/game/${s}`)).json?.data?.relatedGames ?? [];
+    if (r.length >= 2) {
+      gSlug = s;
+      gRel = r.map((x) => x.slug);
+      break;
+    }
+  }
+  const gCur = gSlug
+    ? await adminApi('/curation', 'POST', {
+        pageKind: 'game',
+        pageKey: gSlug,
+        listKey: 'related-games',
+        excludes: [gRel[0]],
+      })
+    : { status: 0 };
+  if (gCur.json?.data?.id) s3bRestore.curationIds.push(gCur.json.data.id);
+  const gAfter = gSlug
+    ? ((await api(BACK, `/public/game/${gSlug}`)).json?.data?.relatedGames ?? []).map((x) => x.slug)
+    : [];
+  const modCur = await api(BACK, '/admin/api/curation', { jar: mod.jar });
+  check(
+    'S3b.5 curation: related stories (topic page), related games (game page) and the /games discovery rails take editor pins (first) and excludes (gone); list sizes are rules (top rated 3, related stories 1); editors (moderator) can curate',
+    relCur.status === 201 &&
+      relAfter[0] === relBefore[relBefore.length - 1] &&
+      !relAfter.includes(relBefore[0]) &&
+      dCur.status === 201 &&
+      trAfter.length === 3 &&
+      trAfter[0] === tr[3] &&
+      !trAfter.includes(tr[0]) &&
+      sizes.status === 200 &&
+      relSized <= 1 &&
+      gCur.status === 201 &&
+      !gAfter.includes(gRel[0]) &&
+      modCur.status === 200,
+    `related ${relSlug}: ${relBefore.join(',')} → ${relAfter.join(',')} (sized ${relSized}) · discovery ${tr.slice(0, 4).join(',')} → ${trAfter.join(',')} · game ${gSlug}: -${gRel[0]} → ${gAfter.join(',')} · mod=${modCur.status}`,
+  );
+
+  // ── S3b.6 disconnect band override (reason required) ───────────────────────
+  const [bandGameId, bandSlug, bandWas] = psql(
+    "SELECT g.id || '|' || s.slug || '|' || r.disconnect_band FROM game_rating_summaries r JOIN games g ON g.id = r.game_id JOIN subjects s ON s.id = g.subject_id WHERE r.disconnect_band IS NOT NULL AND r.disconnect_band <> 'large' ORDER BY s.slug LIMIT 1;",
+  ).split('|');
+  s3bRestore.bandGameId = bandGameId || null;
+  const bandNoReason = await adminApi(`/ratings/game/${bandGameId}/override`, 'POST', {
+    disconnectBand: 'large',
+  });
+  const bandSet = await adminApi(`/ratings/game/${bandGameId}/override`, 'POST', {
+    disconnectBand: 'large',
+    reason: `S3b band ${RUN}`,
+  });
+  const bandPublic = (await api(BACK, `/public/game/${bandSlug}`)).json?.data?.rating?.disconnect
+    ?.band;
+  const bandAudit = Number(
+    psql(
+      `SELECT count(*) FROM audit_logs WHERE entity_id = ${lit(bandGameId)} AND changes ? 'disconnectBandOverride' AND created_at > now() - interval '10 minutes';`,
+    ),
+  );
+  const bandClear = await adminApi(`/ratings/game/${bandGameId}/override`, 'POST', {
+    disconnectBand: null,
+  });
+  const bandBack = (await api(BACK, `/public/game/${bandSlug}`)).json?.data?.rating?.disconnect
+    ?.band;
+  check(
+    'S3b.6 disconnect band override: without a reason → 400; with one the public band follows the editor (audited); clearing returns the computed band',
+    bandNoReason.status === 400 &&
+      bandSet.status === 200 &&
+      bandPublic === 'large' &&
+      bandAudit >= 1 &&
+      bandClear.status === 200 &&
+      bandBack === bandWas,
+    `${bandSlug}: was=${bandWas} noReason=${bandNoReason.status} set=${bandSet.status} public=${bandPublic} audit=${bandAudit} clear=${bandClear.status} back=${bandBack}`,
+  );
+
+  // ── S3b.7 per-page noindex: story + game (robots meta, sitemap) ────────────
+  const ngame = psql(
+    "SELECT g.id || '|' || s.slug FROM games g JOIN subjects s ON s.id = g.subject_id WHERE g.external_refs::text <> '{}' AND NOT g.noindex ORDER BY s.slug LIMIT 1;",
+  ).split('|');
+  s3bRestore.gameNoindex = ngame[0] ? { id: ngame[0] } : null;
+  const gNo = await adminApi(`/games/${ngame[0]}`, 'PATCH', { noindex: true });
+  const gameRobots = robotsOf(await html(`/games/${ngame[1]}`));
+  const topicRobots = robotsOf(await html(`/topics/${pick}`));
+  const openRobots = robotsOf(await html(`/topics/${relSlug ?? pick}`));
+  const sm = (await api(BACK, '/public/sitemap')).json?.data ?? {};
+  const smTopics = (sm.topics ?? []).map((t) => t.slug);
+  const smGames = (sm.games ?? []).map((g) => g.slug);
+  check(
+    'S3b.7 per-page noindex: an editor keeps a story and an (imported) game out of search — robots "noindex, follow" on the page and out of the sitemap; the noindex switch is not imported data (no reason needed); other pages stay indexable',
+    gNo.status === 200 &&
+      /noindex/.test(gameRobots) &&
+      /follow/.test(gameRobots) &&
+      /noindex/.test(topicRobots) &&
+      !/noindex/.test(openRobots) &&
+      !smTopics.includes(pick) &&
+      !smGames.includes(ngame[1]) &&
+      smGames.length > 0,
+    `game ${ngame[1]} patch=${gNo.status} robots="${gameRobots}" · story robots="${topicRobots}" other="${openRobots}" · sitemap topic=${smTopics.includes(pick)} game=${smGames.includes(ngame[1])}`,
+  );
+
+  // ── S3b.8 hardcoded rules → settings (validated, audited, RBAC, applied) ───
+  const defaultsNow = rulesGet && deepEq(rulesGet.settings, rulesGet.defaults);
+  const badLeaf = await adminApi('/rules', 'PATCH', { homepage: { latestInitial: 0 } });
+  const badKey = await adminApi('/rules', 'PATCH', { homepage: { nope: 1 } });
+  const modRules = await api(BACK, '/admin/api/rules', { jar: mod.jar });
+  const applied = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    homepage: { heroSecondaryCount: 1, latestInitial: 2 },
+    display: { excerpt: { latest: 60 } },
+    community: { feedLimit: 1 },
+    sources: { parentBlocksStandalone: false },
+  });
+  if (applied.json?.recomputeJobId) await waitForHomepageJob(applied.json.recomputeJobId);
+  const site = (await api(BACK, '/public/site')).json?.data;
+  const home = await html('/');
+  const heroSec = home.match(/<div class="gk-hero-secondary">([\s\S]*?)<\/section>/)?.[1] ?? '';
+  const heroCards = count(heroSec, '<article class="gk-topiccard');
+  const feedBlock = home.match(/<div class="gk-feed">([\s\S]*?)<\/aside>/)?.[1] ?? '';
+  const feedShown = (
+    feedBlock.match(/<div(?: style="")?>\s*<(article|a|div) class="gk-(topiccard|hgcard)/g) ?? []
+  ).length;
+  const feedHidden = count(feedBlock, 'style="display:none"');
+  const latestEx = [
+    ...home.matchAll(/<p class="gk-topiccard-tldr" style="margin-top:6px">([^<]*)<\/p>/g),
+  ].map((m) => m[1].replace(/&#x27;|&quot;|&amp;/g, 'x'));
+  const follower = await makeVerified('s3bfeed');
+  const fGame = psql(
+    'SELECT s.slug FROM article_subjects asub JOIN subjects s ON s.id = asub.subject_id GROUP BY s.slug ORDER BY count(*) DESC LIMIT 1;',
+  );
+  await api(BACK, `/community/follow/game/${fGame}`, {
+    method: 'POST',
+    jar: follower.jar,
+    csrf: follower.csrf,
+  });
+  const feed = (await api(BACK, '/community/feed', { jar: follower.jar })).json?.data;
+  const standaloneId = psql("SELECT id FROM source_types WHERE role = 'standalone' LIMIT 1;");
+  const ruleOff = await adminApi('/sources', 'POST', {
+    name: `S3b Src ${RUN}`,
+    parentCompany: 'Parent Corp',
+    typeId: standaloneId,
+  });
+  if (ruleOff.json?.data?.id) s3bRestore.sourceIds.push(ruleOff.json.data.id);
+  const ruleAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'rules' AND created_at > now() - interval '15 minutes';",
+    ),
+  );
+  check(
+    'S3b.8 hardcoded rules → settings: defaults are exactly the old behaviour; a bad value or unknown rule → 400; moderators 403; set through the admin UI path the rules apply — 1 card under the spotlight, Latest shows 2 before "Load more", the Latest rail clips at 60, a reader feed holds 1 item, the Standalone rule can be switched off — audited',
+    defaultsNow === true &&
+      badLeaf.status === 400 &&
+      badKey.status === 400 &&
+      modRules.status === 403 &&
+      applied.status === 200 &&
+      site?.layout?.heroSecondaryCount === 1 &&
+      site?.layout?.latestInitial === 2 &&
+      heroCards === 1 &&
+      feedHidden >= 1 &&
+      latestEx.length > 0 &&
+      latestEx.every((e) => e.length <= 61) &&
+      (feed?.items?.length ?? 0) === 1 &&
+      ruleOff.status === 201 &&
+      ruleAudit >= 1,
+    `defaults=${defaultsNow} bad=${badLeaf.status}/${badKey.status} mod=${modRules.status} ui=${applied.status} · hero cards=${heroCards} feed hidden=${feedHidden} shown~${feedShown} latest max=${Math.max(0, ...latestEx.map((e) => e.length))} · feed items=${feed?.items?.length} (follows ${fGame}) · standalone off → ${ruleOff.status} · audit=${ruleAudit}`,
+  );
+
+  // ── S3b.9 copy registry: rename by setting; locks; owner-only; docs; safety ─
+  const copyGet = (await adminApi('/copy')).json?.data;
+  const lockedTry = await copyPatch('token', { 'consent.newsletter': 'pre-ticked' });
+  const unknownTry = await copyPatch('token', { 'no.such.text': 'x' });
+  const adminBrand = await copyPatch(adminUi, { 'brand.name': 'Hijack' });
+  // One text a SERVER component renders, one a CLIENT component renders.
+  const adminText = await copyPatch(adminUi, {
+    'home.focus.sub': `Focus line ${RUN}`,
+    'home.newsletter.sub': `Briefing line ${RUN}`,
+  });
+  s3bRestore.copyKeys.add('home.focus.sub');
+  s3bRestore.copyKeys.add('home.newsletter.sub');
+  const homeTexts = await html('/');
+  const textsShown =
+    homeTexts.includes(`Focus line ${RUN}`) && homeTexts.includes(`Briefing line ${RUN}`);
+  const rename = await copyPatch(ownerUi, {
+    'brand.name': 'GamesKodex',
+    'brand.domain': 'gameskodex.com',
+  });
+  s3bRestore.copyKeys.add('brand.name');
+  s3bRestore.copyKeys.add('brand.domain');
+  const pages = [
+    '/about',
+    '/methodology',
+    '/contact',
+    '/promote',
+    '/terms',
+    '/privacy',
+    '/sources',
+    '/games',
+    '/upcoming',
+  ];
+  const leftovers = [];
+  const glued = [];
+  for (const p of pages) {
+    const t = visibleText(await html(p));
+    if (/GamesKeep/.test(t)) leftovers.push(p);
+    for (const m of t.matchAll(/[A-Za-z]GamesKodex|GamesKodex[a-z]/g)) glued.push(`${p}:${m[0]}`);
+  }
+  const homeR = await html('/');
+  const homeTitle = homeR.match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
+  const ogSite = homeR.match(/<meta property="og:site_name" content="([^"]*)"/)?.[1] ?? '';
+  const ldNames = jsonLdBlocks(homeR).map((b) => {
+    try {
+      const j = JSON.parse(b);
+      return (Array.isArray(j) ? j : [j]).map((x) => x.publisher?.name ?? x.name).join(',');
+    } catch {
+      return '';
+    }
+  });
+  const homeVisible = visibleText(homeR).replace(/GamesKeep Editorial/g, '');
+  const aboutR = await html('/about');
+  const canonical = aboutR.match(/<link rel="canonical" href="([^"]*)"/)?.[1] ?? '';
+  const termsT = visibleText(await html('/terms'));
+  clearOwnEmailThrottle();
+  const mailUser = await makeVerified('s3bmail');
+  const subject = psql(
+    `SELECT subject FROM email_outbox WHERE to_email = ${lit(mailUser.u.email)} AND purpose = 'verify_email' ORDER BY created_at DESC LIMIT 1;`,
+  );
+  // Documents: unsafe link refused; an edit renders; a script tag in text is escaped.
+  const unsafeDoc = await copyPatch('token', { 'about.body': 'Hi [x](javascript:alert(1))' });
+  const docEdit = await copyPatch('token', {
+    'about.body': `${copyGet?.values?.['about.body'] ?? ''}\n\n## Edited S3b ${RUN}`,
+    'footer.blurb': `<script>alert("s3b")</script> blurb ${RUN}`,
+  });
+  s3bRestore.copyKeys.add('about.body');
+  s3bRestore.copyKeys.add('footer.blurb');
+  const aboutEdited = await html('/about');
+  const copyAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'copy' AND changes ? 'brand.name' AND created_at > now() - interval '15 minutes';",
+    ),
+  );
+  const restoreBrand = await copyPatch(ownerUi, { 'brand.name': null, 'brand.domain': null });
+  const titleBack = (await html('/')).match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
+  check(
+    'S3b.9 copy registry: the public rename is ONE owner setting — brand + display domain flow into titles, og:site_name, JSON-LD, every page, the locked legal text and emails, with no word glued to the brand, while canonical URLs keep the deployment; locked / unknown texts → 400; an admin may edit texts (server- and client-rendered both show) but not the identity (403); a document link to javascript: → 400; an edit renders; text is escaped; audited; reverting restores',
+    (copyGet?.defs?.length ?? 0) > 60 &&
+      lockedTry.status === 400 &&
+      unknownTry.status === 400 &&
+      adminBrand.status === 403 &&
+      adminText.status === 200 &&
+      textsShown &&
+      rename.status === 200 &&
+      leftovers.length === 0 &&
+      glued.length === 0 &&
+      homeTitle.includes('GamesKodex') &&
+      ogSite === 'GamesKodex' &&
+      ldNames.some((n) => n.includes('GamesKodex')) &&
+      !/GamesKeep/.test(homeVisible) &&
+      canonical.startsWith(FRONT) &&
+      termsT.includes('gameskodex.com') &&
+      /GamesKodex/.test(subject) &&
+      unsafeDoc.status === 400 &&
+      docEdit.status === 200 &&
+      aboutEdited.includes(`Edited S3b ${RUN}`) &&
+      aboutEdited.includes('&lt;script&gt;alert') &&
+      !aboutEdited.includes('<script>alert("s3b")') &&
+      copyAudit >= 1 &&
+      restoreBrand.status === 200 &&
+      titleBack.includes('GamesKeep'),
+    `defs=${copyGet?.defs?.length} locked=${lockedTry.status} unknown=${unknownTry.status} adminBrand=${adminBrand.status} adminText=${adminText.status} shown(server+client)=${textsShown} rename=${rename.status} · leftovers=[${leftovers}] glued=[${glued.slice(0, 3)}] title="${homeTitle}" og="${ogSite}" ld=[${ldNames}] canonical=${canonical} terms domain=${termsT.includes('gameskodex.com')} mail="${subject}" · unsafe=${unsafeDoc.status} edit=${docEdit.status} rendered=${aboutEdited.includes(`Edited S3b ${RUN}`)} escaped=${aboutEdited.includes('&lt;script&gt;alert')} audit=${copyAudit} · back=${restoreBrand.status} "${titleBack}"`,
+  );
+
+  // ── S3b.10 third-party data: corrected only for import errors, with a reason ─
+  const [criticId, criticScore] = psql(
+    "SELECT id || '|' || score FROM game_critic_reviews ORDER BY id LIMIT 1;",
+  ).split('|');
+  s3bRestore.critic = criticId ? { id: criticId, score: Number(criticScore) } : null;
+  const newScore = Number(criticScore) >= 99 ? Number(criticScore) - 1 : Number(criticScore) + 1;
+  const tpNo = await adminApi(`/game-critic-reviews/${criticId}`, 'PATCH', { score: newScore });
+  const tpYes = await adminApi(`/game-critic-reviews/${criticId}`, 'PATCH', {
+    score: newScore,
+    _reason: 'import-error-wrong-value',
+    _note: `S3b ${RUN}`,
+  });
+  const tpSame = await adminApi(`/game-critic-reviews/${criticId}`, 'PATCH', { score: newScore });
+  const tpDel = await adminApi(`/game-critic-reviews/${criticId}`, 'DELETE');
+  const tpAudit = psql(
+    `SELECT changes->>'_reason' FROM audit_logs WHERE entity_id = ${lit(criticId)} AND changes ? '_reason' ORDER BY created_at DESC LIMIT 1;`,
+  );
+  const gName = await adminApi(`/games/${ngame[0]}`, 'PATCH', { name: `Renamed ${RUN}` });
+  const artId = psql("SELECT id FROM articles WHERE origin = 'aggregated' ORDER BY id LIMIT 1;");
+  const artTitle = await adminApi(`/articles/${artId}`, 'PATCH', { title: `Retitled ${RUN}` });
+  const meta = (await adminApi('/_meta')).json?.resources ?? [];
+  const criticMeta = meta.find((r) => r.name === 'game-critic-reviews');
+  check(
+    'S3b.10 third-party data (critic reviews, imported game fields, aggregated articles) is shown as received: a change without an import-error reason → 400, with one → saved and the reason is on the audit row; re-saving unchanged values needs none; a delete needs one; the admin form gets the reasons from the meta',
+    tpNo.status === 400 &&
+      JSON.stringify(tpNo.json?.issues ?? []).includes('_reason') &&
+      tpYes.status === 200 &&
+      tpAudit === 'import-error-wrong-value' &&
+      tpSame.status === 200 &&
+      tpDel.status === 400 &&
+      gName.status === 400 &&
+      artTitle.status === 400 &&
+      (criticMeta?.thirdParty?.reasons?.length ?? 0) === 2,
+    `critic no=${tpNo.status} yes=${tpYes.status} same=${tpSame.status} delete=${tpDel.status} audit=${tpAudit} · game name=${gName.status} · article title=${artTitle.status} · meta reasons=${criticMeta?.thirdParty?.reasons?.length}`,
+  );
+
+  // ── S3b.11 (gap 1) import mapping is a background job with its own id ──────
+  const syncUi = await uiApi(adminUi, '/admin/api/tag-queue/sync', 'POST', {});
+  const syncMod = await modAct(mod, 'tag-queue/sync', {});
+  const syncJob = syncUi.json?.jobId
+    ? await waitForJobLib('tags', syncUi.json.jobId, 120_000)
+    : { ok: false, state: 'no job id' };
+  const syncResult = syncUi.json?.jobId
+    ? (await adminApi(`/jobs/tags/${syncUi.json.jobId}`)).json?.data?.result
+    : null;
+  check(
+    'S3b.11 (gap 1) "Re-run import mapping" returns 202 + its own job id at once (admin UI path; moderators too) — the batched mapping runs in the worker and the job reports mapped / queued / pay-to-win counts',
+    syncUi.status === 202 &&
+      typeof syncUi.json?.jobId === 'string' &&
+      syncMod.status === 202 &&
+      syncJob.ok &&
+      typeof syncResult?.mapped === 'number' &&
+      typeof syncResult?.queued === 'number' &&
+      typeof syncResult?.payToWin === 'number',
+    `ui=${syncUi.status} job=${syncUi.json?.jobId} mod=${syncMod.status} state=${syncJob.state} result=${JSON.stringify(syncResult)}`,
+  );
+
+  // ── S3b.12 (gap 2) the predatory-monetization path is closed ───────────────
+  const col = Number(
+    psql(
+      "SELECT count(*) FROM information_schema.columns WHERE table_name = 'game_content_flags' AND column_name = 'predatory_monetization';",
+    ),
+  );
+  const flagsMeta = meta.find((r) => r.name === 'game-content-flags');
+  const flagFields = (flagsMeta?.fields ?? []).map((f) => f.name);
+  check(
+    'S3b.12 (gap 2) predatory monetization exists only as the Pay-to-win issue tag: the column is dropped (migration 0023 parks any set flag for the tag sync first), and it is gone from the admin form and the write schema',
+    col === 0 && flagFields.length > 0 && !flagFields.includes('predatoryMonetization'),
+    `column=${col} admin fields=[${flagFields}]`,
+  );
+
+  // ── S3b.13 (gap 3) votes on a removed tag show as pushback ─────────────────
+  const removedRow = tagRow('hades-ii', 'roguelike');
+  const voter = await credibleUser('s3bpush');
+  const pushVote = await tagVote(voter, 'hades-ii', 'roguelike');
+  const queue = (await api(BACK, '/admin/api/tag-queue', { jar: mod.jar })).json?.data;
+  const push = (queue?.pushback ?? []).find((r) => r.id === removedRow?.id);
+  const stillOff = !((await tagGroupsOf('hades-ii')).content ?? []).some(
+    (t) => t.slug === 'roguelike',
+  );
+  check(
+    'S3b.13 (gap 3) a reader vote on a tag an editor removed is kept and listed in the moderation queue as its own "removed — still being voted for" group (votes since the removal); the tag stays removed',
+    removedRow?.state === 'rejected' &&
+      pushVote.status === 200 &&
+      push !== undefined &&
+      push.votesSinceRemoval >= 1 &&
+      push.removedAt !== null &&
+      !(queue?.pending ?? []).some((r) => r.id === removedRow?.id) &&
+      stillOff,
+    `row=${removedRow?.state} vote=${pushVote.status} pushback=${push ? `${push.votesSinceRemoval} since ${push.removedAt}` : 'missing'} stillOff=${stillOff}`,
+  );
+
+  // ── S3b.14 (gap 4) demo issue dates are relative to boot ───────────────────
+  const anchor = psql("SELECT value->>'at' FROM app_settings WHERE key = 'demo-tags-anchor';");
+  const [lastAgo, firstAgo, confAgo] = psql(
+    `SELECT round(extract(epoch FROM (${lit(anchor)}::timestamptz - gt.last_vote_at)) / 86400, 2) || '|' || round(extract(epoch FROM (${lit(anchor)}::timestamptz - gt.first_seen_at)) / 86400, 2) || '|' || round(extract(epoch FROM (${lit(anchor)}::timestamptz - gt.last_confirmed_at)) / 86400, 2) FROM game_tags gt JOIN tags t ON t.id = gt.tag_id JOIN games g ON g.id = gt.game_id JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'helldivers-2' AND t.slug = 'server-problems';`,
+  )
+    .split('|')
+    .map(Number);
+  const anchorAgeH = anchor ? (Date.now() - Date.parse(anchor)) / 3_600_000 : Infinity;
+  const near = (v, want) => Math.abs(v - want) < 0.1;
+  check(
+    'S3b.14 (gap 4) demo issue dates follow boot like the rest of the demo data: the anchor is the last boot, and the seeded "active" issue reads first seen 12 days / confirmed 8 days / last vote 2 days before it',
+    anchorAgeH >= 0 &&
+      anchorAgeH < 48 &&
+      near(firstAgo, 12) &&
+      near(confAgo, 8) &&
+      near(lastAgo, 2),
+    `anchor=${anchor} (${anchorAgeH.toFixed(1)}h ago) first=${firstAgo}d confirmed=${confAgo}d last vote=${lastAgo}d`,
+  );
+}
+
+async function restoreS3b() {
+  // Rules back exactly as they were (API → cache dropped; audited).
+  if (s3bRestore.rules) await adminApi('/rules', 'PATCH', s3bRestore.rules);
+  if (s3bRestore.copyKeys.size) {
+    await adminApi('/copy', 'PATCH', {
+      values: Object.fromEntries([...s3bRestore.copyKeys].map((k) => [k, null])),
+    });
+  }
+  if (s3bRestore.briefing) await adminApi('/rules/briefing', 'PUT', { date: null });
+  for (const [key, patch] of s3bRestore.sections)
+    await adminApi(`/homepage/sections/${key}`, 'PATCH', patch);
+  for (const id of s3bRestore.curationIds) await adminApi(`/curation/${id}`, 'DELETE');
+  for (const id of s3bRestore.badgeOverrideIds)
+    await adminApi(`/user-badge-overrides/${id}`, 'DELETE');
+  if (s3bRestore.bandGameId)
+    await adminApi(`/ratings/game/${s3bRestore.bandGameId}/override`, 'POST', {
+      disconnectBand: null,
+    });
+  if (s3bRestore.critic)
+    await adminApi(`/game-critic-reviews/${s3bRestore.critic.id}`, 'PATCH', {
+      score: s3bRestore.critic.score,
+      _reason: 'import-error-wrong-value',
+      _note: `verify cleanup ${RUN}`,
+    });
+  if (s3bRestore.gameNoindex)
+    await adminApi(`/games/${s3bRestore.gameNoindex.id}`, 'PATCH', { noindex: false });
+  for (const id of s3bRestore.sourceIds) await adminApi(`/sources/${id}`, 'DELETE');
+  const t = s3bRestore.topic ? topicRowBySlug(s3bRestore.topic.slug) : null;
+  if (t) {
+    // Sending lockedFields means "the editor manages the locks" → none are added;
+    // the story goes back to automation in the same audited edit.
+    await adminApi(`/topics/${t.id}`, 'PATCH', {
+      title: s3bRestore.topic.title,
+      ...(s3bRestore.topic.tldr ? { tldr: s3bRestore.topic.tldr } : {}),
+      status: s3bRestore.topic.status,
+      noindex: false,
+      lockedFields: [],
+    });
+    if (!s3bRestore.topic.tldr) {
+      psql(
+        `BEGIN;
+UPDATE topics SET tldr = NULL WHERE id = ${lit(t.id)};
+${auditSql({ entityType: 'topics', entityId: t.id, summary: `verify cleanup: run ${RUN} cleared its story fixture TL;DR` })}
+COMMIT;`,
+      );
+    }
+  }
+  if (s3bRestore.settings) restoreSettings(s3bRestore.settings);
+  await recomputeHomepage();
+}
+
 async function restoreS3() {
   const stmts = [];
   for (const [g, t] of s3Restore.pairs) {
@@ -3022,12 +3785,13 @@ async function restoreS3() {
   stmts.push(`DELETE FROM tag_suggestions WHERE raw_name = ${lit(`Verify Tag ${RUN}`)};`);
   if (s3Restore.reopenImport) {
     stmts.push(
-      `UPDATE game_tags SET state = ${lit(s3Restore.reopenImport.state)} WHERE id = ${lit(s3Restore.reopenImport.id)};`,
+      `UPDATE game_tags SET state = ${lit(s3Restore.reopenImport.state)}, removed_at = NULL WHERE id = ${lit(s3Restore.reopenImport.id)};`,
     );
   }
-  if (s3Restore.predatoryWas === 'false' || s3Restore.predatoryWas === 'true') {
+  // The parked flag is consumed by the sync; if a failure left it, drop OUR row only.
+  if (s3Restore.legacyKey) {
     stmts.push(
-      `UPDATE game_content_flags SET predatory_monetization = ${s3Restore.predatoryWas} WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'stellar-drifter');`,
+      `DELETE FROM app_settings WHERE key = 'legacy-predatory' AND value->>'verifyRun' = ${lit(RUN)};`,
     );
   }
   if (stmts.length) {
@@ -3070,7 +3834,9 @@ async function main() {
     await s2b();
     await s2Fixes();
     await s3();
+    await s3b();
   } finally {
+    await restoreS3b();
     await restoreS3();
     await restoreS2();
     restoreH3();

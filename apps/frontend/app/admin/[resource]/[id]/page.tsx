@@ -52,6 +52,8 @@ export default async function ResourceEdit({ params }: Props) {
           fields={rmeta.fields}
           initial={initial}
           refOptions={refOptions}
+          thirdParty={rmeta.thirdParty ?? null}
+          fieldLocks={rmeta.fieldLocks ?? null}
         />
       </div>
     </main>

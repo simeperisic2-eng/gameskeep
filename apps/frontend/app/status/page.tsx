@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getBackendStatus, isAllHealthy } from '@/lib/api';
+import { getSite } from '@/lib/site';
 
 // Foundation status page (was the I0 landing page). Kept for ops/debugging; the
 // real homepage now lives at `/`. Live health → render every request, no index.
@@ -14,7 +15,7 @@ interface StatusRow {
 }
 
 export default async function StatusPage() {
-  const status = await getBackendStatus();
+  const [status, { brand }] = await Promise.all([getBackendStatus(), getSite()]);
   const healthy = isAllHealthy(status);
   const readiness = status.readiness;
 
@@ -58,21 +59,21 @@ export default async function StatusPage() {
   return (
     <main className="gk-wrap">
       <header className="gk-head">
-        <div className="gk-logo" aria-label="GamesKeep logo placeholder">
+        <div className="gk-logo" aria-label={`${brand} logo placeholder`}>
           GK
         </div>
         <span className="gk-mode">{mode}</span>
       </header>
 
-      <h1 className="gk-title">GamesKeep — system status</h1>
+      <h1 className="gk-title">{brand} — system status</h1>
       <p className="gk-sub">
         Foundation health panel. The public site lives at <a href="/">the homepage</a>.
       </p>
 
       <div className={`gk-banner ${healthy ? 'ok' : 'warn'}`}>
         {healthy
-          ? 'GamesKeep — foundation OK'
-          : 'GamesKeep — foundation: some services are still warming up'}
+          ? `${brand} — foundation OK`
+          : `${brand} — foundation: some services are still warming up`}
       </div>
 
       <section className="gk-card">

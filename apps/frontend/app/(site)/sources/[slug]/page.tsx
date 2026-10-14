@@ -9,8 +9,10 @@ import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { SourceIcon } from '../../_components/SourceIcon';
 import { ArticleFlags } from '../../_components/BiasBar';
 import { NoSignalsNote, ReviewSignals } from '../../_components/IntegrityBlock';
-import { NO_SIGNALS_EXPLAINER, NO_SIGNALS_LABEL } from '@/lib/bias';
+import { noSignalsExplainer, noSignalsLabel } from '@/lib/bias';
 import { AdSlot } from '../../_components/AdSlot';
+import { getSite } from '@/lib/site';
+import { brand, excerptRule } from '@/lib/labels';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,18 +26,24 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const source = await loadSource(slug);
+  const [source, site] = await Promise.all([loadSource(slug), getSite()]);
   if (!source) return { title: 'Source not found', robots: { index: false } };
   const url = `${siteUrl}/sources/${source.slug}`;
   const owner = source.parentCompany ? ` Owned by ${source.parentCompany}.` : '';
   const description =
     source.description ??
-    `${source.name} — ownership and the signals we found in its games coverage on GamesKeep.${owner}`;
+    `${source.name} — ownership and the signals we found in its games coverage on ${site.brand}.${owner}`;
   return {
     title: source.name,
     description,
     alternates: { canonical: url },
-    openGraph: { type: 'website', url, title: source.name, description },
+    openGraph: {
+      siteName: brand(),
+      type: 'website',
+      url,
+      title: source.name,
+      description,
+    },
     twitter: { card: 'summary', title: source.name, description },
   };
 }
@@ -53,7 +61,7 @@ export default async function SourcePage({
   params: Promise<{ slug: string }>;
 }): Promise<React.JSX.Element> {
   const { slug } = await params;
-  const source = await loadSource(slug);
+  const [source, site] = await Promise.all([loadSource(slug), getSite()]);
   if (!source) notFound();
 
   const reputation = scoreToTen(source.reputation);
@@ -94,7 +102,7 @@ export default async function SourcePage({
                 <p className="gk-source-desc">{source.description}</p>
               ) : (
                 <p className="gk-source-desc gk-source-desc-dim">
-                  A games outlet GamesKeep aggregates. The signals below are measured from its
+                  A games outlet {site.brand} aggregates. The signals below are measured from its
                   coverage in our index.
                 </p>
               )}
@@ -232,14 +240,14 @@ export default async function SourcePage({
                   ) : null}
                   {source.flags.independent > 0 ? (
                     <span className="gk-flag nosignal">
-                      {NO_SIGNALS_LABEL} {source.flags.independent}
+                      {noSignalsLabel()} {source.flags.independent}
                     </span>
                   ) : null}
                 </div>
                 <p className="gk-source-profile-note">
                   Signals are factual (affiliate links, sponsorship, evidenced review copies,
                   opinion framing) — what the coverage carries, not a verdict on it.{' '}
-                  {NO_SIGNALS_EXPLAINER}
+                  {noSignalsExplainer()}
                 </p>
               </>
             ) : (
@@ -258,7 +266,7 @@ export default async function SourcePage({
             {source.recentArticles.length > 0 ? (
               <div className="gk-srcrows">
                 {source.recentArticles.map((a) => {
-                  const excerpt = truncateWords(a.excerpt, 200);
+                  const excerpt = truncateWords(a.excerpt, excerptRule('sourcePage'));
                   const time = relativeTime(a.publishDate);
                   return (
                     <article key={a.id} className="gk-srcrow">

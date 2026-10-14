@@ -55,7 +55,7 @@ export default async function ResourceList({ params }: Props) {
                     <td>{rowLabel(rmeta, row)}</td>
                     <td className="gk-mono">{id}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <RowActions resource={resource} id={id} />
+                      <RowActions resource={resource} id={id} reasons={rmeta.thirdParty?.reasons} />
                     </td>
                   </tr>
                 );

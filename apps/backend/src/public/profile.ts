@@ -1,7 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client';
-import { badges, comments, gameUserRatings, roles, userBadges, users } from '../db/schema';
-import { levelViewFor } from '../reputation/engine';
+import { comments, gameUserRatings, roles, users } from '../db/schema';
+import { effectiveBadges, levelViewOf } from '../reputation/engine';
 
 /**
  * The PUBLIC profile (SPEC I6, Slice 8) — leak-proof by construction: username,
@@ -30,6 +30,8 @@ export async function getPublicProfile(username: string): Promise<PublicProfile 
       avatarUrl: users.avatarUrl,
       status: users.status,
       reputation: users.reputation,
+      reputationLocked: users.reputationLocked,
+      levelId: users.levelId,
       createdAt: users.createdAt,
       roleKey: roles.key,
     })
@@ -39,13 +41,15 @@ export async function getPublicProfile(username: string): Promise<PublicProfile 
     .limit(1);
   if (!u || u.status !== 'active') return null; // tombstones + suspended/banned are hidden
 
-  const level = await levelViewFor(u.reputation); // computed live → always present
+  // Computed live (always present), or the staff-set level under the lock (S3b).
+  const level = await levelViewOf(u);
 
-  const badgeRows = await db
-    .select({ key: badges.key, label: badges.label, iconUrl: badges.iconUrl })
-    .from(userBadges)
-    .innerJoin(badges, eq(badges.id, userBadges.badgeId))
-    .where(eq(userBadges.userId, u.id));
+  // Phase P S3b: earned − revoked + granted.
+  const badgeRows = (await effectiveBadges(u.id)).map((b) => ({
+    key: b.key,
+    label: b.label,
+    iconUrl: b.iconUrl,
+  }));
 
   const [ratingRow] = await db
     .select({ n: sql<number>`count(*)::int` })

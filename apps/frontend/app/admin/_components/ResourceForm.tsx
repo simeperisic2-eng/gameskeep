@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { FieldSpec } from '../lib';
+import type { FieldSpec, ResourceMeta } from '../lib';
 import { adminFetch } from '../_lib/adminFetch';
 
 type Option = { id: string; label: string };
@@ -14,6 +14,10 @@ interface Props {
   fields: FieldSpec[];
   initial: Record<string, unknown>;
   refOptions: Record<string, Option[]>;
+  /** Phase P S3b: third-party data — edits need an import-error reason. */
+  thirdParty?: ResourceMeta['thirdParty'];
+  /** Phase P S3b: fields a staff edit locks against the engines. */
+  fieldLocks?: ResourceMeta['fieldLocks'];
 }
 
 function toFieldValue(field: FieldSpec, value: unknown): FieldValue {
@@ -40,13 +44,24 @@ function formatError(json: unknown): string {
   return 'Request failed';
 }
 
-export default function ResourceForm({ resource, mode, id, fields, initial, refOptions }: Props) {
+export default function ResourceForm({
+  resource,
+  mode,
+  id,
+  fields,
+  initial,
+  refOptions,
+  thirdParty = null,
+  fieldLocks = null,
+}: Props) {
   const [state, setState] = useState<Record<string, FieldValue>>(() => {
     const init: Record<string, FieldValue> = {};
     for (const f of fields) init[f.name] = toFieldValue(f, initial[f.name]);
     return init;
   });
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   function set(name: string, value: FieldValue) {
@@ -82,6 +97,13 @@ export default function ResourceForm({ resource, mode, id, fields, initial, refO
       } else {
         payload[f.name] = s;
       }
+    }
+
+    // Phase P S3b: the reason travels with the edit; the backend requires it only
+    // when an imported (third-party) value actually changes.
+    if (mode === 'edit' && thirdParty) {
+      if (reason) payload._reason = reason;
+      if (note.trim()) payload._note = note.trim();
     }
 
     setBusy(true);
@@ -161,6 +183,41 @@ export default function ResourceForm({ resource, mode, id, fields, initial, refO
           )}
         </label>
       ))}
+
+      {mode === 'edit' && thirdParty ? (
+        <fieldset className="gk-field" data-third-party>
+          <span className="gk-field-label">
+            Import-error reason
+            <span className="gk-field-help">
+              {' '}
+              — third-party data is shown as received; editing{' '}
+              {thirdParty.fields === 'all' ? 'it' : thirdParty.fields.join(', ')}
+              {thirdParty.conditional ? ' (on imported rows)' : ''} is only for import errors
+            </span>
+          </span>
+          <select value={reason} onChange={(e) => setReason(e.target.value)}>
+            <option value="">—</option>
+            {thirdParty.reasons.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            placeholder="Note (optional) — what was wrong"
+            maxLength={500}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </fieldset>
+      ) : null}
+      {fieldLocks ? (
+        <p className="gk-field-help">
+          Saving a change to {fieldLocks.fields.join(', ')} locks it, so the engines keep your
+          value. Remove it from {fieldLocks.column} to hand it back to automation.
+        </p>
+      ) : null}
 
       {error ? <p className="gk-form-error">{error}</p> : null}
 

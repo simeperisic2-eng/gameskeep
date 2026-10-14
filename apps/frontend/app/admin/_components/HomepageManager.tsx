@@ -29,7 +29,13 @@ type Draft = Pick<
   | 'cardTagFamilies'
   | 'cardTagCount'
   | 'minItems'
-> & { paidPositions: string; include: Record<string, string>; exclude: Record<string, string> };
+  | 'showDelta'
+> & {
+  paidPositions: string;
+  hideDeltaRefs: string;
+  include: Record<string, string>;
+  exclude: Record<string, string>;
+};
 
 // The section kind is an informational label only (owner decision B).
 const KIND_HINT: Record<HomepageSectionConfig['kind'], string> = {
@@ -84,6 +90,8 @@ function draftOf(s: HomepageSectionConfig): Draft {
     mode: s.mode,
     itemCount: s.itemCount,
     deltaWindowHours: s.deltaWindowHours,
+    showDelta: s.showDelta ?? true,
+    hideDeltaRefs: listText(s.hideDeltaRefs),
     cardTagFamilies: s.cardTagFamilies,
     cardTagCount: s.cardTagCount,
     minItems: s.minItems,
@@ -136,7 +144,11 @@ function SectionEditor({
       body.cardTagCount = d.cardTagCount;
       if (section.ruleDimensions.length) body.rules = rules;
     } else if (section.key === 'genres') body.itemCount = d.itemCount;
-    if (section.delta) body.deltaWindowHours = d.deltaWindowHours;
+    if (section.delta) {
+      body.deltaWindowHours = d.deltaWindowHours;
+      body.showDelta = d.showDelta;
+      body.hideDeltaRefs = textList(d.hideDeltaRefs);
+    }
     if (!isBlock) {
       const positions = textList(d.paidPositions).map(Number);
       if (positions.some((n) => !Number.isInteger(n) || n < 1 || n > 24)) {
@@ -262,6 +274,32 @@ function SectionEditor({
               onChange={(e) => setD({ ...d, deltaWindowHours: Number(e.target.value) || null })}
             />
           </label>
+        )}
+        {section.delta && (
+          <>
+            <label className="gk-nl-check">
+              <input
+                type="checkbox"
+                name="showDelta"
+                checked={d.showDelta}
+                onChange={(e) => setD({ ...d, showDelta: e.target.checked })}
+              />
+              <span>
+                Show Δ on this section&apos;s cards{' '}
+                <span className="gk-cp-dim">· off hides every Δ chip here</span>
+              </span>
+            </label>
+            <label className="gk-nl-field">
+              <span>
+                Hide Δ for <span className="gk-cp-dim">· story / game slugs, comma-separated</span>
+              </span>
+              <input
+                name="hideDeltaRefs"
+                value={d.hideDeltaRefs}
+                onChange={(e) => setD({ ...d, hideDeltaRefs: e.target.value })}
+              />
+            </label>
+          </>
         )}
         {!isBlock && (
           <>

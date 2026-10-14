@@ -891,3 +891,146 @@ export const TAG_SEED: readonly {
 
 /** The issue tag the legacy "predatory monetization" content flag became (owner, S3). */
 export const PAY_TO_WIN_TAG_SLUG = 'pay-to-win';
+
+// ── Phase P S3b: overrides that stick, curation, import-error reasons ─────────
+/**
+ * Third-party data (owner rule): editors may correct it only to fix an import
+ * error — every such update or delete carries one of these reasons (audited).
+ */
+export const IMPORT_FIX_REASONS = [
+  'import-error-wrong-value',
+  'import-error-wrong-game-match',
+] as const;
+export type ImportFixReason = (typeof IMPORT_FIX_REASONS)[number];
+export const IMPORT_FIX_REASON_LABELS: Record<ImportFixReason, string> = {
+  'import-error-wrong-value': 'Import error — wrong value',
+  'import-error-wrong-game-match': 'Import error — wrong game match',
+};
+
+/** Story fields an editor's edit LOCKS against the automatic passes (and a re-cluster). */
+export const TOPIC_LOCKABLE_FIELDS = ['title', 'tldr', 'aiSummary', 'status', 'typeId'] as const;
+export type TopicLockableField = (typeof TOPIC_LOCKABLE_FIELDS)[number];
+
+/** Editor pin / exclude lists for the computed lists on a page (owner: every list curatable). */
+export const CURATION_PAGES = ['topic', 'game', 'discovery'] as const;
+export const CURATION_LISTS = [
+  'related-stories',
+  'related-games',
+  'coverage-rows',
+  'top-rated',
+  'most-discussed',
+  'coming-soon',
+] as const;
+export type CurationPage = (typeof CURATION_PAGES)[number];
+export type CurationList = (typeof CURATION_LISTS)[number];
+
+/** A badge an editor granted (shown although not earned) or revoked (hidden although earned). */
+export const BADGE_OVERRIDE_STATES = ['granted', 'revoked'] as const;
+
+/** The disconnect bands (an editor may override the computed band, with a reason). */
+export const DISCONNECT_BANDS = ['agree', 'mild', 'notable', 'large'] as const;
+
+/**
+ * Phase P S3b — the product rules that used to be hardcoded, now ONE admin
+ * setting (app_settings `rules`, Control Panel → Rules & limits). Defaults are
+ * exactly the previous behaviour. [min, max] bounds live in RULE_BOUNDS.
+ */
+export const RULES_DEFAULTS = {
+  homepage: {
+    /** Top rated skips the first N Games in focus (0 = off). */
+    topRatedExcludeFocus: 3,
+    /** Latest skips stories already in Trending. */
+    latestExcludesTrending: true,
+    /** Which Trending story is highlighted first rotates every N minutes (0 = never). */
+    heroRotateMinutes: 5,
+    /** Stacked story cards under the spotlight. */
+    heroSecondaryCount: 3,
+    /** Latest shows N cards before "load more". */
+    latestInitial: 9,
+    /** Outlet headlines per Trending story ("How it's being covered"). */
+    coverageRows: 3,
+    /** Our picks takes editors' pins only. */
+    ourPicksManualOnly: true,
+  },
+  clustering: {
+    /** A story reads "ongoing" from this many articles. */
+    ongoingAt: 3,
+  },
+  display: {
+    /** "Top quality only" filter: quality at or above this. */
+    qualityFilterMin: 50,
+    /** Review-integrity evidence snippets are clipped to this many characters. */
+    integritySnippetMax: 200,
+    /** Excerpt lengths (characters) per surface. */
+    excerpt: {
+      coverageRow: 240,
+      spotlight: 220,
+      gameArticle: 220,
+      sourcePage: 200,
+      feed: 180,
+      latest: 110,
+      topicSummary: 600,
+      metaDescription: 180,
+    },
+  },
+  sources: {
+    /** A source with a parent company can't be typed "Standalone". */
+    parentBlocksStandalone: true,
+  },
+  community: {
+    /** Items in a reader's feed. */
+    feedLimit: 30,
+  },
+  upcoming: {
+    /** Editor-featured games float to the front of /upcoming. */
+    featuredFirst: true,
+    /** Paid positions on /upcoming (1-based); empty = paid games at the front. */
+    paidPositions: [] as number[],
+  },
+  lists: {
+    topicRelatedStories: 5,
+    gameRelatedStories: 6,
+    gameRelatedGames: 6,
+    gameVideos: 3,
+    sourceRecentCoverage: 10,
+    sourceTopGames: 6,
+    discoveryTopRated: 6,
+    discoveryMostDiscussed: 6,
+    discoveryComingSoon: 4,
+    /** Named reasons shown under "Why these signals?". */
+    whyReasons: 3,
+  },
+};
+export type RulesSettings = typeof RULES_DEFAULTS;
+
+/** [min, max] for every numeric rule (integers unless noted). */
+export const RULE_BOUNDS: Record<string, readonly [number, number]> = {
+  'homepage.topRatedExcludeFocus': [0, 24],
+  'homepage.heroRotateMinutes': [0, 1440],
+  'homepage.heroSecondaryCount': [0, 6],
+  'homepage.latestInitial': [1, 48],
+  'homepage.coverageRows': [0, 6],
+  'clustering.ongoingAt': [2, 100],
+  'display.qualityFilterMin': [0, 100],
+  // Capped at the evidence column (varchar 240) — a longer clip could not be stored.
+  'display.integritySnippetMax': [40, 240],
+  'display.excerpt.coverageRow': [40, 2000],
+  'display.excerpt.spotlight': [40, 2000],
+  'display.excerpt.gameArticle': [40, 2000],
+  'display.excerpt.sourcePage': [40, 2000],
+  'display.excerpt.feed': [40, 2000],
+  'display.excerpt.latest': [40, 2000],
+  'display.excerpt.topicSummary': [40, 4000],
+  'display.excerpt.metaDescription': [60, 320],
+  'community.feedLimit': [1, 200],
+  'lists.topicRelatedStories': [0, 24],
+  'lists.gameRelatedStories': [0, 24],
+  'lists.gameRelatedGames': [0, 24],
+  'lists.gameVideos': [0, 24],
+  'lists.sourceRecentCoverage': [1, 100],
+  'lists.sourceTopGames': [0, 24],
+  'lists.discoveryTopRated': [0, 24],
+  'lists.discoveryMostDiscussed': [0, 24],
+  'lists.discoveryComingSoon': [0, 24],
+  'lists.whyReasons': [0, 10],
+};

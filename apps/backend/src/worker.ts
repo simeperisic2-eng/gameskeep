@@ -5,6 +5,7 @@ import { startRatingsWorker } from './ratings/jobs';
 import { startReputationWorker } from './reputation/jobs';
 import { armSteamSync, startSteamWorker } from './steam/jobs';
 import { startHomepageWorker } from './homepage/jobs';
+import { startTagsWorker } from './tags/jobs';
 
 /**
  * Background-worker process entrypoint. Runs as its own container in compose
@@ -68,6 +69,12 @@ homepage.on('failed', (job, err) =>
 );
 homepage.on('error', (err) => log(`homepage worker error: ${err.message}`));
 
+// Phase P S3b: the tag import-mapping job (batched; boot, catalog, admin button).
+const tagsWorker = startTagsWorker();
+tagsWorker.on('completed', (job, result) => log(`tag sync ${job.id} completed`, result));
+tagsWorker.on('failed', (job, err) => log(`tag sync ${job?.id ?? '?'} failed: ${err.message}`));
+tagsWorker.on('error', (err) => log(`tags worker error: ${err.message}`));
+
 log(
   'worker started — heartbeat + catalog + articles + ratings + reputation + steam + homepage processors waiting',
 );
@@ -82,6 +89,7 @@ const shutdown = async (signal: string): Promise<void> => {
     reputation.close(),
     steam.close(),
     homepage.close(),
+    tagsWorker.close(),
   ]);
   process.exit(0);
 };

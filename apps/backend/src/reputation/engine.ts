@@ -9,6 +9,7 @@ import {
   gameUserRatings,
   reactions,
   topicBiasVotes,
+  userBadgeOverrides,
   userBadges,
   userLevels,
   users,
@@ -80,6 +81,7 @@ export async function recomputeAllReputation(): Promise<RecomputeReputationResul
       reputation: users.reputation,
       status: users.status,
       createdAt: users.createdAt,
+      reputationLocked: users.reputationLocked,
     })
     .from(users);
 
@@ -134,6 +136,8 @@ export async function recomputeAllReputation(): Promise<RecomputeReputationResul
     // stays put so the votes it cast keep their honest weight (GDPR, Slice 7).
     // It still counts as a reactor for OTHERS via the credibility snapshot.
     if (u.status === 'deleted') continue;
+    // Phase P S3b: a staff-set reputation / level is LOCKED — the job leaves it.
+    if (u.reputationLocked) continue;
     const suspended = SUSPENDED.has(u.status);
     const helpful = (helpfulByAuthor.get(u.id) ?? 0) * rep.helpfulWeight;
     const reports = (acceptedByUser.get(u.id) ?? 0) * rep.reportWeight;
@@ -263,6 +267,26 @@ export async function levelViewFor(reputation: number): Promise<LevelView> {
   };
 }
 
+/**
+ * The level a user SHOWS (Phase P S3b): computed live from reputation, unless
+ * staff locked it and set a level — then that level (the job no longer touches
+ * a locked user, so the stored levelId is the editor's).
+ */
+export async function levelViewOf(u: {
+  reputation: number;
+  reputationLocked: boolean;
+  levelId: string | null;
+}): Promise<LevelView> {
+  const live = await levelViewFor(u.reputation);
+  if (!u.reputationLocked || !u.levelId) return live;
+  const [row] = await db
+    .select({ key: userLevels.key, label: userLevels.label })
+    .from(userLevels)
+    .where(eq(userLevels.id, u.levelId))
+    .limit(1);
+  return row ? { key: row.key, label: row.label, progress: live.progress } : live;
+}
+
 export interface ProfileView {
   level: { key: string; label: string; progress: number } | null;
   badges: { key: string; label: string; iconUrl: string | null }[];
@@ -275,19 +299,20 @@ export interface ProfileView {
  */
 export async function getProfileView(userId: string): Promise<ProfileView> {
   const [u] = await db
-    .select({ reputation: users.reputation })
+    .select({
+      reputation: users.reputation,
+      reputationLocked: users.reputationLocked,
+      levelId: users.levelId,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
 
-  const badgeRows = await db
-    .select({ key: badges.key, label: badges.label, iconUrl: badges.iconUrl })
-    .from(userBadges)
-    .innerJoin(badges, eq(badges.id, userBadges.badgeId))
-    .where(eq(userBadges.userId, userId));
+  const badgeRows = await effectiveBadges(userId);
 
-  // Level computed LIVE from reputation → always present (Newcomer at 0).
-  const level = u ? await levelViewFor(u.reputation) : null;
+  // Level computed LIVE from reputation → always present (Newcomer at 0), or
+  // the staff-set level under the lock (Phase P S3b).
+  const level = u ? await levelViewOf(u) : null;
   return { level, badges: badgeRows };
 }
 
@@ -358,4 +383,61 @@ export async function getReputationBreakdown(userId: string): Promise<Reputation
     suspended,
     total,
   };
+}
+
+export interface BadgeView {
+  key: string;
+  label: string;
+  iconUrl: string | null;
+  awardedAt?: Date | null;
+}
+
+/**
+ * A user's PUBLIC badges (Phase P S3b): the earned ones, minus any an editor
+ * REVOKED, plus any an editor GRANTED. Applied at read time, so the reputation
+ * job (which only ever adds earned badges) can never undo a staff decision.
+ */
+export async function effectiveBadges(userId: string): Promise<BadgeView[]> {
+  const [earned, overrides] = await Promise.all([
+    db
+      .select({
+        id: badges.id,
+        key: badges.key,
+        label: badges.label,
+        iconUrl: badges.iconUrl,
+        awardedAt: userBadges.awardedAt,
+      })
+      .from(userBadges)
+      .innerJoin(badges, eq(badges.id, userBadges.badgeId))
+      .where(eq(userBadges.userId, userId)),
+    db
+      .select({
+        id: badges.id,
+        key: badges.key,
+        label: badges.label,
+        iconUrl: badges.iconUrl,
+        state: userBadgeOverrides.state,
+        at: userBadgeOverrides.createdAt,
+      })
+      .from(userBadgeOverrides)
+      .innerJoin(badges, eq(badges.id, userBadgeOverrides.badgeId))
+      .where(eq(userBadgeOverrides.userId, userId)),
+  ]);
+  const revoked = new Set(overrides.filter((o) => o.state === 'revoked').map((o) => o.id));
+  const out = new Map<string, BadgeView>();
+  for (const b of earned) {
+    if (!revoked.has(b.id))
+      out.set(b.id, {
+        key: b.key,
+        label: b.label,
+        iconUrl: b.iconUrl ?? null,
+        awardedAt: b.awardedAt,
+      });
+  }
+  for (const o of overrides) {
+    if (o.state === 'granted' && !out.has(o.id)) {
+      out.set(o.id, { key: o.key, label: o.label, iconUrl: o.iconUrl ?? null, awardedAt: o.at });
+    }
+  }
+  return [...out.values()];
 }

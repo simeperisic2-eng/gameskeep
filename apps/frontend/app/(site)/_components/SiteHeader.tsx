@@ -1,5 +1,6 @@
 import { NavLinks } from './NavLinks';
 import { HeaderAuth } from './HeaderAuth';
+import { siteText, type PublicSite } from '@/lib/site';
 
 function SearchIcon(): React.JSX.Element {
   return (
@@ -16,23 +17,23 @@ function SearchIcon(): React.JSX.Element {
  * sign-in placeholder (auth is I6). Sticky + translucent so the gradient shows
  * through it.
  */
-export function SiteHeader(): React.JSX.Element {
+export function SiteHeader({ site }: { site: PublicSite }): React.JSX.Element {
   return (
     <header className="gk-header">
       <div className="gk-container gk-header-inner">
-        <a className="gk-brand" href="/" aria-label="GamesKeep home">
+        <a className="gk-brand" href="/" aria-label={`${site.brand} home`}>
           {/* Owner-provided emblem (reference/gklogo.svg → public/assets/logo.svg). */}
           <img
             className="gk-logo-img"
             src="/assets/logo.svg"
-            alt="GamesKeep"
+            alt={site.brand}
             width={110}
             height={60}
           />
           <span>
-            GamesKeep
+            {site.brand}
             <br />
-            <span className="gk-brand-sub">News · Bias · Ratings</span>
+            <span className="gk-brand-sub">{siteText(site, 'header.sub')}</span>
           </span>
         </a>
 

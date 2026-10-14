@@ -23,6 +23,7 @@ import { allowSuggest, suggestGame } from '../catalog/suggest';
 import { csrfOk, CSRF_HEADER } from '../auth/session';
 import { sendError } from '../admin/http';
 import { displaySettings, publicDisplay } from '../display/settings';
+import { publicSite } from '../copy/settings';
 
 /**
  * PUBLIC read API (SPEC I5a) — the un-authenticated surface the SSR frontend
@@ -287,6 +288,16 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
       pub.get('/display', async (_req, reply) => {
         try {
           reply.send({ data: publicDisplay(await displaySettings()) });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // Phase P S3b: the copy registry (brand, texts, parsed documents) + the
+      // layout knobs the frontend needs. Pre-built and cached; never per request.
+      pub.get('/site', async (_req, reply) => {
+        try {
+          reply.send({ data: await publicSite() });
         } catch (err) {
           sendError(reply, err);
         }

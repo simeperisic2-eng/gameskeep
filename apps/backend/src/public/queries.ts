@@ -46,6 +46,9 @@ import {
   type TagFacet,
 } from '../tags/service';
 import { tagSettings } from '../tags/settings';
+import { briefingOverrideToday, rulesSettings, rulesSnapshot } from '../rules/settings';
+import { curateList, curationFor, curationsOf, type Curation } from '../curation/service';
+import { brandName, copyState } from '../copy/settings';
 import { redis } from '../redis/client';
 import { homepageSettings } from '../homepage/settings';
 import { playersDelta } from '../homepage/rules';
@@ -155,6 +158,8 @@ export interface Briefing {
   sources: number;
   topics: number;
   reviews: number;
+  /** Phase P S3b: an editor's line for today, shown instead of the counts. */
+  overrideText?: string | null;
 }
 
 /** A browsable genre with how many catalog games carry it. */
@@ -224,9 +229,12 @@ export interface HomepageCoverageRow {
  * count too (labelled GamesKeep, no outbound link — they have no external URL);
  * outlet rows link OUT to the original (excerpt + link posture).
  */
-async function coverageRowsFor(topicIds: string[]): Promise<Map<string, HomepageCoverageRow[]>> {
+async function coverageRowsFor(
+  topicIds: string[],
+  opts: { max: number; curation: Map<string, Curation> } = { max: 3, curation: new Map() },
+): Promise<Map<string, HomepageCoverageRow[]>> {
   const out = new Map<string, HomepageCoverageRow[]>();
-  if (topicIds.length === 0) return out;
+  if (topicIds.length === 0 || opts.max <= 0) return out;
   const rows = await db
     .select({
       topicId: articleTopics.topicId,
@@ -234,20 +242,36 @@ async function coverageRowsFor(topicIds: string[]): Promise<Map<string, Homepage
       url: articles.url,
       origin: articles.origin,
       source: sources.name,
+      sourceSlug: sources.slug,
     })
     .from(articleTopics)
     .innerJoin(articles, eq(articles.id, articleTopics.articleId))
     .leftJoin(sources, eq(sources.id, articles.sourceId))
     .where(inArray(articleTopics.topicId, topicIds))
     .orderBy(desc(articles.publishDate));
+  // One newest row per outlet, per story; then the editor's picks / exclusions
+  // (Phase P S3b — by source slug, "ours" for our own articles) and the count rule.
+  const perTopic = new Map<string, (HomepageCoverageRow & { key: string })[]>();
   for (const r of rows) {
     const ours = r.origin === 'ours';
-    const source = r.source ?? (ours ? 'GamesKeep' : null);
+    const source = r.source ?? (ours ? brandName() : null);
     if (!source) continue;
-    const list = out.get(r.topicId) ?? [];
-    if (list.length >= 3 || list.some((x) => x.source === source)) continue;
-    list.push({ source, title: r.title, url: ours ? null : (r.url ?? null) });
-    out.set(r.topicId, list);
+    const key = ours ? 'ours' : (r.sourceSlug ?? source);
+    const list = perTopic.get(r.topicId) ?? [];
+    if (list.some((x) => x.key === key)) continue;
+    list.push({ key, source, title: r.title, url: ours ? null : (r.url ?? null) });
+    perTopic.set(r.topicId, list);
+  }
+  for (const [topicId, list] of perTopic) {
+    const cur = opts.curation.get(topicId) ?? { pins: [], excludes: [] };
+    out.set(
+      topicId,
+      curateList(list, (x) => x.key, cur, opts.max).map(({ source, title, url }) => ({
+        source,
+        title,
+        url,
+      })),
+    );
   }
   return out;
 }
@@ -459,7 +483,7 @@ function influenceReasons(breakdown: BiasBreakdown | null, articleType: string):
     .filter((c) => c.points > 0 && c.signal !== 'sourceBaseline' && c.signal !== 'baselineNeutral')
     .filter((c) => !(isReview && c.signal === 'reviewCopy'))
     .sort((a, b) => b.points - a.points)
-    .slice(0, 3)
+    .slice(0, rulesSnapshot().lists.whyReasons)
     .map((c) => c.label);
 }
 
@@ -737,6 +761,7 @@ async function loadHomepageGameCards(slugs: string[]): Promise<Map<string, Homep
  */
 export async function getHomepageData(): Promise<HomepageData> {
   const settings = await displaySettings();
+  await copyState(); // the brand labels our own coverage rows (sync read below)
   const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
   const [cards, latest, ranked, genres, briefing, sections, snapshots] = await Promise.all([
     loadTopicCards(settings, evidence),
@@ -771,12 +796,26 @@ export async function getHomepageData(): Promise<HomepageData> {
   const trendingIds = (snapshots.get('trending')?.payload.items ?? [])
     .map((it) => cardBySlug.get(it.slug)?.id)
     .filter((id): id is string => Boolean(id));
-  const coverage = await coverageRowsFor(trendingIds);
+  const rules = await rulesSettings();
+  const coverageCur = await curationsOf('topic', 'coverage-rows');
+  const coverageBySlugToId = new Map(cards.map((c) => [c.slug, c.id]));
+  const coverageCurById = new Map<string, Curation>();
+  for (const [slug, cur] of coverageCur) {
+    const id = coverageBySlugToId.get(slug);
+    if (id) coverageCurById.set(id, cur);
+  }
+  const coverage = await coverageRowsFor(trendingIds, {
+    max: rules.homepage.coverageRows,
+    curation: coverageCurById,
+  });
+  // Phase P S3b: today's briefing override (text instead of the counts, or hidden).
+  const briefingToday = await briefingOverrideToday();
 
   let computedAt: string | null = null;
   const out: HomepageSection[] = [];
   for (const sec of sections) {
     if (!sec.enabled) continue;
+    if (sec.key === 'briefing' && briefingToday?.hidden) continue;
     const snap = snapshots.get(sec.key);
     if (snap && (!computedAt || snap.computedAt.toISOString() > computedAt)) {
       computedAt = snap.computedAt.toISOString();
@@ -836,7 +875,7 @@ export async function getHomepageData(): Promise<HomepageData> {
     topRated: rankedOf('top_rated'),
     controversial: rankedOf('focus'),
     genres,
-    briefing,
+    briefing: { ...briefing, overrideText: briefingToday?.text ?? null },
     display: publicDisplay(settings),
   };
 }
@@ -895,6 +934,8 @@ export interface TopicGameRating {
 export interface TopicDetail {
   id: string;
   slug: string;
+  /** Phase P S3b: an editor kept this story out of search indexes. */
+  noindex: boolean;
   title: string;
   tldr: string | null;
   aiSummary: string | null;
@@ -973,6 +1014,67 @@ async function gameRatingForSubject(subjectId: string): Promise<TopicGameRating 
   };
 }
 
+/** Story cards for pinned slugs (Phase P S3b — a pin may point outside the auto list). */
+async function relatedTopicCardsBySlug(slugs: string[]): Promise<Map<string, RelatedTopic>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: topics.id,
+      slug: topics.slug,
+      title: topics.title,
+      distribution: topics.biasDistribution,
+    })
+    .from(topics)
+    .where(and(inArray(topics.slug, slugs), isNotNull(topics.biasDistribution)));
+  const counts = await sourceCountsByTopic(rows.map((r) => r.id));
+  return new Map(
+    rows
+      .filter((t) => (t.distribution?.articleCount ?? 0) > 0)
+      .map((t) => [
+        t.slug,
+        {
+          slug: t.slug,
+          title: t.title,
+          articleCount: t.distribution?.articleCount ?? 0,
+          sourceCount: counts.get(t.id) ?? 0,
+        },
+      ]),
+  );
+}
+
+/** Game cards for pinned slugs (Phase P S3b). */
+async function relatedGameCardsBySlug(slugs: string[]): Promise<Map<string, RelatedGame>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db
+    .select({
+      slug: subjects.slug,
+      name: subjects.name,
+      genres: games.genres,
+      our: gameRatingSummaries.ourScore,
+      criticsAuto: gameRatingSummaries.criticsScore,
+      criticsOverride: gameRatingSummaries.criticsOverride,
+      communityAuto: gameRatingSummaries.communityOurScore,
+      communityOverride: gameRatingSummaries.communityOverride,
+    })
+    .from(games)
+    .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+    .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id))
+    .where(inArray(subjects.slug, slugs));
+  return new Map(
+    rows.map((r) => [
+      r.slug,
+      {
+        slug: r.slug,
+        name: r.name,
+        genres: r.genres ?? [],
+        our: r.our ?? null,
+        critics: effective(r.criticsAuto, r.criticsOverride),
+        community: effective(r.communityAuto, r.communityOverride),
+      },
+    ]),
+  );
+}
+
 /** Other stories about the same primary game (graceful: [] when none). */
 async function relatedTopicsForGame(
   gameSubjectId: string,
@@ -985,7 +1087,7 @@ async function relatedTopicsForGame(
     .where(
       and(eq(articleSubjects.subjectId, gameSubjectId), ne(articleTopics.topicId, excludeTopicId)),
     )
-    .limit(12);
+    .limit(48);
   const ids = idRows.map((r) => r.topicId);
   if (ids.length === 0) return [];
 
@@ -1013,7 +1115,6 @@ async function relatedTopicsForGame(
       activity: t.lastActivityAt ? t.lastActivityAt.getTime() : 0,
     }))
     .sort((a, b) => b.activity - a.activity)
-    .slice(0, 5)
     .map(({ slug, title, articleCount, sourceCount }) => ({
       slug,
       title,
@@ -1042,12 +1143,14 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       distribution: topics.biasDistribution,
       createdAt: topics.createdAt,
       lastActivityAt: topics.lastActivityAt,
+      noindex: topics.noindex,
     })
     .from(topics)
     .leftJoin(topicTypes, eq(topics.typeId, topicTypes.id))
     .where(eq(topics.slug, slug))
     .limit(1);
   if (!topic || !topic.distribution) return null;
+  const topicRules = await rulesSettings();
 
   const settings = await displaySettings();
   const evidence = await publicIntegrityKinds(settings.integrityAutoPublish);
@@ -1092,10 +1195,19 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
   if (artRows.length === 0) return null;
 
   const primary = gameList[0] ?? null;
-  const [gameRating, related] = await Promise.all([
+  const [gameRating, relatedPool, relatedCur] = await Promise.all([
     primary ? gameRatingForSubject(primary.subjectId) : Promise.resolve(null),
     primary ? relatedTopicsForGame(primary.subjectId, topic.id) : Promise.resolve([]),
+    curationFor('topic', topic.slug, 'related-stories'),
   ]);
+  // Phase P S3b: editor pins / excludes + the size rule.
+  const related = curateList(
+    relatedPool,
+    (t) => t.slug,
+    relatedCur,
+    topicRules.lists.topicRelatedStories,
+    await relatedTopicCardsBySlug(relatedCur.pins.filter((x) => x !== topic.slug)),
+  );
 
   const articleRows = await detailRows(artRows, settings, evidence);
   const entry = flagTallies.get(topic.id) ?? emptyTopicTally();
@@ -1127,6 +1239,7 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       label: t.label,
     })),
     related,
+    noindex: topic.noindex,
   };
 }
 
@@ -1274,6 +1387,8 @@ export interface RelatedGame {
 
 export interface GameDetail {
   id: string;
+  /** Phase P S3b: an editor kept this game page out of search indexes. */
+  noindex: boolean;
   slug: string;
   name: string;
   summary: string | null;
@@ -1499,7 +1614,7 @@ async function relatedTopicsForGameSubject(subjectId: string): Promise<RelatedTo
     .from(articleTopics)
     .innerJoin(articleSubjects, eq(articleSubjects.articleId, articleTopics.articleId))
     .where(eq(articleSubjects.subjectId, subjectId))
-    .limit(20);
+    .limit(48);
   const ids = idRows.map((r) => r.topicId);
   if (ids.length === 0) return [];
   const [rows, sourceCounts] = await Promise.all([
@@ -1525,7 +1640,6 @@ async function relatedTopicsForGameSubject(subjectId: string): Promise<RelatedTo
       activity: t.lastActivityAt ? t.lastActivityAt.getTime() : 0,
     }))
     .sort((a, b) => b.activity - a.activity)
-    .slice(0, 6)
     .map(({ slug, title, articleCount, sourceCount }) => ({
       slug,
       title,
@@ -1560,7 +1674,7 @@ async function relatedGamesFor(
     .innerJoin(subjects, eq(games.subjectId, subjects.id))
     .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id))
     .where(and(ne(games.id, gameId), or(...conds)))
-    .limit(24);
+    .limit(48);
   // Prefer same-series, then rated, then alphabetical — keep it to a tidy 6.
   return rows
     .map((r) => ({
@@ -1577,7 +1691,6 @@ async function relatedGamesFor(
         Number(b.sameSeries) - Number(a.sameSeries) ||
         (b.critics ?? b.our ?? -1) - (a.critics ?? a.our ?? -1),
     )
-    .slice(0, 6)
     .map(({ slug, name, genres: g, our, critics, community }) => ({
       slug,
       name,
@@ -1595,9 +1708,11 @@ async function relatedGamesFor(
  * burst-info math, `internal_assessment`) are never referenced here.
  */
 export async function getGameDetail(slug: string): Promise<GameDetail | null> {
+  const gameRules = await rulesSettings();
   const [g] = await db
     .select({
       gameId: games.id,
+      noindex: games.noindex,
       subjectId: games.subjectId,
       name: subjects.name,
       slug: subjects.slug,
@@ -1656,9 +1771,27 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     webRatingsFor(g.gameId),
     contentFlagsFor(g.gameId),
     ourReviewFor(g.gameId),
-    relatedTopicsForGameSubject(g.subjectId),
+    relatedTopicsForGameSubject(g.subjectId).then(async (pool) => {
+      const cur = await curationFor('game', g.slug, 'related-stories');
+      return curateList(
+        pool,
+        (t) => t.slug,
+        cur,
+        gameRules.lists.gameRelatedStories,
+        await relatedTopicCardsBySlug(cur.pins),
+      );
+    }),
     articlesForGame(g.subjectId, settings, evidence),
-    relatedGamesFor(g.gameId, g.series, g.genres),
+    relatedGamesFor(g.gameId, g.series, g.genres).then(async (pool) => {
+      const cur = await curationFor('game', g.slug, 'related-games');
+      return curateList(
+        pool,
+        (x) => x.slug,
+        cur,
+        gameRules.lists.gameRelatedGames,
+        await relatedGameCardsBySlug(cur.pins.filter((x) => x !== g.slug)),
+      );
+    }),
     db
       .select({
         provider: gameVideos.provider,
@@ -1673,9 +1806,9 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
       })
       .from(gameVideos)
       .where(eq(gameVideos.gameId, g.gameId))
-      // A2 display rule: editor-pinned first, then sort order, take 3.
+      // A2 display rule: editor-pinned first, then sort order; how many is a rule (S3b).
       .orderBy(desc(gameVideos.isPinned), asc(gameVideos.sort))
-      .limit(3),
+      .limit(gameRules.lists.gameVideos),
     db
       .select({
         store: gamePrices.store,
@@ -1767,6 +1900,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   const recordedPeak = await recordedPlayerPeak(g.gameId);
 
   return {
+    noindex: g.noindex,
     id: g.gameId, // I6 Slice 8: the community write components address the game by id
     slug: g.slug,
     name: g.name,
@@ -2327,6 +2461,13 @@ export interface DiscoveryData {
  */
 export async function getDiscoveryData(): Promise<DiscoveryData> {
   const all = await loadCatalogRows();
+  // Phase P S3b: rail sizes are rules; each rail takes editor pins / excludes.
+  const discoveryRules = (await rulesSettings()).lists;
+  const [curTop, curDiscussed, curSoon] = await Promise.all([
+    curationFor('discovery', 'main', 'top-rated'),
+    curationFor('discovery', 'main', 'most-discussed'),
+    curationFor('discovery', 'main', 'coming-soon'),
+  ]);
   const bySlug = new Map(all.map((g) => [g.slug, g]));
 
   // Coverage counts per game across the aggregated feed (facts, not a score).
@@ -2341,7 +2482,7 @@ export async function getDiscoveryData(): Promise<DiscoveryData> {
     .innerJoin(articles, eq(articles.id, articleSubjects.articleId))
     .groupBy(subjects.slug)
     .orderBy(desc(sql`count(distinct ${articles.id})`))
-    .limit(12);
+    .limit(60);
 
   const mostDiscussed: MostDiscussedGame[] = [];
   for (const r of discussedRows) {
@@ -2352,15 +2493,36 @@ export async function getDiscoveryData(): Promise<DiscoveryData> {
       articleCount: Number(r.articleCount) || 0,
       sourceCount: Number(r.sourceCount) || 0,
     });
-    if (mostDiscussed.length >= 6) break;
+    if (mostDiscussed.length >= discoveryRules.discoveryMostDiscussed + 24) break;
   }
 
   return {
     catalogTotal: all.length,
-    topRated: sortCatalog(all, 'rating').slice(0, 6),
-    mostDiscussed,
+    topRated: curateList(
+      sortCatalog(all, 'rating'),
+      (x) => x.slug,
+      curTop,
+      discoveryRules.discoveryTopRated,
+    ),
+    mostDiscussed: curateList(
+      mostDiscussed,
+      (x) => x.slug,
+      curDiscussed,
+      discoveryRules.discoveryMostDiscussed,
+      new Map(
+        curDiscussed.pins
+          .map((slug) => bySlug.get(slug))
+          .filter((x): x is CatalogGame => Boolean(x))
+          .map((x) => [x.slug, { ...x, articleCount: 0, sourceCount: 0 }]),
+      ),
+    ),
     genres: facetTally(all.flatMap((g) => g.genres)),
-    comingSoon: (await getUpcomingData()).slice(0, 4),
+    comingSoon: curateList(
+      await getUpcomingData(),
+      (x) => x.slug,
+      curSoon,
+      discoveryRules.discoveryComingSoon,
+    ),
   };
 }
 
@@ -2628,13 +2790,31 @@ export async function getUpcomingPage(filters: UpcomingFilters = {}): Promise<Up
     filtered = filtered.filter((g) => g.platforms.some((x) => x.toLowerCase() === platform));
   if (indie) filtered = filtered.filter((g) => g.isIndie);
 
-  // Featured/promoted float to the front; then soonest-first.
-  const gamesSorted = filtered.sort((a, b) => {
-    const aTop = a.featured || a.promoted ? 1 : 0;
-    const bTop = b.featured || b.promoted ? 1 : 0;
+  // Phase P S3b — rules.upcoming: editor-featured games float to the front
+  // (featuredFirst); paid games go to the front (no positions set) or to the
+  // admin-set paid positions; everything else soonest-first.
+  const upRules = (await rulesSettings()).upcoming;
+  const byPositions = upRules.paidPositions.length > 0;
+  const ordered = filtered.sort((a, b) => {
+    const aTop = (upRules.featuredFirst && a.featured) || (!byPositions && a.promoted) ? 1 : 0;
+    const bTop = (upRules.featuredFirst && b.featured) || (!byPositions && b.promoted) ? 1 : 0;
     if (aTop !== bTop) return bTop - aTop;
     return byReleaseThenName(a, b);
   });
+  let gamesSorted = ordered;
+  if (byPositions) {
+    const paid = ordered.filter((g) => g.promoted && !(upRules.featuredFirst && g.featured));
+    const rest = ordered.filter((g) => !paid.includes(g));
+    upRules.paidPositions.forEach((pos, k) => {
+      const item = paid[k];
+      if (item) rest.splice(Math.min(pos - 1, rest.length), 0, item);
+    });
+    // more paid games than positions: after the positioned ones, in date order
+    gamesSorted = [
+      ...rest,
+      ...paid.slice(upRules.paidPositions.length).filter((g) => !rest.includes(g)),
+    ];
+  }
 
   // Upcoming DLC / expansions: add-ons tied to a PARENT game, not yet out.
   const dlcRows = await db
@@ -2901,6 +3081,7 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
     }
   }
 
+  const sourceRules = (await rulesSettings()).lists;
   const [recentRows, topGameRows, siblingRows] = await Promise.all([
     db
       .select({
@@ -2919,7 +3100,7 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
       .from(articles)
       .where(eq(articles.sourceId, s.id))
       .orderBy(desc(articles.publishDate))
-      .limit(10),
+      .limit(sourceRules.sourceRecentCoverage),
     db
       .select({
         slug: subjects.slug,
@@ -2935,7 +3116,7 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
       .where(eq(articles.sourceId, s.id))
       .groupBy(subjects.slug, subjects.name)
       .orderBy(desc(sql`count(*)`))
-      .limit(6),
+      .limit(Math.max(1, sourceRules.sourceTopGames)),
     s.parentCompany
       ? db
           .select({ slug: sources.slug, name: sources.name })
@@ -3016,7 +3197,7 @@ export async function getSitemapTopics(): Promise<SitemapEntry[]> {
       updatedAt: topics.updatedAt,
     })
     .from(topics)
-    .where(isNotNull(topics.biasDistribution))
+    .where(and(isNotNull(topics.biasDistribution), eq(topics.noindex, false)))
     .orderBy(desc(topics.lastActivityAt));
   return rows
     .filter((r) => (r.distribution?.articleCount ?? 0) > 0)
@@ -3032,6 +3213,7 @@ export async function getSitemapGames(): Promise<SitemapEntry[]> {
     .select({ slug: subjects.slug, updatedAt: subjects.updatedAt })
     .from(games)
     .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
+    .where(eq(games.noindex, false))
     .orderBy(asc(subjects.name));
   return rows.map((r) => ({
     slug: r.slug,

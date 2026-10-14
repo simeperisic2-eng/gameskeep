@@ -86,6 +86,8 @@ export const gameTags = pgTable(
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
     lastVoteAt: timestamp('last_vote_at', { withTimezone: true }),
     lastConfirmedAt: timestamp('last_confirmed_at', { withTimezone: true }),
+    /** Phase P S3b: when an editor removed it — votes after this are "pushback". */
+    removedAt: timestamp('removed_at', { withTimezone: true }),
     confirmedByUserId: uuid('confirmed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

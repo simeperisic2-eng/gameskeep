@@ -28,6 +28,8 @@ import { PlayerActivity } from '../../_components/PlayerActivity';
 import { AdSlot } from '../../_components/AdSlot';
 import { GameTags } from '../../_components/GameTags';
 import { TagVoting } from '../../_components/TagVoting';
+import { getSite } from '@/lib/site';
+import { brand, excerptRule, gameStatusLabel, label } from '@/lib/labels';
 
 // Render per request so crawlers always get the full hub (SSR), not a shell.
 export const dynamic = 'force-dynamic';
@@ -36,14 +38,6 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
 // Memoize per request so generateMetadata + the page share one backend fetch.
 const loadGame = cache((slug: string): Promise<GameDetail | null> => getGame(slug));
-
-const STATUS_LABEL: Record<string, string> = {
-  announced: 'Announced',
-  in_development: 'In development',
-  early_access: 'Early access',
-  released: 'Released',
-  delisted: 'Delisted',
-};
 
 function formatDate(iso: string | null): string | null {
   if (!iso) return null;
@@ -59,20 +53,28 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const game = await loadGame(slug);
+  const [game] = await Promise.all([loadGame(slug), getSite()]);
   if (!game) return { title: 'Game not found', robots: { index: false } };
 
   const url = `${siteUrl}/games/${game.slug}`;
   const description =
     game.summary ??
-    truncateWords(game.description, 180) ??
+    truncateWords(game.description, excerptRule('metaDescription')) ??
     `${game.name} — separated critic, our and community scores, the critic↔community disconnect, and content flags.`;
 
   return {
     title: game.name,
     description,
     alternates: { canonical: url },
-    openGraph: { type: 'website', url, title: game.name, description },
+    // Phase P S3b: per-page noindex (editor override) — still followed.
+    ...(game.noindex ? { robots: { index: false, follow: true } } : {}),
+    openGraph: {
+      siteName: brand(),
+      type: 'website',
+      url,
+      title: game.name,
+      description,
+    },
     twitter: { card: 'summary_large_image', title: game.name, description },
   };
 }
@@ -121,10 +123,10 @@ export default async function GamePage({
   params: Promise<{ slug: string }>;
 }): Promise<React.JSX.Element> {
   const { slug } = await params;
-  const game = await loadGame(slug);
+  const [game] = await Promise.all([loadGame(slug), getSite()]);
   if (!game) notFound();
 
-  const statusLabel = STATUS_LABEL[game.status] ?? game.status;
+  const statusLabel = gameStatusLabel(game.status);
   const releaseDate = formatDate(game.releaseDate);
 
   const facts: { label: string; value: string }[] = [];
@@ -270,7 +272,7 @@ export default async function GamePage({
                 <h2 className="gk-panel-title">Ratings</h2>
               </div>
               <p className="gk-section-sub" style={{ margin: 0 }}>
-                No scores yet — critic, our and community ratings appear here as they land.
+                {label('empty.gameScores')}
               </p>
             </section>
           )}

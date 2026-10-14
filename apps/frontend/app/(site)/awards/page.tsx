@@ -7,25 +7,31 @@ import { AwardsSubscribe } from '../_components/AwardsSubscribe';
 import { AwardBallot } from '../_components/AwardBallot';
 import { AwardCategoryResults } from '../_components/AwardCategoryResults';
 import { AdSlot } from '../_components/AdSlot';
+import { getSite, siteRich, siteText } from '@/lib/site';
+import { RichText } from '../_components/DocBody';
+import { brand } from '@/lib/labels';
 
 export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Awards',
-  description:
-    'The GamesKeep Awards — an annual program where every nominee shows our deeper analytics (three separated scores + the critic–community disconnect) so voters can actually decide. Critics’ Choice and Community Choice, side by side.',
-  alternates: { canonical: `${siteUrl}/awards` },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/awards`,
-    title: 'GamesKeep Awards — Critics’ Choice and Community Choice',
-    description:
-      'An annual awards program with real analytics behind every nominee. Vote in the Community Choice; see it beside the Critics’ Choice.',
-  },
-  twitter: { card: 'summary_large_image', title: 'GamesKeep Awards' },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  return {
+    title: 'Awards',
+    description: siteText(site, 'awards.metaDescription'),
+    alternates: { canonical: `${siteUrl}/awards` },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/awards`,
+      title: `${site.brand} Awards — Critics’ Choice and Community Choice`,
+      description:
+        'An annual awards program with real analytics behind every nominee. Vote in the Community Choice; see it beside the Critics’ Choice.',
+    },
+    twitter: { card: 'summary_large_image', title: `${site.brand} Awards` },
+  };
+}
 
 const fmtDate = (iso: string): string =>
   new Intl.DateTimeFormat('en-US', {
@@ -36,7 +42,11 @@ const fmtDate = (iso: string): string =>
   }).format(new Date(iso));
 
 export default async function AwardsPage(): Promise<React.JSX.Element> {
-  const [view, archive] = await Promise.all([getAwardsCurrent(), getAwardsArchive()]);
+  const [view, archive, site] = await Promise.all([
+    getAwardsCurrent(),
+    getAwardsArchive(),
+    getSite(),
+  ]);
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -60,16 +70,13 @@ export default async function AwardsPage(): Promise<React.JSX.Element> {
         />
 
         <header className="gk-aw-hero">
-          <span className="gk-eyebrow">GamesKeep Awards</span>
+          <span className="gk-eyebrow">{siteText(site, 'awards.eyebrow')}</span>
           <h1 className="gk-aw-title">
-            {edition ? edition.name : 'The GamesKeep Awards'}
+            {edition ? edition.name : `The ${site.brand} Awards`}
             {edition ? null : ''}
           </h1>
           <p className="gk-aw-lede">
-            An annual program where every nominee carries <strong>our deeper analytics</strong> —
-            three separated scores and the critic–community disconnect — so you can actually decide.{' '}
-            <strong>Critics’ Choice</strong> and <strong>Community Choice</strong>, side by side,
-            never merged.
+            <RichText nodes={siteRich(site, 'awards.intro')} />
           </p>
           {isVoting && edition?.votingClosesAt ? (
             <p className="gk-aw-status is-live">
@@ -86,7 +93,7 @@ export default async function AwardsPage(): Promise<React.JSX.Element> {
           <section className="gk-aw-soon">
             <div className="gk-aw-soon-card">
               <span className="gk-aw-soon-badge">Coming soon</span>
-              <h2 className="gk-aw-soon-title">The first GamesKeep Awards are coming</h2>
+              <h2 className="gk-aw-soon-title">The first {site.brand} Awards are coming</h2>
               <p className="gk-aw-soon-body">
                 {/* [[OWNER-TODO: launch-timing copy. Default = "the best games of
                     {year}" + "voting opens in early {year+1}" (year names the games'
@@ -111,7 +118,7 @@ export default async function AwardsPage(): Promise<React.JSX.Element> {
         {isVoting && view ? (
           <section className="gk-aw-cats">
             {view.categories.length === 0 ? (
-              <p className="gk-section-sub">Categories are being finalised — check back shortly.</p>
+              <p className="gk-section-sub">{siteText(site, 'empty.awards')}</p>
             ) : (
               view.categories.map((cat) => (
                 <section key={cat.editionCategoryId} className="gk-aw-cat">

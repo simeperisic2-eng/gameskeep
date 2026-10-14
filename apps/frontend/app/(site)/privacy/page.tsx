@@ -1,35 +1,43 @@
 import type { Metadata } from 'next';
 import { DocPage } from '../_components/DocPage';
+import { getSite } from '@/lib/site';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
 // [[OWNER-TODO: LEGAL REVIEW REQUIRED — this Privacy / GDPR text is an AI-drafted
 // PLACEHOLDER and must be reviewed and rewritten by a qualified lawyer (GDPR / EU)
 // before any public launch. Do not ship as-is. Confirm the contact/DPO address.]]
-const CONTACT_EMAIL = 'wrathsystems@gmail.com';
+// Phase P S3b: LOCKED (legally required) — not editable in Control Panel → Copy.
+// Only the brand, display domain and privacy email fill in from settings.
 
-export const metadata: Metadata = {
-  title: 'Privacy & GDPR',
-  description:
-    'How GamesKeep handles your data: what we collect, why, and the rights you have — including access, export and deletion. Draft pending legal review.',
-  alternates: { canonical: `${siteUrl}/privacy` },
-  // Draft legal text should not be indexed as authoritative until reviewed.
-  robots: { index: false, follow: true },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/privacy`,
-    title: 'Privacy & GDPR — GamesKeep',
-    description: 'What we collect, why, and your rights over your data.',
-  },
-  twitter: { card: 'summary', title: 'Privacy & GDPR — GamesKeep' },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { brand } = await getSite();
+  return {
+    title: 'Privacy & GDPR',
+    description: `How ${brand} handles your data: what we collect, why, and the rights you have — including access, export and deletion. Draft pending legal review.`,
+    alternates: { canonical: `${siteUrl}/privacy` },
+    // Draft legal text should not be indexed as authoritative until reviewed.
+    robots: { index: false, follow: true },
+    openGraph: {
+      siteName: brand, // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/privacy`,
+      title: `Privacy & GDPR — ${brand}`,
+      description: 'What we collect, why, and your rights over your data.',
+    },
+    twitter: { card: 'summary', title: `Privacy & GDPR — ${brand}` },
+  };
+}
 
-export default function PrivacyPage(): React.JSX.Element {
+export default async function PrivacyPage(): Promise<React.JSX.Element> {
+  const site = await getSite();
+  const brand = site.brand;
+  const email = site.emails.privacy;
   return (
     <DocPage
       eyebrow="Your data"
       title="Privacy & GDPR"
-      lede="Plain-language summary of what GamesKeep collects, why we collect it, and the control you have over it. We aim to collect as little as possible and to make your rights easy to exercise."
+      lede={`Plain-language summary of what ${brand} (${site.domain}) collects, why we collect it, and the control you have over it. We aim to collect as little as possible and to make your rights easy to exercise.`}
       crumbLabel="Privacy / GDPR"
       crumbPath="/privacy"
       meta="Draft — pending legal review"
@@ -39,7 +47,7 @@ export default function PrivacyPage(): React.JSX.Element {
         This Privacy &amp; GDPR notice is an <strong>early draft</strong> written to describe our
         intended practices. It has <strong>not</strong> been reviewed by a lawyer, it is{' '}
         <strong>not legal advice</strong>, and it is not the final policy. It will be reviewed and
-        rewritten by qualified counsel before GamesKeep launches publicly. Please treat it as a
+        rewritten by qualified counsel before {brand} launches publicly. Please treat it as a
         statement of intent, not a binding document.
       </div>
 
@@ -126,9 +134,8 @@ export default function PrivacyPage(): React.JSX.Element {
       <h2>Contact</h2>
       <p>
         Questions about your data, or want to exercise a right? Email{' '}
-        <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> or use the{' '}
-        <a href="/contact">Contact</a> page. The public policy will list a formal data-protection
-        contact once legal review is complete.
+        <a href={`mailto:${email}`}>{email}</a> or use the <a href="/contact">Contact</a> page. The
+        public policy will list a formal data-protection contact once legal review is complete.
       </p>
 
       <div className="gk-doc-note">

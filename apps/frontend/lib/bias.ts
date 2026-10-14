@@ -8,15 +8,20 @@
  * where is the display scope (decided server-side per row; topic-level here).
  */
 import type { BiasDisplayScope } from '@gameskeep/shared/constants';
+import { label } from './labels';
 import type { InfluenceFlag, IntegrityTally, TopicFlagTally } from './public-api';
 
 export type BiasTone = 'good' | 'mixed' | 'warn';
 
 /** The public empty state for signals. We can show what we found, not prove absence. */
+/** The registry default (tests); render through noSignalsLabel(). */
 export const NO_SIGNALS_LABEL = 'No signals found';
+/** The no-signals label as currently set (Control Panel → Copy → labels). */
+export const noSignalsLabel = (): string => label('label.noSignals');
 
 /** One-line explainer used in tooltips and the Methodology page. */
 export const NO_SIGNALS_EXPLAINER = 'We can show what we found; we cannot prove what isn’t there.';
+export const noSignalsExplainer = (): string => label('label.noSignalsExplainer');
 
 /**
  * The once-per-block note (hygiene 3): rows show the short label only; the block
@@ -49,10 +54,18 @@ export function rowShowsNoSignals(row: SignalRowLike): boolean {
 // the coverage carries), never a verdict — neutral/amber in the UI, never red.
 
 export const FLAG_LABEL: Record<InfluenceFlag, string> = {
-  sponsored: 'Sponsored',
-  affiliate: 'Affiliate',
-  reviewCopy: 'Review copy',
-  opinion: 'Opinion',
+  get sponsored() {
+    return label('label.flag.sponsored');
+  },
+  get affiliate() {
+    return label('label.flag.affiliate');
+  },
+  get reviewCopy() {
+    return label('label.flag.reviewCopy');
+  },
+  get opinion() {
+    return label('label.flag.opinion');
+  },
 };
 
 /** Canonical render order for the four flags. */
@@ -90,7 +103,7 @@ export function flagParts(tally: TopicFlagTally, integrity?: IntegrityTally): Fl
   if (tally.independent > 0) {
     parts.push({
       key: 'nosignal',
-      label: `${tally.independent} with ${NO_SIGNALS_LABEL.toLowerCase()}`,
+      label: `${tally.independent} with ${noSignalsLabel().toLowerCase()}`,
       kind: 'nosignal',
     });
   }
@@ -107,11 +120,12 @@ export function compactTopicToken(
   scope: BiasDisplayScope,
   integrity?: IntegrityTally,
 ): { kind: 'nosignal' | 'signal'; label: string } | null {
-  if (scope !== 'all') return tally.sponsored > 0 ? { kind: 'signal', label: 'Sponsored' } : null;
+  if (scope !== 'all')
+    return tally.sponsored > 0 ? { kind: 'signal', label: FLAG_LABEL.sponsored } : null;
   const present: string[] = FLAG_ORDER.filter((f) => tally[f] > 0).map((f) => FLAG_LABEL[f]);
-  if (integrity?.embargo) present.push('Embargo');
-  if (integrity?.sponsoredEvent) present.push('Press trip');
-  if (present.length === 0) return { kind: 'nosignal', label: NO_SIGNALS_LABEL };
+  if (integrity?.embargo) present.push(label('label.integrity.embargo'));
+  if (integrity?.sponsoredEvent) present.push(label('label.integrity.pressTrip'));
+  if (present.length === 0) return { kind: 'nosignal', label: noSignalsLabel() };
   const first = present[0]!;
   return {
     kind: 'signal',

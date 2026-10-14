@@ -4,9 +4,13 @@ import { redirect } from 'next/navigation';
 import { getSessionUser } from '@/lib/session';
 import './admin.css';
 import { AdminSignOut } from './_lib/AdminSignOut';
+import { getSite } from '@/lib/site';
 
 export const dynamic = 'force-dynamic';
-export const metadata: Metadata = { title: 'Control Panel · GamesKeep', robots: { index: false } };
+export async function generateMetadata(): Promise<Metadata> {
+  const { brand } = await getSite();
+  return { title: `Control Panel · ${brand}`, robots: { index: false } };
+}
 
 /**
  * Control Panel shell (SPEC I8, Slice 1). The panel is now behind STAFF-SESSION
@@ -36,6 +40,7 @@ const NAV: {
       { label: 'Review integrity', href: '/admin/integrity', minRank: 30 },
       { label: 'Tags · queue', href: '/admin/tags', minRank: 30 },
       { label: 'Tag taxonomy', href: '/admin/tag-taxonomy', minRank: 30 },
+      { label: 'List curation', href: '/admin/curation', minRank: 30 },
     ],
   },
   {
@@ -96,6 +101,8 @@ const NAV: {
       { label: 'Homepage', href: '/admin/homepage', minRank: 40 },
       { label: 'Lists & slots', href: '/admin/lists', minRank: 40 },
       { label: 'Display & bias', href: '/admin/display', minRank: 40 },
+      { label: 'Rules & limits', href: '/admin/rules', minRank: 40 },
+      { label: 'Copy', href: '/admin/copy', minRank: 40 },
       { label: 'User levels', href: '/admin/user-levels', minRank: 40 },
       { label: 'Badges', href: '/admin/badges', minRank: 40 },
       { label: 'Topic types', href: '/admin/topic-types', minRank: 40 },
@@ -108,6 +115,7 @@ const NAV: {
     minRank: 50,
     items: [
       { label: 'Users', href: '/admin/users', minRank: 50 },
+      { label: 'Badge grants / revokes', href: '/admin/user-badge-overrides', minRank: 50 },
       { label: 'Roles', href: '/admin/roles', minRank: 50 },
     ],
   },
@@ -118,7 +126,7 @@ export default async function AdminLayout({
 }: {
   children: ReactNode;
 }): Promise<React.JSX.Element> {
-  const user = await getSessionUser();
+  const [user, site] = await Promise.all([getSessionUser(), getSite()]);
   if (!user || !user.role.isStaff) redirect('/login?next=/admin');
   const rank = user.role.rank;
 
@@ -132,7 +140,7 @@ export default async function AdminLayout({
       <aside className="gk-cp-nav">
         <div className="gk-cp-brand">
           <a href="/admin">
-            GamesKeep <b>Control</b>
+            {site.brand} <b>Control</b>
           </a>
           <span className="gk-cp-brand-sub">Panel · I8</span>
         </div>

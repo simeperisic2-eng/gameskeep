@@ -103,6 +103,8 @@ export const games = pgTable(
     upcomingOverride: upcomingOverrideEnum('upcoming_override'),
     upcomingFeatured: boolean('upcoming_featured').notNull().default(false),
     isIndie: boolean('is_indie').notNull().default(false),
+    /** Phase P S3b: keep this game page out of search indexes + the sitemap. */
+    noindex: boolean('noindex').notNull().default(false),
 
     // Demo-seed marker (see DemoSeedMarker). Null for every real, imported or
     // admin-created game; deliberately NOT an admin-editable field.
@@ -237,7 +239,11 @@ export const gameRatingSummaries = pgTable('game_rating_summaries', {
   communityBurstInfo: jsonb('community_burst_info').$type<CommunityBurstInfo>(),
   // Disconnect (auto arithmetic) + sub-levels; context tag is EDITOR-ONLY.
   disconnectValue: smallint('disconnect_value'),
+  /** The PUBLIC band: the editor's override when set, else the computed one. */
   disconnectBand: varchar('disconnect_band', { length: 20 }),
+  /** Phase P S3b: an editor's band override (with a reason); null = computed. */
+  disconnectBandOverride: varchar('disconnect_band_override', { length: 20 }),
+  disconnectBandOverrideReason: text('disconnect_band_override_reason'),
   disconnectDetail: jsonb('disconnect_detail').$type<DisconnectDetail>(),
   disconnectContextTag: varchar('disconnect_context_tag', { length: 200 }),
   // --- EDITOR overrides (auto value retained underneath; survive a re-tune) ---
@@ -263,7 +269,6 @@ export const gameContentFlags = pgTable('game_content_flags', {
   hasMicrotransactions: boolean('has_microtransactions').notNull().default(false),
   hasBattlePass: boolean('has_battle_pass').notNull().default(false),
   hasLootBoxesOrGacha: boolean('has_loot_boxes_or_gacha').notNull().default(false),
-  predatoryMonetization: boolean('predatory_monetization').notNull().default(false),
   complexityRating: smallint('complexity_rating'), // 1..5, where known (null = unknown)
   notes: text('notes'),
   ...timestamps(),

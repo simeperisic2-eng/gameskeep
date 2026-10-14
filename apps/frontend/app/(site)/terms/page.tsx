@@ -1,35 +1,43 @@
 import type { Metadata } from 'next';
 import { DocPage } from '../_components/DocPage';
+import { getSite } from '@/lib/site';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
 // [[OWNER-TODO: LEGAL REVIEW REQUIRED — these Terms of Service are AI-drafted
 // PLACEHOLDER text and must be reviewed and rewritten by a qualified lawyer before
 // any public launch. Do not ship as-is. Set the governing-law jurisdiction.]]
-const CONTACT_EMAIL = 'wrathsystems@gmail.com';
+// Phase P S3b: LOCKED (legally required) — not editable in Control Panel → Copy.
+// Only the brand, display domain and contact email fill in from settings.
 
-export const metadata: Metadata = {
-  title: 'Terms of Service',
-  description:
-    'The terms for using GamesKeep: your account, acceptable use, the content you post, and our aggregation of excerpts that always link back to the source. Draft pending legal review.',
-  alternates: { canonical: `${siteUrl}/terms` },
-  // Draft legal text should not be indexed as authoritative until reviewed.
-  robots: { index: false, follow: true },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/terms`,
-    title: 'Terms of Service — GamesKeep',
-    description: 'The terms for using GamesKeep. Draft pending legal review.',
-  },
-  twitter: { card: 'summary', title: 'Terms of Service — GamesKeep' },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const { brand } = await getSite();
+  return {
+    title: 'Terms of Service',
+    description: `The terms for using ${brand}: your account, acceptable use, the content you post, and our aggregation of excerpts that always link back to the source. Draft pending legal review.`,
+    alternates: { canonical: `${siteUrl}/terms` },
+    // Draft legal text should not be indexed as authoritative until reviewed.
+    robots: { index: false, follow: true },
+    openGraph: {
+      siteName: brand, // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/terms`,
+      title: `Terms of Service — ${brand}`,
+      description: `The terms for using ${brand}. Draft pending legal review.`,
+    },
+    twitter: { card: 'summary', title: `Terms of Service — ${brand}` },
+  };
+}
 
-export default function TermsPage(): React.JSX.Element {
+export default async function TermsPage(): Promise<React.JSX.Element> {
+  const site = await getSite();
+  const brand = site.brand;
+  const email = site.emails.contact;
   return (
     <DocPage
       eyebrow="The rules"
       title="Terms of service"
-      lede="The agreement between you and GamesKeep when you use the platform — written to be as plain and fair as terms can be."
+      lede={`The agreement between you and ${brand} when you use the platform — written to be as plain and fair as terms can be.`}
       crumbLabel="Terms"
       crumbPath="/terms"
       meta="Draft — pending legal review"
@@ -39,15 +47,15 @@ export default function TermsPage(): React.JSX.Element {
         These Terms of Service are an <strong>early draft</strong> describing our intended terms.
         They have <strong>not</strong> been reviewed by a lawyer, they are{' '}
         <strong>not legal advice</strong>, and they are not the final, binding agreement. They will
-        be reviewed and rewritten by qualified counsel before GamesKeep launches publicly. Please
+        be reviewed and rewritten by qualified counsel before {brand} launches publicly. Please
         treat them as a statement of intent.
       </div>
 
-      <h2>Using GamesKeep</h2>
+      <h2>Using {brand}</h2>
       <p>
-        By accessing or using GamesKeep you agree to these terms. If you do not agree, please do not
-        use the platform. You must be old enough to consent to these terms and to the processing of
-        your data under the law that applies to you.
+        By accessing or using {brand} ({site.domain}) you agree to these terms. If you do not agree,
+        please do not use the platform. You must be old enough to consent to these terms and to the
+        processing of your data under the law that applies to you.
       </p>
 
       <h2>Your account</h2>
@@ -81,7 +89,7 @@ export default function TermsPage(): React.JSX.Element {
       <h2>Content you post</h2>
       <p>
         You keep ownership of the ratings, comments and other content you create. By posting it, you
-        grant GamesKeep a non-exclusive licence to host, display and distribute it as part of
+        grant {brand} a non-exclusive licence to host, display and distribute it as part of
         operating the platform. You are responsible for what you post, and you confirm you have the
         right to post it.
       </p>
@@ -101,10 +109,10 @@ export default function TermsPage(): React.JSX.Element {
 
       <h2>Aggregation &amp; intellectual property</h2>
       <p>
-        GamesKeep aggregates news by showing <strong>excerpts and summaries</strong>{' '}
+        {brand} aggregates news by showing <strong>excerpts and summaries</strong>{' '}
         <span>
           that always link back to the original source. Full articles remain with their publishers;
-          we send readers to them, we do not replace them. The GamesKeep name, design and original
+          we send readers to them, we do not replace them. The {brand} name, design and original
           content are ours or our licensors&rsquo;. Trademarks and game assets belong to their
           respective owners and are shown for identification and commentary.
         </span>
@@ -112,7 +120,7 @@ export default function TermsPage(): React.JSX.Element {
 
       <h2>Disclaimers</h2>
       <p>
-        GamesKeep is currently a <strong>demo build</strong>{' '}
+        {brand} is currently a <strong>demo build</strong>{' '}
         <span>
           and is provided &ldquo;as is,&rdquo; without warranties of any kind. We do not guarantee
           that scores, signals or aggregated data are complete, accurate or uninterrupted. You use
@@ -122,15 +130,15 @@ export default function TermsPage(): React.JSX.Element {
 
       <h2>Limitation of liability</h2>
       <p>
-        To the fullest extent permitted by law, GamesKeep is not liable for indirect, incidental or
+        To the fullest extent permitted by law, {brand} is not liable for indirect, incidental or
         consequential damages arising from your use of the platform. The precise limits will be set
         out in the legally reviewed version of these terms.
       </p>
 
       <h2>Termination</h2>
       <p>
-        You can stop using GamesKeep and delete your account at any time. We may suspend or
-        terminate access that breaks these terms or harms the platform or its users.
+        You can stop using {brand} and delete your account at any time. We may suspend or terminate
+        access that breaks these terms or harms the platform or its users.
       </p>
 
       <h2>Changes &amp; governing law</h2>
@@ -141,8 +149,8 @@ export default function TermsPage(): React.JSX.Element {
 
       <h2>Contact</h2>
       <p>
-        Questions about these terms? Email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>{' '}
-        or use the <a href="/contact">Contact</a> page.
+        Questions about these terms? Email <a href={`mailto:${email}`}>{email}</a> or use the{' '}
+        <a href="/contact">Contact</a> page.
       </p>
 
       <div className="gk-doc-note">

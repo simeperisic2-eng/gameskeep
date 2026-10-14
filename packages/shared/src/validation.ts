@@ -20,6 +20,11 @@ import {
   SOURCE_STATUSES,
   SUBJECT_TYPES,
   TAG_FAMILIES,
+  TOPIC_LOCKABLE_FIELDS,
+  BADGE_OVERRIDE_STATES,
+  CURATION_LISTS,
+  CURATION_PAGES,
+  DISCONNECT_BANDS,
   TOPIC_STATUSES,
   UNMATCHED_STATUSES,
   UPCOMING_OVERRIDES,
@@ -159,6 +164,8 @@ export const gameCreate = z.object({
   upcomingOverride: z.enum(UPCOMING_OVERRIDES).nullable().optional(),
   upcomingFeatured: z.boolean().optional(),
   isIndie: z.boolean().optional(),
+  /** Phase P S3b: keep the game page out of search indexes + the sitemap. */
+  noindex: z.boolean().optional(),
 });
 
 export const sourceCreate = z.object({
@@ -187,6 +194,9 @@ export const topicCreate = z.object({
   aiSummary: longText.optional(),
   status: z.enum(TOPIC_STATUSES).default('developing'),
   typeId: uuid.optional(),
+  /** Phase P S3b: fields the automatic passes leave alone (an edit adds itself). */
+  lockedFields: z.array(z.enum(TOPIC_LOCKABLE_FIELDS)).max(TOPIC_LOCKABLE_FIELDS.length).optional(),
+  noindex: z.boolean().optional(),
 });
 
 /** Base article shape (no cross-field rule) — reused for the PATCH/update schema. */
@@ -237,6 +247,8 @@ export const userCreate = z.object({
   reputation: z.number().int().min(0).default(0),
   isEmailVerified: z.boolean().default(false),
   status: z.enum(USER_STATUSES).default('active'),
+  /** Phase P S3b: the reputation job leaves a locked user's numbers as set. */
+  reputationLocked: z.boolean().optional(),
 });
 
 // ── auth (SPEC I6, Slice 1) ──────────────────────────────────────────────────
@@ -398,7 +410,6 @@ export const gameContentFlagsCreate = z.object({
   hasMicrotransactions: z.boolean().default(false),
   hasBattlePass: z.boolean().default(false),
   hasLootBoxesOrGacha: z.boolean().default(false),
-  predatoryMonetization: z.boolean().default(false),
   complexityRating: z.number().int().min(1).max(5).optional(), // 1..5, where known
   notes: z.string().max(2000).optional(),
 });
@@ -724,6 +735,10 @@ export const homepageSectionPatch = z
     // Phase P S3: the tag FAMILIES a card shows, in order (content / issue).
     cardTagFamilies: z.array(z.enum(TAG_FAMILIES)).max(TAG_FAMILIES.length).optional(),
     cardTagCount: z.number().int().min(0).max(10).optional(),
+    /** Phase P S3b: show the Δ chips at all (Δ sections only) … */
+    showDelta: z.boolean().optional(),
+    /** … and the items (story / game slugs) whose Δ is hidden. */
+    hideDeltaRefs: z.array(slug).max(HOMEPAGE_MAX_ITEMS).optional(),
     rules: z
       .object({ include: ruleSide.optional(), exclude: ruleSide.optional() })
       .strict()
@@ -1053,11 +1068,39 @@ export const ratingOverrideInput = z
   .object({
     criticsScore: overrideScoreNullable.optional(),
     communityScore: overrideScoreNullable.optional(),
+    /** Phase P S3b: the disconnect band (null = back to computed). */
+    disconnectBand: z.enum(DISCONNECT_BANDS).nullable().optional(),
     reason: z.string().max(2000).optional(),
   })
-  .refine((o) => o.criticsScore !== undefined || o.communityScore !== undefined, {
-    message: 'Provide criticsScore and/or communityScore (null to clear)',
+  .refine(
+    (o) =>
+      o.criticsScore !== undefined ||
+      o.communityScore !== undefined ||
+      o.disconnectBand !== undefined,
+    { message: 'Provide criticsScore, communityScore and/or disconnectBand (null to clear)' },
+  )
+  .refine((o) => o.disconnectBand == null || Boolean(o.reason?.trim()), {
+    message: 'A band override needs a reason',
+    path: ['reason'],
   });
+
+/** Phase P S3b: a staff badge decision (granted / revoked), with a reason. */
+export const userBadgeOverrideCreate = z.object({
+  userId: uuid,
+  badgeId: uuid,
+  state: z.enum(BADGE_OVERRIDE_STATES),
+  reason: z.string().trim().min(1).max(500),
+});
+
+/** Phase P S3b: an editor's pin / exclude lists for a computed list on a page. */
+export const curationCreate = z.object({
+  pageKind: z.enum(CURATION_PAGES),
+  pageKey: z.string().trim().min(1).max(160),
+  listKey: z.enum(CURATION_LISTS),
+  pins: z.array(z.string().trim().min(1).max(160)).max(24).optional(),
+  excludes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
+  note: z.string().max(500).optional(),
+});
 
 /**
  * Force / clear the community "unusual activity" burst flag (SPEC I4b §6).

@@ -1,6 +1,13 @@
 import { eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { db } from '../db/client';
-import { articles, articleSubjects, sources, sourceTypes, topics } from '../db/schema';
+import {
+  articles,
+  articleSubjects,
+  sources,
+  sourceTypes,
+  topicEditorialCarryover,
+  topics,
+} from '../db/schema';
 import {
   getArticleSourceProvider,
   type ArticleSourceProvider,
@@ -104,6 +111,22 @@ async function ensureSources(): Promise<Map<string, string>> {
  */
 async function resetFeed(): Promise<void> {
   await db.transaction(async (tx) => {
+    // Phase P S3b: stories an editor locked (or kept out of search) are recreated
+    // by the re-cluster — snapshot their editor fields + slug, keyed on their
+    // member articles' feed guids; restoreTopicCarryover re-applies them.
+    await tx.execute(sql`
+      INSERT INTO topic_editorial_carryover (slug, member_guids, locked_fields, fields)
+      SELECT t.slug,
+        coalesce(array_agg(a.external_guid) FILTER (WHERE a.external_guid IS NOT NULL), '{}'),
+        t.locked_fields,
+        jsonb_build_object('title', t.title, 'tldr', t.tldr, 'aiSummary', t.ai_summary,
+          'status', t.status, 'typeId', t.type_id, 'noindex', t.noindex)
+      FROM topics t
+      LEFT JOIN article_topics at ON at.topic_id = t.id
+      LEFT JOIN articles a ON a.id = at.article_id
+      WHERE t.embedding IS NOT NULL AND (cardinality(t.locked_fields) > 0 OR t.noindex)
+      GROUP BY t.id
+    `);
     await tx.execute(sql`
       INSERT INTO article_editorial_carryover (
         external_guid, source_id, influence_override, quality_override,
@@ -131,6 +154,63 @@ async function resetFeed(): Promise<void> {
     await tx.delete(articles).where(eq(articles.origin, 'aggregated'));
     await tx.delete(topics).where(isNotNull(topics.embedding));
   });
+}
+
+/**
+ * Phase P S3b: after a re-cluster, each carried-over story finds the new story
+ * holding most of its member articles (at least half of them) and gets back its
+ * locked fields, its search setting and — if still free — its slug, so links,
+ * pins and placements keep pointing at it. Applied rows are dropped; an
+ * unmatched row is kept 30 days (a later ingest may bring its articles back).
+ */
+async function restoreTopicCarryover(): Promise<number> {
+  const carried = await db.select().from(topicEditorialCarryover);
+  let applied = 0;
+  for (const c of carried) {
+    if (c.memberGuids.length === 0) continue;
+    // One bound parameter per guid (a JS array interpolated directly becomes a
+    // row value, which Postgres can't cast to text[]).
+    const guids = sql.join(
+      c.memberGuids.map((g) => sql`${g}`),
+      sql`, `,
+    );
+    const res = await db.execute(sql`
+      SELECT at.topic_id AS id, count(*)::int AS n
+      FROM article_topics at JOIN articles a ON a.id = at.article_id
+      WHERE a.external_guid = ANY(ARRAY[${guids}]::text[])
+      GROUP BY at.topic_id ORDER BY n DESC LIMIT 1
+    `);
+    const rows = ((res as unknown as { rows?: { id: string; n: number }[] }).rows ??
+      (res as unknown as { id: string; n: number }[])) as { id: string; n: number }[];
+    const best = rows[0];
+    if (!best || best.n * 2 < c.memberGuids.length) continue;
+    const f = (c.fields ?? {}) as Record<string, unknown>;
+    const set: Record<string, unknown> = {
+      lockedFields: c.lockedFields,
+      noindex: f.noindex === true,
+    };
+    for (const field of c.lockedFields) {
+      if (field === 'title' && typeof f.title === 'string') set.title = f.title;
+      if (field === 'tldr') set.tldr = typeof f.tldr === 'string' ? f.tldr : null;
+      if (field === 'aiSummary')
+        set.aiSummary = typeof f.aiSummary === 'string' ? f.aiSummary : null;
+      if (field === 'status' && typeof f.status === 'string') set.status = f.status;
+      if (field === 'typeId') set.typeId = typeof f.typeId === 'string' ? f.typeId : null;
+    }
+    const [taken] = await db
+      .select({ id: topics.id })
+      .from(topics)
+      .where(eq(topics.slug, c.slug))
+      .limit(1);
+    if (!taken) set.slug = c.slug;
+    await db.update(topics).set(set).where(eq(topics.id, best.id));
+    await db.delete(topicEditorialCarryover).where(eq(topicEditorialCarryover.id, c.id));
+    applied += 1;
+  }
+  await db.execute(
+    sql`DELETE FROM topic_editorial_carryover WHERE created_at < now() - interval '30 days'`,
+  );
+  return applied;
 }
 
 /**
@@ -296,6 +376,7 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
   // recreated) article again — before the bias recompute reads the overrides.
   await relinkIntegrityByIdentity();
   await restoreEditorialCarryover();
+  await restoreTopicCarryover();
 
   // Refresh summaries for every touched topic (off the request path), then run
   // the status auto-maintenance pass.

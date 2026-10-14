@@ -6,6 +6,7 @@ import type {
 } from '@gameskeep/shared/validation';
 import type { z } from 'zod';
 import { db } from '../db/client';
+import { copyState } from '../copy/settings';
 import { newsletterCampaigns, newsletterSubscriptions, topics, userConsents } from '../db/schema';
 import { env } from '../config/env';
 import { sendNewsletterEmail } from '../email/send';
@@ -117,6 +118,7 @@ export async function buildDigest(
   if (rows.length === 0) return null;
 
   const site = env.PUBLIC_SITE_URL.replace(/\/+$/, '');
+  const brand = (await copyState()).values['brand.name'] ?? 'GamesKeep';
   const items = rows.map((t) => {
     const summary = (t.tldr ?? t.aiSummary ?? '').trim();
     return [`▸ ${t.title}`, summary, `${site}/topics/${t.slug}`].filter(Boolean).join('\n');
@@ -127,7 +129,7 @@ export async function buildDigest(
   const clamp = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
   return {
-    subject: clamp(`GamesKeep digest — ${rows.length} stories worth your time`, 200),
+    subject: clamp(`${brand} digest — ${rows.length} stories worth your time`, 200),
     preheader: clamp(
       rows
         .map((t) => t.title)
@@ -137,7 +139,7 @@ export async function buildDigest(
     ),
     body: [
       'The stories our readers are following right now — with the coverage',
-      'signals we found on each. Read the full story on GamesKeep.',
+      `signals we found on each. Read the full story on ${brand}.`,
       '',
       items.join('\n\n'),
     ].join('\n'),

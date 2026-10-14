@@ -4,9 +4,11 @@
  * (graceful placeholders for now). The footer pixel easter-egg is an explicitly
  * later/edge touch (out of scope here) — room is left, it is not built.
  */
-const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
+import { siteText, type PublicSite } from '@/lib/site';
+
+const columns = (brand: string): { title: string; links: { label: string; href: string }[] }[] => [
   {
-    title: 'GamesKeep',
+    title: brand,
     links: [
       { label: 'About', href: '/about' },
       { label: 'Methodology', href: '/methodology' },
@@ -32,29 +34,25 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   },
 ];
 
-export function SiteFooter(): React.JSX.Element {
-  const year = new Date().getFullYear();
+export function SiteFooter({ site }: { site: PublicSite }): React.JSX.Element {
   return (
     <footer className="gk-footer">
       <div className="gk-container">
         <div className="gk-footer-grid">
           <div className="gk-footer-brand">
-            <a className="gk-brand" href="/" aria-label="GamesKeep home">
+            <a className="gk-brand" href="/" aria-label={`${site.brand} home`}>
               <img
                 className="gk-logo-img"
                 src="/assets/logo.svg"
-                alt="GamesKeep"
+                alt={site.brand}
                 width={99}
                 height={54}
               />
-              <span>GamesKeep</span>
+              <span>{site.brand}</span>
             </a>
-            <p>
-              A tool to judge games coverage for yourself — news with a bias lens, ratings with
-              honest context. Transparency, not authority.
-            </p>
+            <p>{siteText(site, 'footer.blurb')}</p>
           </div>
-          {COLUMNS.map((col) => (
+          {columns(site.brand).map((col) => (
             <div key={col.title}>
               <h4>{col.title}</h4>
               <ul>
@@ -68,10 +66,8 @@ export function SiteFooter(): React.JSX.Element {
           ))}
         </div>
         <div className="gk-footer-legal">
-          <span>© {year} GamesKeep. Demo build — mock data, real engines.</span>
-          <span>
-            Excerpts &amp; summaries link to each source. Full text stays with the publisher.
-          </span>
+          <span>{siteText(site, 'footer.legal')}</span>
+          <span>{siteText(site, 'footer.attribution')}</span>
         </div>
       </div>
     </footer>

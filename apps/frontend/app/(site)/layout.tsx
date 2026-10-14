@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import './site.css';
 import { SiteHeader } from './_components/SiteHeader';
 import { SiteFooter } from './_components/SiteFooter';
+import { SiteProvider } from './_components/SiteProvider';
+import { getSite, toClientSite } from '@/lib/site';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
@@ -18,12 +20,20 @@ export const metadata: Metadata = {
   alternates: { canonical: siteUrl },
 };
 
-export default function SiteLayout({ children }: { children: ReactNode }): React.JSX.Element {
+export default async function SiteLayout({
+  children,
+}: {
+  children: ReactNode;
+}): Promise<React.JSX.Element> {
+  // Phase P S3b: one copy-registry read per request, shared with every page.
+  const site = await getSite();
   return (
-    <div className="gk-site">
-      <SiteHeader />
-      {children}
-      <SiteFooter />
-    </div>
+    <SiteProvider value={toClientSite(site)}>
+      <div className="gk-site">
+        <SiteHeader site={site} />
+        {children}
+        <SiteFooter site={site} />
+      </div>
+    </SiteProvider>
   );
 }

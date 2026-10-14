@@ -1,7 +1,16 @@
-import { and, eq, like } from 'drizzle-orm';
+import { and, eq, inArray, like, notInArray, sql } from 'drizzle-orm';
 import { isDemo } from '../config/env';
 import { db } from '../db/client';
-import { gameTags, gameTagVotes, games, subjects, tags, users } from '../db/schema';
+import {
+  appSettings,
+  auditLogs,
+  gameTags,
+  gameTagVotes,
+  games,
+  subjects,
+  tags,
+  users,
+} from '../db/schema';
 import { writeAudit } from '../admin/audit';
 import { recomputeGameTag } from './service';
 
@@ -114,6 +123,13 @@ export async function seedDemoTagActivity(): Promise<number> {
     created += 1;
   }
   if (created) {
+    await db
+      .insert(appSettings)
+      .values({ key: DEMO_TAGS_ANCHOR_KEY, value: { at: new Date(now).toISOString() } })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: { at: new Date(now).toISOString() }, updatedAt: new Date() },
+      });
     await writeAudit({
       action: 'create',
       entityType: 'game-tag',
@@ -124,4 +140,131 @@ export async function seedDemoTagActivity(): Promise<number> {
     });
   }
   return created;
+}
+
+/** When the demo tag activity was last aligned (its dates are relative to this). */
+export const DEMO_TAGS_ANCHOR_KEY = 'demo-tags-anchor';
+/** Smaller shifts are noise (a quick restart). */
+const MIN_SHIFT_MS = 60 * 60 * 1000;
+
+/**
+ * Demo only (Phase P S3b): keep the seeded tag activity relative to BOOT, like
+ * the mock feed and the player history — otherwise "active" drifts into "past"
+ * as real days pass. Every date of a still-untouched demo row (and its seeded
+ * votes) moves by the time since the anchor. A row any staff member acted on
+ * (a non-system audit entry) is never moved.
+ */
+export async function realignDemoTagDates(): Promise<{
+  shiftedRows: number;
+  hours: number;
+} | null> {
+  if (!isDemo()) return null;
+  const [anchor] = await db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, DEMO_TAGS_ANCHOR_KEY))
+    .limit(1);
+  let at = Date.parse(String((anchor?.value as { at?: unknown } | null)?.at ?? ''));
+  if (!Number.isFinite(at)) {
+    // A volume seeded before the anchor existed: its dates are relative to the
+    // seed itself — the time of the system seed's audit row.
+    const [seeded] = await db
+      .select({ at: auditLogs.createdAt })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.entityType, 'game-tag'),
+          eq(auditLogs.entityId, 'demo-seed'),
+          eq(auditLogs.actorLabel, 'system:demo-seed'),
+        ),
+      )
+      .orderBy(auditLogs.createdAt)
+      .limit(1);
+    at = seeded?.at ? seeded.at.getTime() : Number.NaN;
+  }
+  if (!Number.isFinite(at)) return null;
+  const now = Date.now();
+  const shift = now - at;
+  if (shift < MIN_SHIFT_MS) return null;
+  const rows = await db
+    .select({ id: gameTags.id, gameId: gameTags.gameId, tagId: gameTags.tagId })
+    .from(gameTags)
+    .where(eq(gameTags.confirmedByLabel, 'demo-seed'));
+  const pending = await db
+    .select({ id: gameTags.id, gameId: gameTags.gameId, tagId: gameTags.tagId })
+    .from(gameTags)
+    .where(and(eq(gameTags.state, 'pending'), eq(gameTags.source, 'players')));
+  const candidates = [...rows, ...pending];
+  if (candidates.length === 0) return null;
+  const touched = new Set(
+    (
+      await db
+        .select({ id: auditLogs.entityId })
+        .from(auditLogs)
+        .where(
+          and(
+            eq(auditLogs.entityType, 'game-tag'),
+            inArray(
+              auditLogs.entityId,
+              candidates.map((c) => c.id),
+            ),
+            sql`${auditLogs.actorLabel} NOT LIKE 'system:%'`,
+          ),
+        )
+    ).map((r) => r.id),
+  );
+  const voters = (
+    await db.select({ id: users.id }).from(users).where(like(users.username, 'gk\\_voter%'))
+  ).map((u) => u.id);
+  if (voters.length === 0) return null;
+  const ms = sql.raw(`interval '${Math.round(shift / 1000)} seconds'`);
+  let shifted = 0;
+  for (const c of candidates) {
+    if (touched.has(c.id)) continue;
+    // Only rows whose votes are ALL the seeded voters' — a real reader's vote means
+    // the row is no longer pure demo data.
+    const [mixed] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(gameTagVotes)
+      .where(
+        and(
+          eq(gameTagVotes.gameId, c.gameId),
+          eq(gameTagVotes.tagId, c.tagId),
+          notInArray(gameTagVotes.userId, voters),
+        ),
+      );
+    if ((mixed?.n ?? 0) > 0) continue;
+    await db
+      .update(gameTagVotes)
+      .set({ createdAt: sql`${gameTagVotes.createdAt} + ${ms}` })
+      .where(and(eq(gameTagVotes.gameId, c.gameId), eq(gameTagVotes.tagId, c.tagId)));
+    await db
+      .update(gameTags)
+      .set({
+        firstSeenAt: sql`${gameTags.firstSeenAt} + ${ms}`,
+        lastVoteAt: sql`${gameTags.lastVoteAt} + ${ms}`,
+        lastConfirmedAt: sql`${gameTags.lastConfirmedAt} + ${ms}`,
+        resolvedAt: sql`${gameTags.resolvedAt} + ${ms}`,
+      })
+      .where(eq(gameTags.id, c.id));
+    shifted += 1;
+  }
+  await db
+    .insert(appSettings)
+    .values({ key: DEMO_TAGS_ANCHOR_KEY, value: { at: new Date(now).toISOString() } })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: { at: new Date(now).toISOString() }, updatedAt: new Date() },
+    });
+  if (shifted) {
+    await writeAudit({
+      action: 'update',
+      entityType: 'game-tag',
+      entityId: 'demo-realign',
+      changes: { shiftedRows: shifted, hours: Math.round(shift / 3_600_000) },
+      summary: `demo tag dates realigned to boot (+${Math.round(shift / 3_600_000)}h, ${shifted} rows)`,
+      actor: { label: 'system:demo-dates' },
+    });
+  }
+  return { shiftedRows: shifted, hours: Math.round(shift / 3_600_000) };
 }

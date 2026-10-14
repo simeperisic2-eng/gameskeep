@@ -45,6 +45,8 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
   // taxonomy; `tag-settings` falls through to ADMIN.
   'tag-queue': RANK.moderator,
   'tag-taxonomy': RANK.moderator,
+  // Phase P S3b: editors curate the computed lists (pins / excludes).
+  curation: RANK.moderator,
   _meta: RANK.moderator,
   // NOTE: `bias` is deliberately NOT here — bias weights tune the engine behind
   // every public number on the site (system tuning, not day-to-day content

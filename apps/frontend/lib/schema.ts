@@ -7,6 +7,7 @@
  * public DTO the page renders — the internal assessment is not in that shape.
  */
 import { distinctSubtitle, scoreToTen } from './format';
+import { brand } from './labels';
 import type {
   CatalogGame,
   GameDetail,
@@ -15,7 +16,12 @@ import type {
   UpcomingGame,
 } from './public-api';
 
-const SITE_NAME = 'GamesKeep';
+/**
+ * The publishing organization's name — the copy registry's brand (Phase P S3b;
+ * a rename is a settings change). Every page awaits getSite() before building
+ * its JSON-LD, so this reads the current value.
+ */
+const siteName = (): string => brand();
 
 // [[OWNER-TODO: provide a real 1200×630 social/OG share image at
 // public/assets/og-default.png; the logo SVG below is a validating placeholder]]
@@ -26,7 +32,7 @@ function shareImage(siteUrl: string): string {
 function publisher(siteUrl: string): Record<string, unknown> {
   return {
     '@type': 'Organization',
-    name: SITE_NAME,
+    name: siteName(),
     url: siteUrl,
     logo: { '@type': 'ImageObject', url: `${siteUrl}/assets/logo.svg` },
   };
@@ -43,7 +49,7 @@ export function webSiteLd(siteUrl: string): Record<string, unknown> {
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: SITE_NAME,
+    name: siteName(),
     url: siteUrl,
     description:
       'Gaming news with a bias lens and honest, separated game ratings (critic vs community).',
@@ -81,7 +87,7 @@ export function newsArticleLd(topic: TopicDetail, siteUrl: string): Record<strin
     dateModified: topic.lastActivityAt ?? topic.publishedAt ?? undefined,
     // Aggregated coverage is bylined to GamesKeep as the curating organization;
     // individual outlet authorship stays on each linked source (we link out).
-    author: { '@type': 'Organization', name: SITE_NAME, url: siteUrl },
+    author: { '@type': 'Organization', name: siteName(), url: siteUrl },
     publisher: publisher(siteUrl),
     about: topic.primaryGame ? { '@type': 'VideoGame', name: topic.primaryGame.name } : undefined,
     isAccessibleForFree: true,
@@ -169,7 +175,7 @@ export function videoGameLd(game: GameDetail, siteUrl: string): Record<string, u
         bestRating: '10',
         worstRating: '1',
       },
-      author: { '@type': 'Organization', name: SITE_NAME, url: siteUrl },
+      author: { '@type': 'Organization', name: siteName(), url: siteUrl },
       datePublished: game.review.publishedAt ?? undefined,
       reviewBody: game.review.verdict ?? game.review.body?.slice(0, 280) ?? undefined,
     });

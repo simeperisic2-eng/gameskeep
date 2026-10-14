@@ -6,6 +6,8 @@ import { breadcrumbLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { AwardCategoryResults } from '../../_components/AwardCategoryResults';
 import { AdSlot } from '../../_components/AdSlot';
+import { getSite } from '@/lib/site';
+import { brand } from '@/lib/labels';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,13 +26,18 @@ export async function generateMetadata({
   const { year: raw } = await params;
   const year = parseYear(raw);
   if (year == null) return { title: 'Awards' };
-  const view = await getAwardsEdition(year);
-  const name = view?.edition.name ?? `GamesKeep Awards ${year}`;
+  const [view, site] = await Promise.all([getAwardsEdition(year), getSite()]);
+  const name = view?.edition.name ?? `${site.brand} Awards ${year}`;
   return {
     title: `${name} — Winners`,
     description: `Winners of the ${name}: Critics’ Choice and Community Choice in every category, with the analytics behind each pick.`,
     alternates: { canonical: `${siteUrl}/awards/${year}` },
-    openGraph: { type: 'website', url: `${siteUrl}/awards/${year}`, title: `${name} — Winners` },
+    openGraph: {
+      siteName: brand(),
+      type: 'website',
+      url: `${siteUrl}/awards/${year}`,
+      title: `${name} — Winners`,
+    },
     twitter: { card: 'summary_large_image', title: `${name} — Winners` },
   };
 }
@@ -43,7 +50,7 @@ export default async function AwardsYearPage({
   const { year: raw } = await params;
   const year = parseYear(raw);
   if (year == null) notFound();
-  const view = await getAwardsEdition(year);
+  const [view, site] = await Promise.all([getAwardsEdition(year), getSite()]);
   // Only decided, published editions are public here — an unpublished draft 404s.
   if (!view || view.edition.comingSoon || view.categories.length === 0) notFound();
 
@@ -64,7 +71,7 @@ export default async function AwardsYearPage({
         />
 
         <header className="gk-aw-hero">
-          <span className="gk-eyebrow">GamesKeep Awards · Winners</span>
+          <span className="gk-eyebrow">{site.brand} Awards · Winners</span>
           <h1 className="gk-aw-title">{view.edition.name}</h1>
           <p className="gk-aw-lede">
             Critics’ Choice and Community Choice in every category — shown separately, with the

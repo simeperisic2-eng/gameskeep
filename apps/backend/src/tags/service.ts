@@ -9,7 +9,7 @@ import {
 import type { TagSuggestionDecision } from '@gameskeep/shared/validation';
 import { db } from '../db/client';
 import {
-  gameContentFlags,
+  appSettings,
   gameTags,
   gameTagVotes,
   games,
@@ -510,10 +510,17 @@ export interface SuggestionRow {
   createdAt: string;
 }
 
+/** A removed tag readers keep voting for (Phase P S3b: editors see the pushback). */
+export interface PushbackRow extends QueueRow {
+  removedAt: string | null;
+  votesSinceRemoval: number;
+}
+
 export async function moderationQueue(): Promise<{
   threshold: number;
   pending: QueueRow[];
   published: QueueRow[];
+  pushback: PushbackRow[];
   suggestions: SuggestionRow[];
 }> {
   const settings = await tagSettings();
@@ -582,10 +589,49 @@ export async function moderationQueue(): Promise<{
     .leftJoin(subjects, eq(subjects.id, games.subjectId))
     .where(eq(tagSuggestions.status, 'pending'))
     .orderBy(desc(tagSuggestions.attempts), desc(tagSuggestions.createdAt));
+  // Removed tags with votes cast AFTER the removal — a separate group so the
+  // pushback is visible (the tombstone itself never re-publishes).
+  const removed = await db
+    .select({
+      id: gameTags.id,
+      gameSlug: subjects.slug,
+      gameName: subjects.name,
+      tagSlug: tags.slug,
+      tagName: tags.name,
+      family: tags.family,
+      state: gameTags.state,
+      source: gameTags.source,
+      weightedScore: gameTags.weightedScore,
+      voteCount: gameTags.voteCount,
+      flagged: gameTags.flagged,
+      flagInfo: gameTags.flagInfo,
+      firstSeenAt: gameTags.firstSeenAt,
+      lastVoteAt: gameTags.lastVoteAt,
+      lastConfirmedAt: gameTags.lastConfirmedAt,
+      confirmedBy: gameTags.confirmedByLabel,
+      resolvedAt: gameTags.resolvedAt,
+      patchRef: gameTags.patchRef,
+      removedAt: gameTags.removedAt,
+      since: sql<number>`(SELECT count(*)::int FROM game_tag_votes v WHERE v.game_id = ${gameTags.gameId} AND v.tag_id = ${gameTags.tagId} AND v.created_at > ${gameTags.removedAt})`,
+    })
+    .from(gameTags)
+    .innerJoin(tags, eq(tags.id, gameTags.tagId))
+    .innerJoin(games, eq(games.id, gameTags.gameId))
+    .innerJoin(subjects, eq(subjects.id, games.subjectId))
+    .where(and(eq(gameTags.state, 'rejected'), sql`${gameTags.removedAt} IS NOT NULL`))
+    .orderBy(desc(gameTags.lastVoteAt));
+  const pushback: PushbackRow[] = removed
+    .filter((r) => Number(r.since) > 0)
+    .map((r) => ({
+      ...shape(r),
+      removedAt: iso(r.removedAt),
+      votesSinceRemoval: Number(r.since),
+    }));
   return {
     threshold: settings.publishThreshold,
     pending: rows.filter((r) => r.state === 'pending').map(shape),
     published: rows.filter((r) => r.state === 'published').map(shape),
+    pushback,
     suggestions: sugg.map((s) => ({
       id: s.id,
       rawName: s.rawName,
@@ -743,7 +789,10 @@ export async function publishDirect(
 export async function rejectGameTag(id: string, actor: AuditActor): Promise<void> {
   const t = await instance(id);
   if (t.state === 'rejected') return;
-  await db.update(gameTags).set({ state: 'rejected' }).where(eq(gameTags.id, id));
+  await db
+    .update(gameTags)
+    .set({ state: 'rejected', removedAt: new Date() })
+    .where(eq(gameTags.id, id));
   await audit(
     id,
     { state: { from: t.state, to: 'rejected' } },
@@ -756,7 +805,7 @@ export async function rejectGameTag(id: string, actor: AuditActor): Promise<void
 export async function reopenGameTag(id: string, actor: AuditActor): Promise<void> {
   const t = await instance(id);
   if (t.state === 'rejected') {
-    await db.update(gameTags).set({ state: 'pending' }).where(eq(gameTags.id, id));
+    await db.update(gameTags).set({ state: 'pending', removedAt: null }).where(eq(gameTags.id, id));
     await audit(
       id,
       { state: { from: 'rejected', to: 'pending' } },
@@ -979,14 +1028,17 @@ export async function ensureTagTaxonomy(): Promise<number> {
 
 /** Imported free-form names that are a property, not a tag (owner: is_indie stays a filter). */
 const NOT_A_TAG = new Set(['indie']);
+/** Rows per INSERT in the batched sync (one round-trip per batch, not per tag). */
+const SYNC_BATCH = 500;
 
 /**
  * Map imported free-form tags (third-party, `games.tags`) onto the taxonomy
  * (owner decision): a CONTENT match is published (source import — no
  * provenance claim); anything else is queued as an unpublished suggestion. An
  * existing instance in ANY state is never touched (an editor's removal sticks),
- * and a name already decided for that game is never re-queued. Idempotent; runs
- * at boot and after every catalog import.
+ * and a name already decided for that game is never re-queued. Idempotent and
+ * BATCHED (Phase P S3b): the whole plan is computed in memory, then written in
+ * multi-row inserts. Runs only in the background `tags` job.
  */
 export async function syncImportedTags(): Promise<{ mapped: number; queued: number }> {
   const tax = (await taxonomy()).filter((t) => t.active);
@@ -994,6 +1046,12 @@ export async function syncImportedTags(): Promise<{ mapped: number; queued: numb
     .select({ id: games.id, tags: games.tags })
     .from(games)
     .where(sql`cardinality(${games.tags}) > 0`);
+  if (rows.length === 0) return { mapped: 0, queued: 0 };
+  const existingPairs = new Set(
+    (await db.select({ g: gameTags.gameId, t: gameTags.tagId }).from(gameTags)).map(
+      (r) => `${r.g}|${r.t}`,
+    ),
+  );
   const existingSugg = new Set(
     (
       await db
@@ -1002,8 +1060,8 @@ export async function syncImportedTags(): Promise<{ mapped: number; queued: numb
         .where(eq(tagSuggestions.source, 'import'))
     ).map((r) => `${r.normalized}|${r.gameId}`),
   );
-  let mapped = 0;
-  let queued = 0;
+  const mapRows: (typeof gameTags.$inferInsert)[] = [];
+  const queueRows: (typeof tagSuggestions.$inferInsert)[] = [];
   for (const g of rows) {
     for (const raw of g.tags ?? []) {
       if (typeof raw !== 'string') continue;
@@ -1011,29 +1069,41 @@ export async function syncImportedTags(): Promise<{ mapped: number; queued: numb
       if (!normalized || NOT_A_TAG.has(normalized)) continue;
       const hit = matchTag(raw, tax);
       if (hit && hit.family === 'content') {
-        const ins = await db
-          .insert(gameTags)
-          .values({
-            gameId: g.id,
-            tagId: hit.id,
-            state: 'published',
-            source: 'import',
-            confirmedByLabel: SYSTEM_IMPORT.label,
-          })
-          .onConflictDoNothing()
-          .returning({ id: gameTags.id });
-        mapped += ins.length;
+        const key = `${g.id}|${hit.id}`;
+        if (existingPairs.has(key)) continue;
+        existingPairs.add(key);
+        mapRows.push({
+          gameId: g.id,
+          tagId: hit.id,
+          state: 'published',
+          source: 'import',
+          confirmedByLabel: SYSTEM_IMPORT.label,
+        });
         continue;
       }
-      if (existingSugg.has(`${normalized}|${g.id}`)) continue;
-      const ins = await db
-        .insert(tagSuggestions)
-        .values({ rawName: raw.slice(0, 120), normalized, gameId: g.id, source: 'import' })
-        .onConflictDoNothing()
-        .returning({ id: tagSuggestions.id });
-      existingSugg.add(`${normalized}|${g.id}`);
-      queued += ins.length;
+      const key = `${normalized}|${g.id}`;
+      if (existingSugg.has(key)) continue;
+      existingSugg.add(key);
+      queueRows.push({ rawName: raw.slice(0, 120), normalized, gameId: g.id, source: 'import' });
     }
+  }
+  let mapped = 0;
+  let queued = 0;
+  for (let i = 0; i < mapRows.length; i += SYNC_BATCH) {
+    const ins = await db
+      .insert(gameTags)
+      .values(mapRows.slice(i, i + SYNC_BATCH))
+      .onConflictDoNothing()
+      .returning({ id: gameTags.id });
+    mapped += ins.length;
+  }
+  for (let i = 0; i < queueRows.length; i += SYNC_BATCH) {
+    const ins = await db
+      .insert(tagSuggestions)
+      .values(queueRows.slice(i, i + SYNC_BATCH))
+      .onConflictDoNothing()
+      .returning({ id: tagSuggestions.id });
+    queued += ins.length;
   }
   if (mapped || queued) {
     await writeAudit({
@@ -1048,49 +1118,71 @@ export async function syncImportedTags(): Promise<{ mapped: number; queued: numb
   return { mapped, queued };
 }
 
+/** Where migration 0023 parked the legacy predatory flags before dropping the column. */
+export const LEGACY_PREDATORY_KEY = 'legacy-predatory';
+
 /**
- * The legacy "predatory monetization" content flag becomes the Pay-to-win ISSUE
- * tag (owner, S3 (d)) — editor-entered data, so source "editors"; it never
- * expires (only vote-driven issues do). Idempotent: an existing instance in any
- * state is left alone.
+ * The legacy "predatory monetization" content flag became the Pay-to-win ISSUE
+ * tag (owner, S3 (d)); S3b dropped the column, so Pay-to-win exists ONLY as the
+ * tag. Migration 0023 parked the flagged game ids in app_settings; this turns
+ * them into published Pay-to-win issue tags (editor-entered data → "Added by
+ * editors", never expires) and removes the parked list. Idempotent: an existing
+ * instance in any state is left alone.
  */
-export async function migratePayToWin(): Promise<number> {
+export async function migrateLegacyPayToWin(): Promise<number> {
+  const [parked] = await db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, LEGACY_PREDATORY_KEY))
+    .limit(1);
+  if (!parked) return 0;
   const [tag] = await db
     .select({ id: tags.id })
     .from(tags)
     .where(eq(tags.slug, PAY_TO_WIN_TAG_SLUG))
     .limit(1);
-  if (!tag) return 0;
-  const flagged = await db
-    .select({ gameId: gameContentFlags.gameId, at: gameContentFlags.updatedAt })
-    .from(gameContentFlags)
-    .where(eq(gameContentFlags.predatoryMonetization, true));
+  if (!tag) return 0; // keep the parked list until the tag exists
+  const v = (parked.value ?? {}) as { gameIds?: unknown; at?: unknown };
+  const at =
+    typeof v.at === 'string' && Number.isFinite(Date.parse(v.at)) ? new Date(v.at) : new Date();
+  const ids = (Array.isArray(v.gameIds) ? v.gameIds : []).filter(
+    (x): x is string => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x),
+  );
+  const existing = ids.length
+    ? new Set(
+        (await db.select({ id: games.id }).from(games).where(inArray(games.id, ids))).map(
+          (r) => r.id,
+        ),
+      )
+    : new Set<string>();
+  const values = ids
+    .filter((id) => existing.has(id))
+    .map((gameId) => ({
+      gameId,
+      tagId: tag.id,
+      state: 'published' as const,
+      source: 'editors' as const,
+      firstSeenAt: at,
+      lastConfirmedAt: at,
+      confirmedByLabel: SYSTEM_MIGRATION.label,
+    }));
   let n = 0;
-  for (const f of flagged) {
+  for (let i = 0; i < values.length; i += SYNC_BATCH) {
     const ins = await db
       .insert(gameTags)
-      .values({
-        gameId: f.gameId,
-        tagId: tag.id,
-        state: 'published',
-        source: 'editors',
-        firstSeenAt: f.at,
-        lastConfirmedAt: f.at,
-        confirmedByLabel: SYSTEM_MIGRATION.label,
-      })
+      .values(values.slice(i, i + SYNC_BATCH))
       .onConflictDoNothing()
       .returning({ id: gameTags.id });
     n += ins.length;
   }
-  if (n) {
-    await writeAudit({
-      action: 'create',
-      entityType: 'game-tag',
-      entityId: 'pay-to-win-migration',
-      changes: { created: n },
-      summary: `migrated ${n} "predatory monetization" content flag(s) → the Pay-to-win issue tag`,
-      actor: SYSTEM_MIGRATION,
-    });
-  }
+  await db.delete(appSettings).where(eq(appSettings.key, LEGACY_PREDATORY_KEY));
+  await writeAudit({
+    action: 'create',
+    entityType: 'game-tag',
+    entityId: 'pay-to-win-migration',
+    changes: { created: n, parked: ids.length },
+    summary: `migrated ${n} legacy "predatory monetization" flag(s) → the Pay-to-win issue tag`,
+    actor: SYSTEM_MIGRATION,
+  });
   return n;
 }

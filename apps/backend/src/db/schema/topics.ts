@@ -1,4 +1,5 @@
 import {
+  boolean,
   check,
   index,
   jsonb,
@@ -54,6 +55,18 @@ export const topics = pgTable(
     // subject resolution.
     seedGameRef: varchar('seed_game_ref', { length: 200 }),
     seedEventKind: varchar('seed_event_kind', { length: 40 }),
+
+    /**
+     * Phase P S3b: fields an editor edited — the automatic passes (status by
+     * article count, the stale → resolved sweep, the AI TL;DR / summary refresh)
+     * and a full re-cluster leave them as the editor set them. Unlock = remove.
+     */
+    lockedFields: text('locked_fields')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Phase P S3b: keep this story out of search indexes + the sitemap. */
+    noindex: boolean('noindex').notNull().default(false),
 
     lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
     ...timestamps(),

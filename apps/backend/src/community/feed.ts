@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client';
+import { rulesSettings } from '../rules/settings';
 import {
   articleSubjects,
   articleTopics,
@@ -119,14 +120,14 @@ export interface FeedData {
   isEmpty: boolean; // the user follows nothing yet
 }
 
-const FEED_LIMIT = 30;
-
 /**
  * Compose a user's follow-based feed: the games/topics they follow plus the
  * recent articles linked to those entities, merged newest-first. Leak-proof —
  * only public article fields (never the internal bias/quality scoring).
  */
 export async function getFeed(userId: string): Promise<FeedData> {
+  // Phase P S3b: the feed length is a rule (Rules & limits; default 30).
+  const FEED_LIMIT = (await rulesSettings()).community.feedLimit;
   const followRows = await db
     .select({ entityType: follows.entityType, entityId: follows.entityId })
     .from(follows)

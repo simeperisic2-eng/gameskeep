@@ -9,8 +9,8 @@ import type {
 } from '@/lib/public-api';
 import {
   FLAG_LABEL,
-  NO_SIGNALS_EXPLAINER,
-  NO_SIGNALS_LABEL,
+  noSignalsExplainer,
+  noSignalsLabel,
   compactTopicToken,
   flagParts,
   qualityReadout,
@@ -88,8 +88,8 @@ function whyText(
         </>
       ) : (
         <>
-          <b>{NO_SIGNALS_LABEL.toLowerCase()}</b> (sponsored, affiliate, review copy, opinion).{' '}
-          {NO_SIGNALS_EXPLAINER}
+          <b>{noSignalsLabel().toLowerCase()}</b> (sponsored, affiliate, review copy, opinion).{' '}
+          {noSignalsExplainer()}
         </>
       )}
       {distribution.quality ? (
@@ -219,7 +219,7 @@ export function ArticleFlags({
             </span>
           ))
         ) : (
-          <span className="gk-flag nosignal">{NO_SIGNALS_LABEL}</span>
+          <span className="gk-flag nosignal">{noSignalsLabel()}</span>
         )}
       </span>
       <span className="gk-tip-card" role="tooltip">

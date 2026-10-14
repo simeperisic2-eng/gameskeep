@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { HomepageSectionItem, PublicDisplay } from '@/lib/public-api';
 import { TopicCard } from './TopicCard';
 import { HomeGameCard } from './HomeGameCard';
+import { useSite } from './SiteProvider';
 
 /**
  * Main feed (BLUEPRINT 3.1) — newest/active topics as cards with a "load more".
@@ -12,8 +13,6 @@ import { HomeGameCard } from './HomeGameCard';
  * doesn't fetch it. It NEVER auto-scrolls. Paid inserts (owner decision B) render
  * in place with their forced label; the organic cards are exactly the feed's.
  */
-const INITIAL = 9;
-
 export function MainFeed({
   items,
   display,
@@ -21,11 +20,13 @@ export function MainFeed({
   items: HomepageSectionItem[];
   display: PublicDisplay;
 }): React.JSX.Element {
-  const [shown, setShown] = useState(INITIAL);
+  // Phase P S3b: the initial count is a rule (Rules & limits → latest initial).
+  const { layout, t } = useSite();
+  const [shown, setShown] = useState(Math.max(1, layout.latestInitial));
   const entries = items.filter((i) => i.topic || i.game);
 
   if (entries.length === 0) {
-    return <p className="gk-section-sub">Stories are being clustered — check back shortly.</p>;
+    return <p className="gk-section-sub">{t('empty.mainFeed')}</p>;
   }
 
   return (

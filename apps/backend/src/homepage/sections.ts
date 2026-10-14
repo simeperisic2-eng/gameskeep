@@ -28,6 +28,7 @@ import {
 import { diffRows, writeAudit, type AuditActor } from '../admin/audit';
 import { LISTS_SETTINGS_KEY } from '../lists/settings';
 import { coerceRules, ruleDimensionsFor, type SectionRules } from './rules';
+import { rulesSettings } from '../rules/settings';
 
 /**
  * Homepage section configuration (Phase P S2): the fixed catalogue's rows,
@@ -63,6 +64,9 @@ export interface SectionRow {
   paidPositions: number[];
   /** Below this many qualifying items the section is hidden. */
   minItems: number | null;
+  /** Phase P S3b: Δ chips on (Δ sections) + the items whose Δ is hidden. */
+  showDelta: boolean;
+  hideDeltaRefs: string[];
 }
 
 export interface SectionPin {
@@ -96,6 +100,8 @@ function shape(r: typeof homepageSections.$inferSelect): SectionRow | null {
     rules: coerceRules(r.rules),
     paidPositions: [...(r.paidPositions ?? [])].sort((a, b) => a - b),
     minItems: r.minItems ?? null,
+    showDelta: r.showDelta ?? true,
+    hideDeltaRefs: r.hideDeltaRefs ?? [],
   };
 }
 
@@ -374,6 +380,8 @@ export function validateSectionPatch(
   section: Pick<SectionRow, 'key' | 'kind' | 'items' | 'delta' | 'itemCount'> &
     Partial<Pick<SectionRow, 'minItems'>>,
   patch: HomepageSectionPatch,
+  /** Phase P S3b: rules.homepage.ourPicksManualOnly (default true — the old behaviour). */
+  opts: { ourPicksManualOnly?: boolean } = {},
 ): Partial<typeof homepageSections.$inferInsert> {
   const bad = (m: string): never => {
     throw new HomepageConfigError(400, m);
@@ -384,11 +392,16 @@ export function validateSectionPatch(
   if (patch.mode !== undefined) {
     if (section.kind === 'block' && patch.mode !== 'auto')
       bad(`"${section.key}" is a block — it has no items to pin.`);
-    if (section.key === 'our_picks' && patch.mode !== 'manual')
+    if (section.key === 'our_picks' && opts.ourPicksManualOnly !== false && patch.mode !== 'manual')
       bad('Our picks is manual only (team recommendations — no automatic rule).');
     out.mode = patch.mode;
   }
   if (patch.itemCount !== undefined) out.itemCount = patch.itemCount;
+  if (patch.showDelta !== undefined || patch.hideDeltaRefs !== undefined) {
+    if (!section.delta) bad(`"${section.key}" shows no Δ — there is nothing to show or hide.`);
+    if (patch.showDelta !== undefined) out.showDelta = patch.showDelta;
+    if (patch.hideDeltaRefs !== undefined) out.hideDeltaRefs = [...new Set(patch.hideDeltaRefs)];
+  }
   if (patch.deltaWindowHours !== undefined) {
     if (!section.delta && patch.deltaWindowHours !== null)
       bad(`"${section.key}" shows no Δ — it has no window to set.`);
@@ -450,6 +463,8 @@ const auditable = (s: SectionRow): Raw => ({
   rules: s.rules,
   paidPositions: s.paidPositions,
   minItems: s.minItems,
+  showDelta: s.showDelta,
+  hideDeltaRefs: s.hideDeltaRefs,
 });
 
 export async function updateSection(
@@ -459,7 +474,9 @@ export async function updateSection(
 ): Promise<SectionRow> {
   const before = await sectionByKey(key);
   if (!before) throw new HomepageConfigError(404, `Unknown section "${key}".`);
-  const values = validateSectionPatch(before, patch);
+  const values = validateSectionPatch(before, patch, {
+    ourPicksManualOnly: (await rulesSettings()).homepage.ourPicksManualOnly,
+  });
   if (Object.keys(values).length === 0) return before;
   await db
     .update(homepageSections)

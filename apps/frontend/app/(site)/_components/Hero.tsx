@@ -9,6 +9,7 @@ import {
   stripLeadingTitle,
   truncateWords,
 } from '@/lib/format';
+import { excerptRule, label } from '@/lib/labels';
 import { isHttpUrl } from '@/lib/url';
 import { DeltaChip } from './DeltaChip';
 import { compactTopicToken } from '@/lib/bias';
@@ -86,9 +87,7 @@ export function Hero({
   if (rows.length === 0) {
     return (
       <div className="gk-spotlight" style={{ padding: 28 }}>
-        <p className="gk-section-sub">
-          Stories are being clustered from the feed — check back in a moment.
-        </p>
+        <p className="gk-section-sub">{label('empty.hero')}</p>
       </div>
     );
   }
@@ -202,7 +201,7 @@ export function Hero({
           const t: TopicCard = r.topic;
           const summary = truncateWords(
             stripLeadingTitle(t.aiSummary, t.title) ?? distinctSubtitle(t.title, t.tldr),
-            220,
+            excerptRule('spotlight'),
           );
           const coverage = (r.coverage ?? []).filter((c) => c.title);
           const status = publicTopicStatus(t.status);

@@ -38,6 +38,8 @@ export default function RatingsManager({ status, games }: Props) {
   const [ovCritics, setOvCritics] = useState('');
   const [ovCommunity, setOvCommunity] = useState('');
   const [ovReason, setOvReason] = useState('');
+  const [bandOv, setBandOv] = useState('');
+  const [bandReason, setBandReason] = useState('');
   const [tag, setTag] = useState('');
   const [votes, setVotes] = useState<VoteWeightView[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -149,6 +151,9 @@ export default function RatingsManager({ status, games }: Props) {
               <li>Web (estimate): {fmt(selected.web.score)}</li>
               <li>
                 Disconnect: {fmt(selected.disconnect.value)} [{selected.disconnect.band ?? '—'}]
+                {selected.disconnect.bandOverride
+                  ? ` ✎ editor band (${selected.disconnect.bandOverrideReason ?? 'no reason'})`
+                  : ''}
               </li>
               <li style={{ color: selected.community.burstFlag ? '#e0a72c' : undefined }}>
                 Unusual activity: {selected.community.burstFlag ? '⚠ FLAGGED' : 'no'}
@@ -209,6 +214,57 @@ export default function RatingsManager({ status, games }: Props) {
               >
                 Override
               </button>
+            </div>
+
+            {/* Phase P S3b: override the disconnect band, with a reason (audited). */}
+            <div className="gk-rel-row" style={{ marginTop: 10 }} data-band-override>
+              <label className="gk-sub">
+                disconnect band{' '}
+                <select value={bandOv} onChange={(e) => setBandOv(e.target.value)}>
+                  <option value="">pick…</option>
+                  <option value="agree">agree</option>
+                  <option value="mild">mild</option>
+                  <option value="notable">notable</option>
+                  <option value="large">large</option>
+                </select>
+              </label>
+              <input
+                type="text"
+                placeholder="reason (required, audited)"
+                value={bandReason}
+                onChange={(e) => setBandReason(e.target.value)}
+                style={{ width: 220 }}
+              />
+              <button
+                className="gk-btn gk-btn-sm"
+                disabled={busy || !bandOv || !bandReason.trim()}
+                onClick={() =>
+                  run(() =>
+                    call(`ratings/game/${selected.gameId}/override`, 'POST', {
+                      disconnectBand: bandOv,
+                      reason: bandReason.trim(),
+                    }),
+                  )
+                }
+              >
+                Set band
+              </button>
+              {selected.disconnect.bandOverride ? (
+                <button
+                  className="gk-btn gk-btn-sm"
+                  disabled={busy}
+                  onClick={() =>
+                    run(() =>
+                      call(`ratings/game/${selected.gameId}/override`, 'POST', {
+                        disconnectBand: null,
+                        reason: 'back to computed band',
+                      }),
+                    )
+                  }
+                >
+                  Back to computed
+                </button>
+              ) : null}
             </div>
 
             <div className="gk-rel-row" style={{ marginTop: 10 }}>

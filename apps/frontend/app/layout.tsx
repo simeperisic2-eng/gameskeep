@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Space_Grotesk, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
+import { getSite, siteText } from '@/lib/site';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
@@ -47,29 +48,28 @@ const fontMono = IBM_Plex_Mono({
 // Site-wide SEO defaults (SPEC I5a). Real public content is now indexable; the
 // admin console and the foundation status page override this to noindex in
 // their own metadata. Individual pages set their own title/canonical/OG.
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: {
-    default: 'GamesKeep — Gaming News with a Bias Lens & Honest Game Ratings',
-    template: '%s · GamesKeep',
-  },
-  description:
-    'GamesKeep — premium gaming platform: news + bias analysis and ratings/rankings for video games.',
-  applicationName: 'GamesKeep',
-  openGraph: {
-    type: 'website',
-    siteName: 'GamesKeep',
-    url: siteUrl,
-    title: 'GamesKeep',
-    description: 'Premium gaming platform: news + bias analysis and ratings/rankings.',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'GamesKeep',
-    description: 'Premium gaming platform: news + bias analysis and ratings/rankings.',
-  },
-  robots: { index: true, follow: true },
-};
+// Phase P S3b: the brand, tagline and descriptions come from the copy registry
+// (a rename is a settings change); canonical URLs keep following the deployment.
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  const title = `${site.brand} — ${site.tagline}`;
+  const share = siteText(site, 'site.shareDescription');
+  return {
+    metadataBase: new URL(siteUrl),
+    title: { default: title, template: `%s · ${site.brand}` },
+    description: siteText(site, 'site.description'),
+    applicationName: site.brand,
+    openGraph: {
+      type: 'website',
+      siteName: site.brand,
+      url: siteUrl,
+      title: site.brand,
+      description: share,
+    },
+    twitter: { card: 'summary_large_image', title: site.brand, description: share },
+    robots: { index: true, follow: true },
+  };
+}
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

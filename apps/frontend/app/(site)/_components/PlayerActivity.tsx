@@ -1,4 +1,5 @@
 import type { GamePlayerCount, PlayerCountPoint } from '@/lib/public-api';
+import { label } from '@/lib/labels';
 
 /**
  * Player activity (BLUEPRINT 2.3 premium analytics; chart upgraded in B2) —
@@ -191,10 +192,7 @@ export function PlayerActivity({
       </div>
       <TimeSeriesChart points={points} />
       <div className="gk-players-foot">
-        <p className="gk-players-note">
-          Steam concurrent players only (consoles don&apos;t publish live counts) — this is the
-          history we&apos;ve recorded; Steam has no past-players API, we accumulate our own.
-        </p>
+        <p className="gk-players-note">{label('note.steamGame')}</p>
         {steamAppId ? (
           <a
             className="gk-more-stats"

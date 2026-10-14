@@ -5,7 +5,18 @@ import {
   newsletterEmail,
   passwordResetEmail,
   verificationEmail,
+  type EmailBrand,
 } from './templates';
+import { copyState } from '../copy/settings';
+
+/** The current public brand + display domain (copy registry; cached). */
+async function emailBrand(): Promise<EmailBrand> {
+  const { values } = await copyState();
+  return {
+    name: values['brand.name'] ?? 'GamesKeep',
+    domain: values['brand.domain'] ?? 'gameskeep.com',
+  };
+}
 
 /**
  * High-level send helpers (SPEC I6, Slice 2). Each builds a message from the
@@ -27,7 +38,7 @@ export async function sendVerificationEmail(
   rawToken: string,
   relatedUserId?: string,
 ): Promise<void> {
-  const msg = verificationEmail(toEmail, rawToken, env.PUBLIC_SITE_URL);
+  const msg = verificationEmail(toEmail, rawToken, env.PUBLIC_SITE_URL, await emailBrand());
   await dispatch(() => getEmailSender().send(msg, { relatedUserId }), 'verification');
 }
 
@@ -36,7 +47,7 @@ export async function sendPasswordResetEmail(
   rawToken: string,
   relatedUserId?: string,
 ): Promise<void> {
-  const msg = passwordResetEmail(toEmail, rawToken, env.PUBLIC_SITE_URL);
+  const msg = passwordResetEmail(toEmail, rawToken, env.PUBLIC_SITE_URL, await emailBrand());
   await dispatch(() => getEmailSender().send(msg, { relatedUserId }), 'password-reset');
 }
 
@@ -44,7 +55,7 @@ export async function sendAccountExistsNotice(
   toEmail: string,
   relatedUserId?: string,
 ): Promise<void> {
-  const msg = accountExistsEmail(toEmail, env.PUBLIC_SITE_URL);
+  const msg = accountExistsEmail(toEmail, env.PUBLIC_SITE_URL, await emailBrand());
   await dispatch(() => getEmailSender().send(msg, { relatedUserId }), 'account-exists');
 }
 
@@ -61,8 +72,15 @@ export async function sendNewsletterEmail(
   unsubscribeToken: string,
   relatedUserId?: string,
 ): Promise<boolean> {
-  const msg = newsletterEmail(toEmail, subject, body, unsubscribeToken, env.PUBLIC_SITE_URL);
   try {
+    const msg = newsletterEmail(
+      toEmail,
+      subject,
+      body,
+      unsubscribeToken,
+      env.PUBLIC_SITE_URL,
+      await emailBrand(),
+    );
     await getEmailSender().send(msg, { relatedUserId });
     return true;
   } catch (err) {

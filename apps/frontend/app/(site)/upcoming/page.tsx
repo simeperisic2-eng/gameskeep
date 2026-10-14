@@ -6,6 +6,9 @@ import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { UpcomingCard } from '../_components/UpcomingCard';
 import { SuggestGameForm } from '../_components/SuggestGameForm';
 import { AdSlot } from '../_components/AdSlot';
+import { getSite, siteRich, siteText } from '@/lib/site';
+import { RichText } from '../_components/DocBody';
+import { brand } from '@/lib/labels';
 
 // Countdowns are computed at render — force-dynamic so they're always current
 // (and crawlers get the full slate as real HTML).
@@ -13,20 +16,22 @@ export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Upcoming games',
-  description:
-    'The upcoming games slate on GamesKeep — release dates, live countdowns and status, plus upcoming DLC & expansions and just-released titles. Suggest a missing game.',
-  alternates: { canonical: `${siteUrl}/upcoming` },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/upcoming`,
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  return {
     title: 'Upcoming games',
-    description:
-      'Release dates, countdowns and status for games on the horizon — plus upcoming DLC & expansions and just-released titles.',
-  },
-  twitter: { card: 'summary_large_image', title: 'Upcoming games' },
-};
+    description: siteText(site, 'upcoming.metaDescription'),
+    alternates: { canonical: `${siteUrl}/upcoming` },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/upcoming`,
+      title: 'Upcoming games',
+      description: siteText(site, 'upcoming.shareDescription'),
+    },
+    twitter: { card: 'summary_large_image', title: 'Upcoming games' },
+  };
+}
 
 type SP = Promise<{ genre?: string; platform?: string; indie?: string }>;
 
@@ -87,7 +92,7 @@ export default async function UpcomingPage({
 }: {
   searchParams: SP;
 }): Promise<React.JSX.Element> {
-  const sp = await searchParams;
+  const [sp, site] = await Promise.all([searchParams, getSite()]);
   const indieOn = sp.indie === '1' || sp.indie === 'true';
   const data = await getUpcoming({ genre: sp.genre, platform: sp.platform, indie: indieOn });
   const { games, dlc, newReleases, genres, platforms, newWindowDays, filters } = data;
@@ -114,12 +119,9 @@ export default async function UpcomingPage({
 
         <header className="gk-catalog-head">
           <div>
-            <span className="gk-eyebrow">What&apos;s next</span>
+            <span className="gk-eyebrow">{siteText(site, 'upcoming.eyebrow')}</span>
             <h1 className="gk-catalog-title">Upcoming games</h1>
-            <p className="gk-section-sub">
-              The slate on the horizon — release dates, live countdowns and status. Plus upcoming
-              DLC &amp; expansions and what just landed. Hype voting arrives with accounts.
-            </p>
+            <p className="gk-section-sub">{siteText(site, 'upcoming.intro')}</p>
           </div>
           <span className="gk-catalog-count">
             <b>{games.length}</b> {games.length === 1 ? 'title' : 'titles'}
@@ -189,8 +191,8 @@ export default async function UpcomingPage({
             <div className="gk-catalog-empty">
               <p className="gk-section-sub" style={{ margin: 0 }}>
                 {filtersActive
-                  ? 'No upcoming titles match these filters. '
-                  : 'No upcoming titles are lined up right now — check back as new games are announced.'}
+                  ? `${siteText(site, 'empty.upcomingFiltered')} `
+                  : siteText(site, 'empty.upcoming')}
                 {filtersActive ? <a href="/upcoming">Clear filters</a> : null}
               </p>
             </div>
@@ -201,9 +203,7 @@ export default async function UpcomingPage({
         {dlc.length > 0 && (
           <section className="gk-upsection">
             <h2 className="gk-upsection-title">Upcoming DLC &amp; expansions</h2>
-            <p className="gk-section-sub gk-upsection-sub">
-              Add-ons and expansions coming to games already in the catalog.
-            </p>
+            <p className="gk-section-sub gk-upsection-sub">{siteText(site, 'upcoming.dlc.sub')}</p>
             <ul className="gk-dlc-list">
               {dlc.map((d) => (
                 <DlcRow key={d.id} dlc={d} />
@@ -237,8 +237,7 @@ export default async function UpcomingPage({
             <div className="gk-panel gk-upsuggest-card gk-upsuggest-promote">
               <h2 className="gk-upsuggest-title">Making a game?</h2>
               <p className="gk-section-sub" style={{ marginTop: 0 }}>
-                We run clearly-labeled <strong>Promoted</strong> placements — the same transparency
-                we hold everyone to. Arrange one by email; nothing is self-serve.
+                <RichText nodes={siteRich(site, 'upcoming.promote.sub')} />
               </p>
               <a className="gk-doc-cta" href="/promote">
                 Promote your game →

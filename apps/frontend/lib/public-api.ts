@@ -96,6 +96,8 @@ export interface Briefing {
   sources: number;
   topics: number;
   reviews: number;
+  /** Phase P S3b: an editor's line for today, shown instead of the counts. */
+  overrideText?: string | null;
 }
 
 export interface GenreCount {
@@ -257,6 +259,8 @@ export interface TopicGameRating {
 }
 
 export interface TopicDetail {
+  /** Phase P S3b: an editor kept this page out of search (noindex,follow). */
+  noindex?: boolean;
   id: string;
   slug: string;
   title: string;
@@ -413,6 +417,8 @@ export interface RelatedGame {
   community: number | null;
 }
 export interface GameDetail {
+  /** Phase P S3b: an editor kept this page out of search (noindex,follow). */
+  noindex?: boolean;
   id: string;
   slug: string;
   name: string;

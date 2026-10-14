@@ -45,6 +45,11 @@ export const users = pgTable('users', {
   // --- hidden internal fields (never shown to users) ---
   voteWeight: real('vote_weight').notNull().default(0), // 0 → 1.0, anti-abuse (I6)
   levelPoints: integer('level_points').notNull().default(0),
+  /**
+   * Phase P S3b: a staff edit of reputation / level locks them — the reputation
+   * job leaves a locked user's numbers as set (unlock: set this false).
+   */
+  reputationLocked: boolean('reputation_locked').notNull().default(false),
 
   status: userStatusEnum('status').notNull().default('active'),
   ...timestamps(),

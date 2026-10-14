@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getPublicProfile } from '@/lib/public-api';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
+import { getSite } from '@/lib/site';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
@@ -11,12 +12,12 @@ export async function generateMetadata({
   params: Promise<{ username: string }>;
 }): Promise<Metadata> {
   const { username } = await params;
-  const p = await getPublicProfile(username);
+  const [p, site] = await Promise.all([getPublicProfile(username), getSite()]);
   if (!p) return { title: 'Profile not found', robots: { index: false } };
   const name = p.displayName || p.username;
   return {
-    title: `${name} — GamesKeep profile`,
-    description: `${name}'s public GamesKeep profile — level, badges and community activity.`,
+    title: `${name} — ${site.brand} profile`,
+    description: `${name}'s public ${site.brand} profile — level, badges and community activity.`,
     alternates: { canonical: `${siteUrl}/u/${p.username}` },
   };
 }

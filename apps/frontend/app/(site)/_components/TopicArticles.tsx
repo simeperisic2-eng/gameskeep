@@ -5,7 +5,9 @@ import type { AdSlotView, PublicDisplay, TopicArticleRow } from '@/lib/public-ap
 import { isHttpUrl } from '@/lib/url';
 import { PaidLabel } from './PaidLabel';
 import { relativeTime, truncateWords } from '@/lib/format';
-import { NO_SIGNALS_LABEL } from '@/lib/bias';
+import { noSignalsLabel } from '@/lib/bias';
+import { brand, excerptRule } from '@/lib/labels';
+import { useSite } from './SiteProvider';
 import { ArticleFlags } from './BiasBar';
 import { NoSignalsNote, ReviewSignals } from './IntegrityBlock';
 import { SourceIcon } from './SourceIcon';
@@ -27,8 +29,6 @@ import { SourceIcon } from './SourceIcon';
 type SortKey = 'date' | 'source' | 'signals';
 type FilterKey = 'all' | 'sponsored' | 'reviews' | 'nosignal' | 'quality';
 
-const QUALITY_MIDPOINT = 50;
-
 function signalCount(a: TopicArticleRow): number {
   return a.flags.length + (a.integrity?.length ?? 0);
 }
@@ -48,11 +48,12 @@ function sortRows(rows: TopicArticleRow[], key: SortKey): TopicArticleRow[] {
   return copy;
 }
 
-function matches(a: TopicArticleRow, filter: FilterKey): boolean {
+/** `qualityMin`: Rules & limits → "Top quality only" threshold (default 50). */
+function matches(a: TopicArticleRow, filter: FilterKey, qualityMin: number): boolean {
   if (filter === 'sponsored') return a.flags.includes('sponsored');
   if (filter === 'reviews') return a.isReview;
   if (filter === 'nosignal') return a.biasMode === 'panel' && signalCount(a) === 0;
-  if (filter === 'quality') return a.quality != null && a.quality >= QUALITY_MIDPOINT;
+  if (filter === 'quality') return a.quality != null && a.quality >= qualityMin;
   return true;
 }
 
@@ -62,7 +63,7 @@ function filtersFor(display: PublicDisplay): { key: FilterKey; label: string }[]
     { key: 'sponsored', label: 'Sponsored only' },
     { key: 'reviews', label: 'Reviews only' },
   ];
-  if (display.scope === 'all') out.push({ key: 'nosignal', label: `${NO_SIGNALS_LABEL} only` });
+  if (display.scope === 'all') out.push({ key: 'nosignal', label: `${noSignalsLabel()} only` });
   if (display.showQuality) out.push({ key: 'quality', label: 'Top quality only' });
   return out;
 }
@@ -77,9 +78,9 @@ function sortsFor(display: PublicDisplay): { key: SortKey; label: string }[] {
 }
 
 function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
-  const source = a.sourceName ?? (a.origin === 'ours' ? 'GamesKeep' : 'Source');
+  const source = a.sourceName ?? (a.origin === 'ours' ? brand() : 'Source');
   const time = relativeTime(a.publishDate);
-  const excerpt = truncateWords(a.excerpt, 240);
+  const excerpt = truncateWords(a.excerpt, excerptRule('coverageRow'));
   return (
     <article className="gk-srcrow">
       <SourceIcon name={source} />
@@ -182,6 +183,7 @@ export function TopicArticles({
   /** The 'topic-coverage' slot (owner decision B); a paid row only when it is sold. */
   paidSlot?: AdSlotView | null;
 }): React.JSX.Element {
+  const qualityMin = useSite().display.qualityFilterMin;
   const [sort, setSort] = useState<SortKey>('date');
   const [filter, setFilter] = useState<FilterKey>('all');
   const filters = filtersFor(display);
@@ -189,8 +191,8 @@ export function TopicArticles({
 
   const ordered = useMemo(() => sortRows(articles, sort), [articles, sort]);
   const visibleCount = useMemo(
-    () => articles.filter((a) => matches(a, filter)).length,
-    [articles, filter],
+    () => articles.filter((a) => matches(a, filter, qualityMin)).length,
+    [articles, filter, qualityMin],
   );
 
   // Owner decision B: a sold 'topic-coverage' slot inserts ONE labeled row at its
@@ -241,7 +243,7 @@ export function TopicArticles({
         {ordered.map((a, i) => (
           <div key={a.id} style={{ display: 'contents' }}>
             {i === paidAt && paidSlot ? <PaidRow slot={paidSlot} /> : null}
-            <div hidden={!matches(a, filter)}>
+            <div hidden={!matches(a, filter, qualityMin)}>
               <ArticleRow a={a} />
             </div>
           </div>

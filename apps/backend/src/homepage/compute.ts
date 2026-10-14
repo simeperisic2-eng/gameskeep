@@ -38,6 +38,8 @@ import {
   type EngagementByUser,
   type RuleLists,
 } from './rules';
+import { rulesSettings } from '../rules/settings';
+import type { RulesSettings } from '@gameskeep/shared/constants';
 import { publishedTagSlugsByGame } from '../tags/service';
 
 /**
@@ -365,13 +367,14 @@ function todayIso(nowMs: number): string {
 /** Compute + store every section's snapshot. Returns the number written. */
 export async function computeHomepageSnapshots(now: Date = new Date()): Promise<number> {
   const nowMs = now.getTime();
-  const [sections, settings, lists, pins, promotions, gameRows] = await Promise.all([
+  const [sections, settings, lists, pins, promotions, gameRows, rules] = await Promise.all([
     listSections(),
     homepageSettings(),
     listsSettings(),
     loadPins(),
     activeSectionPromotions(now),
     loadGames(),
+    rulesSettings({ fresh: true }),
   ]);
   const byKey = new Map(sections.map((s) => [s.key, s]));
   const trendingWindow = (byKey.get('trending')?.deltaWindowHours ?? 48) * HOUR;
@@ -400,6 +403,7 @@ export async function computeHomepageSnapshots(now: Date = new Date()): Promise<
     const payload = s.enabled
       ? buildSection(s, {
           settings,
+          rules: rules.homepage,
           newWindowDays: lists.newWindowDays,
           pins: pins.get(s.id) ?? [],
           paid: promotions.get(s.id) ?? [],
@@ -438,6 +442,8 @@ export async function computeHomepageSnapshots(now: Date = new Date()): Promise<
 
 interface BuildCtx {
   settings: HomepageSettings;
+  /** Phase P S3b: the homepage rules (admin-set; defaults = the old behaviour). */
+  rules: RulesSettings['homepage'];
   newWindowDays: number;
   pins: { position: number; ref: string; type: 'topic' | 'game' }[];
   /** The section's live paid placements, booking order (first booked → first position). */
@@ -455,7 +461,8 @@ interface BuildCtx {
 function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
   const base: SnapshotPayload = {
     key: s.key,
-    windowHours: s.delta ? s.deltaWindowHours : null,
+    // S3b: an editor can switch a section's Δ off entirely.
+    windowHours: s.delta && s.showDelta ? s.deltaWindowHours : null,
     items: [],
   };
   if (s.items === 'none') return base;
@@ -509,7 +516,9 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       break;
     }
     case 'latest': {
-      const shown = new Set(ctx.composedRefs.get('trending') ?? []);
+      const shown = new Set(
+        ctx.rules.latestExcludesTrending ? (ctx.composedRefs.get('trending') ?? []) : [],
+      );
       auto = [...ctx.topicRows.values()]
         .filter(topicPass)
         .sort((a, b) => b.lastActivity - a.lastActivity)
@@ -531,7 +540,9 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       // Critic + community layers ONLY (owner decision: the team score stays out
       // of the Top Rated average until S5 switches it on). Distinct from the
       // first three Games in focus.
-      const focus = new Set((ctx.composedRefs.get('focus') ?? []).slice(0, 3));
+      const focus = new Set(
+        (ctx.composedRefs.get('focus') ?? []).slice(0, ctx.rules.topRatedExcludeFocus),
+      );
       const rated = ctx.gameRows.map((g) => ({
         g,
         mean: average([g.critics, g.community].filter((n): n is number => n != null)),
@@ -633,7 +644,8 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
         c.paid !== null && paid[c.paid]
           ? { advertiser: paid[c.paid]!.advertiser, kind: paid[c.paid]!.kind }
           : null,
-      delta: m?.delta ?? null,
+      // S3b: Δ off for the section, or hidden for this item (the metric stays).
+      delta: !s.showDelta || s.hideDeltaRefs.includes(c.ref.slice(2)) ? null : (m?.delta ?? null),
       metric: m?.metric ?? null,
     };
   });

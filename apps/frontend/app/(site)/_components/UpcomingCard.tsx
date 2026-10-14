@@ -1,6 +1,7 @@
 import type { UpcomingEntry, UpcomingGame } from '@/lib/public-api';
 import { CoverArt } from './CoverArt';
 import { HypeButton } from './HypeButton';
+import { gameStatusLabel, label } from '@/lib/labels';
 
 /**
  * Upcoming game card (SPEC I5b; BLUEPRINT 2.4; Upcoming enrichment) — status +
@@ -12,14 +13,8 @@ import { HypeButton } from './HypeButton';
  * paid label). The countdown is computed server-side at render (force-dynamic).
  */
 type CardGame = UpcomingGame & Partial<Pick<UpcomingEntry, 'isIndie' | 'featured' | 'promoted'>>;
-const STATUS_LABEL: Record<string, string> = {
-  announced: 'Announced',
-  in_development: 'In development',
-  early_access: 'Early access',
-};
-
 function formatDate(iso: string | null): string {
-  if (!iso) return 'Date TBA';
+  if (!iso) return label('label.dateTba');
   const d = new Date(`${iso}T00:00:00Z`);
   if (!Number.isFinite(d.getTime())) return iso;
   return d.toLocaleDateString('en-US', {
@@ -51,7 +46,7 @@ function countdown(days: number | null): { value: string; unit: string } {
 export function UpcomingCard({ game }: { game: CardGame }): React.JSX.Element {
   const days = daysUntil(game.releaseDate);
   const cd = countdown(days);
-  const statusLabel = STATUS_LABEL[game.status] ?? game.status;
+  const statusLabel = gameStatusLabel(game.status);
   const maker = game.developer ?? game.publisher;
   const promoted = game.promoted ?? null;
   const featured = Boolean(game.featured);
@@ -77,7 +72,9 @@ export function UpcomingCard({ game }: { game: CardGame }): React.JSX.Element {
       <div className="gk-upcard-body">
         <div className="gk-upcard-top">
           <span className={`gk-status gk-status-game-${game.status}`}>{statusLabel}</span>
-          {game.isIndie ? <span className="gk-chip gk-chip-indie">Indie</span> : null}
+          {game.isIndie ? (
+            <span className="gk-chip gk-chip-indie">{label('label.indie')}</span>
+          ) : null}
           {game.series ? <span className="gk-chip">{game.series}</span> : null}
         </div>
 

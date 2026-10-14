@@ -7,6 +7,8 @@ import { breadcrumbLd, gameCollectionLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../../_components/Breadcrumbs';
 import { GameTile } from '../../../_components/GameTile';
 import { Pagination } from '../../../_components/Pagination';
+import { getSite } from '@/lib/site';
+import { brand } from '@/lib/labels';
 
 /**
  * A tag page (Phase P S3): every game carrying a PUBLISHED tag, SSR + paginated,
@@ -39,19 +41,28 @@ export async function generateMetadata({
   searchParams: SearchParams;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const data = await load(slug, firstOf((await searchParams).page));
+  const [data, site] = await Promise.all([
+    load(slug, firstOf((await searchParams).page)),
+    getSite(),
+  ]);
   if (!data) return { title: 'Tag not found', robots: { index: false } };
   const title = `${data.tag.name} games${data.page > 1 ? ` — page ${data.page}` : ''}`;
   const description =
     data.tag.intro ??
-    `${data.total} ${data.total === 1 ? 'game' : 'games'} tagged “${data.tag.name}” on GamesKeep — with separated critic, our and community scores.`;
+    `${data.total} ${data.total === 1 ? 'game' : 'games'} tagged “${data.tag.name}” on ${site.brand} — with separated critic, our and community scores.`;
   const url = pageUrl(data.tag.slug, data.page);
   return {
     title,
     description,
     alternates: { canonical: url },
     robots: data.indexable ? undefined : { index: false, follow: true },
-    openGraph: { type: 'website', url, title, description },
+    openGraph: {
+      siteName: brand(),
+      type: 'website',
+      url,
+      title,
+      description,
+    },
     twitter: { card: 'summary_large_image', title, description },
   };
 }

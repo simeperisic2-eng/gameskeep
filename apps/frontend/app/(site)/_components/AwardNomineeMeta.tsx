@@ -1,4 +1,5 @@
 import type { AwardNominee } from '@/lib/public-api';
+import { brand } from '@/lib/labels';
 
 /**
  * The "our better analytics" hook shown under each nominee (SPEC I7, BLUEPRINT
@@ -19,7 +20,7 @@ export function AwardNomineeMeta({ nominee }: { nominee: AwardNominee }): React.
       ) : null}
       {s?.our != null ? (
         <span className="gk-aw-score">
-          <b>{s.our}</b> GamesKeep
+          <b>{s.our}</b> {brand()}
         </span>
       ) : null}
       {s?.community != null ? (

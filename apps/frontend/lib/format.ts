@@ -1,3 +1,4 @@
+import { label } from './labels';
 /**
  * Display formatting for the public site. Scores are stored 0..100 internally
  * (BLUEPRINT 2.3); the public face is the familiar 1–10, one decimal.
@@ -70,8 +71,8 @@ export function distinctSubtitle(
  * clustering state, not reader information — it renders nothing.
  */
 export function publicTopicStatus(status: string | null | undefined): string | null {
-  if (status === 'developing') return 'Developing';
-  if (status === 'ongoing') return 'Ongoing';
+  if (status === 'developing') return label('label.topic.developing');
+  if (status === 'ongoing') return label('label.topic.ongoing');
   return null;
 }
 
@@ -90,7 +91,7 @@ export function deltaText(
   delta: { kind: 'pct'; value: number } | { kind: 'new' } | { kind: 'none' } | null | undefined,
 ): string | null {
   if (!delta) return null;
-  if (delta.kind === 'new') return 'New';
+  if (delta.kind === 'new') return label('label.delta.new');
   if (delta.kind === 'none') return '—';
   if (!Number.isFinite(delta.value)) return '—';
   const v = Math.round(delta.value);

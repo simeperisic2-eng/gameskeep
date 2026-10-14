@@ -1,5 +1,6 @@
 import type { GameArticleRow } from '@/lib/public-api';
 import { relativeTime, truncateWords } from '@/lib/format';
+import { brand, excerptRule } from '@/lib/labels';
 import { ArticleFlags } from './BiasBar';
 import { NoSignalsNote, ReviewSignals } from './IntegrityBlock';
 import { SourceIcon } from './SourceIcon';
@@ -14,9 +15,9 @@ import { SourceIcon } from './SourceIcon';
  * signals only where the display scope allows (decided server-side per row).
  */
 function Row({ a }: { a: GameArticleRow }): React.JSX.Element {
-  const source = a.sourceName ?? (a.origin === 'ours' ? 'GamesKeep' : 'Source');
+  const source = a.sourceName ?? (a.origin === 'ours' ? brand() : 'Source');
   const time = relativeTime(a.publishDate);
-  const excerpt = truncateWords(a.excerpt, 220);
+  const excerpt = truncateWords(a.excerpt, excerptRule('gameArticle'));
   return (
     <article className="gk-srcrow">
       <SourceIcon name={source} />

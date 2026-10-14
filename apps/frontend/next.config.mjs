@@ -18,6 +18,9 @@ const nextConfig = {
   // We live in a monorepo; trace files from the repo root so standalone works.
   outputFileTracingRoot: path.join(dirname, '../../'),
   reactStrictMode: true,
+  // Phase P S3b: the copy registry (defaults + the safe document parser) is
+  // shared TypeScript source — the site falls back to it when the API is down.
+  transpilePackages: ['@gameskeep/shared'],
   poweredByHeader: false,
   async headers() {
     return [

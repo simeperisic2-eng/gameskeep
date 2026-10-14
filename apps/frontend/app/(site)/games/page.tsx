@@ -6,31 +6,34 @@ import { Breadcrumbs } from '../_components/Breadcrumbs';
 import { GameTile } from '../_components/GameTile';
 import { UpcomingCard } from '../_components/UpcomingCard';
 import { AdSlot } from '../_components/AdSlot';
+import { getSite, siteText } from '@/lib/site';
+import { brand } from '@/lib/labels';
 
 // Server-render per request so crawlers get the full curated composition.
 export const dynamic = 'force-dynamic';
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
-export const metadata: Metadata = {
-  title: 'Games — discover by rating, discussion and genre',
-  description:
-    'Discover games on GamesKeep — top rated, most discussed across outlets, by genre, and coming soon. Separated critic, our and community scores; the full catalog one click away.',
-  alternates: { canonical: `${siteUrl}/games` },
-  openGraph: {
-    type: 'website',
-    url: `${siteUrl}/games`,
+export async function generateMetadata(): Promise<Metadata> {
+  const site = await getSite();
+  return {
     title: 'Games — discover by rating, discussion and genre',
-    description:
-      'Top rated, most discussed, by genre, and coming soon — with separated critic/community scores and the disconnect surfaced where it matters.',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Games — discover by rating, discussion and genre',
-    description:
-      'Top rated, most discussed, by genre, and coming soon — with separated critic/community scores.',
-  },
-};
+    description: siteText(site, 'games.metaDescription'),
+    alternates: { canonical: `${siteUrl}/games` },
+    openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
+      type: 'website',
+      url: `${siteUrl}/games`,
+      title: 'Games — discover by rating, discussion and genre',
+      description: siteText(site, 'games.shareDescription'),
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: 'Games — discover by rating, discussion and genre',
+      description: siteText(site, 'games.shareDescription'),
+    },
+  };
+}
 
 /**
  * The /games DISCOVERY page (A1, Steam/IMDb model): a big catalog leads with
@@ -39,7 +42,8 @@ export const metadata: Metadata = {
  * one pre-computed /public/discovery payload; nothing heavy on request.
  */
 export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
-  const d = await getDiscovery();
+  const [d, site] = await Promise.all([getDiscovery(), getSite()]);
+  const t = (key: string): string => siteText(site, key);
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },
@@ -71,12 +75,9 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
 
         <header className="gk-catalog-head">
           <div>
-            <span className="gk-eyebrow">Ratings &amp; rankings</span>
+            <span className="gk-eyebrow">{t('games.eyebrow')}</span>
             <h1 className="gk-catalog-title">Games</h1>
-            <p className="gk-section-sub">
-              Start with what&apos;s rising, argued about, or around the corner — separated critic,
-              our and community scores, never blended into one number.
-            </p>
+            <p className="gk-section-sub">{t('games.intro')}</p>
           </div>
           {browseAll}
         </header>
@@ -85,7 +86,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
         <section className="gk-disco-section" aria-label="Top rated">
           <div className="gk-section-head">
             <div>
-              <span className="gk-eyebrow">The strongest</span>
+              <span className="gk-eyebrow">{t('games.topRated.eyebrow')}</span>
               <h2 className="gk-section-title">Top rated</h2>
             </div>
             <a className="gk-readlink" href="/games/browse">
@@ -99,7 +100,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
               ))}
             </div>
           ) : (
-            <p className="gk-section-sub">Ratings are computing — check back in a moment.</p>
+            <p className="gk-section-sub">{t('empty.topRated')}</p>
           )}
         </section>
 
@@ -107,11 +108,9 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
         <section className="gk-disco-section" aria-label="Most discussed">
           <div className="gk-section-head">
             <div>
-              <span className="gk-eyebrow">In the conversation</span>
+              <span className="gk-eyebrow">{t('games.mostDiscussed.eyebrow')}</span>
               <h2 className="gk-section-title">Most discussed</h2>
-              <p className="gk-section-sub">
-                The games drawing the most coverage across outlets right now.
-              </p>
+              <p className="gk-section-sub">{t('games.mostDiscussed.sub')}</p>
             </div>
           </div>
           {d.mostDiscussed.length > 0 ? (
@@ -125,7 +124,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
               ))}
             </div>
           ) : (
-            <p className="gk-section-sub">Coverage is still clustering — check back in a moment.</p>
+            <p className="gk-section-sub">{t('empty.mostDiscussed')}</p>
           )}
         </section>
 
@@ -134,7 +133,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
           <section className="gk-disco-section" aria-label="Browse by genre">
             <div className="gk-section-head">
               <div>
-                <span className="gk-eyebrow">Find your lane</span>
+                <span className="gk-eyebrow">{t('genres.eyebrow')}</span>
                 <h2 className="gk-section-title">Browse by genre</h2>
               </div>
             </div>
@@ -158,7 +157,7 @@ export default async function GamesDiscoveryPage(): Promise<React.JSX.Element> {
           <section className="gk-disco-section" aria-label="Coming soon">
             <div className="gk-section-head">
               <div>
-                <span className="gk-eyebrow">Around the corner</span>
+                <span className="gk-eyebrow">{t('games.comingSoon.eyebrow')}</span>
                 <h2 className="gk-section-title">Coming soon</h2>
               </div>
               <a className="gk-readlink" href="/upcoming">

@@ -5,6 +5,7 @@ import { getCatalogQueue } from '../catalog/jobs';
 import { getRatingsQueue } from '../ratings/jobs';
 import { getReputationQueue } from '../reputation/jobs';
 import { getHomepageQueue } from '../homepage/jobs';
+import { getTagsQueue } from '../tags/jobs';
 import { sendError } from './http';
 
 /**
@@ -19,6 +20,7 @@ const QUEUES: Record<string, () => Queue> = {
   ratings: getRatingsQueue as () => Queue,
   reputation: getReputationQueue as () => Queue,
   homepage: getHomepageQueue as () => Queue,
+  tags: getTagsQueue as () => Queue,
 };
 
 export async function registerJobAdminRoutes(admin: FastifyInstance): Promise<void> {
@@ -34,7 +36,14 @@ export async function registerJobAdminRoutes(admin: FastifyInstance): Promise<vo
         reply.code(404).send({ error: 'not_found' });
         return;
       }
-      reply.send({ data: { queue: req.params.queue, id: job.id, state: await job.getState() } });
+      reply.send({
+        data: {
+          queue: req.params.queue,
+          id: job.id,
+          state: await job.getState(),
+          result: job.returnvalue ?? null,
+        },
+      });
     } catch (err) {
       sendError(reply, err);
     }

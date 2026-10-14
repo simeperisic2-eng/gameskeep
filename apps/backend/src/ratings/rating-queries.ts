@@ -50,6 +50,9 @@ export interface AdminGameRating {
   disconnect: {
     value: number | null;
     band: DisconnectBand | null;
+    /** Phase P S3b: an editor's band (wins over the computed one), with its reason. */
+    bandOverride: DisconnectBand | null;
+    bandOverrideReason: string | null;
     contextTag: string | null;
     ourVsCritics: number | null;
     communityVsWeb: number | null;
@@ -138,6 +141,8 @@ function shapeSummary(
     disconnect: {
       value: s?.disconnectValue ?? null,
       band: (s?.disconnectBand as DisconnectBand | null) ?? null,
+      bandOverride: (s?.disconnectBandOverride as DisconnectBand | null) ?? null,
+      bandOverrideReason: s?.disconnectBandOverrideReason ?? null,
       contextTag: s?.disconnectContextTag ?? null,
       ourVsCritics: s?.disconnectDetail?.ourVsCritics ?? null,
       communityVsWeb: s?.disconnectDetail?.communityVsWeb ?? null,

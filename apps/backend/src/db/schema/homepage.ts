@@ -55,6 +55,12 @@ export const homepageSections = pgTable(
       .notNull()
       .default(sql`'{}'::text[]`),
     cardTagCount: smallint('card_tag_count').notNull().default(0),
+    /** Phase P S3b: show the Δ chips at all (a delta section); and items whose Δ is hidden. */
+    showDelta: boolean('show_delta').notNull().default(true),
+    hideDeltaRefs: text('hide_delta_refs')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     /** Feed rules: { include?: {dimension: string[]}, exclude?: {…} } (validated on write). */
     rules: jsonb('rules')
       .notNull()

@@ -1,3 +1,4 @@
+import type { DISCONNECT_BANDS } from '@gameskeep/shared/constants';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
@@ -173,6 +174,7 @@ export async function recomputeGameRating(gameId: string): Promise<void> {
     .select({
       criticsOverride: gameRatingSummaries.criticsOverride,
       communityOverride: gameRatingSummaries.communityOverride,
+      disconnectBandOverride: gameRatingSummaries.disconnectBandOverride,
     })
     .from(gameRatingSummaries)
     .where(eq(gameRatingSummaries.gameId, gameId))
@@ -187,8 +189,10 @@ export async function recomputeGameRating(gameId: string): Promise<void> {
   const communityEff = existing?.communityOverride ?? community.weighted;
 
   const disconnectValue = gap(criticsEff, communityEff);
+  // Phase P S3b: an editor's band override (with a reason) wins over the computed band.
   const disconnectBand =
-    disconnectValue == null ? null : disconnectBandFor(disconnectValue, settings.disconnect);
+    existing?.disconnectBandOverride ??
+    (disconnectValue == null ? null : disconnectBandFor(disconnectValue, settings.disconnect));
   const disconnectDetail = {
     ourVsCritics: gap(our.ourScore, criticsEff),
     communityVsWeb: gap(communityEff, webScore),
@@ -237,6 +241,8 @@ export async function recomputeAllRatings(): Promise<RecomputeResult> {
 export interface RatingOverridePatch {
   criticsScore?: number | null;
   communityScore?: number | null;
+  /** Phase P S3b: override the disconnect band (null = back to computed). */
+  disconnectBand?: (typeof DISCONNECT_BANDS)[number] | null;
   reason?: string;
 }
 
@@ -250,6 +256,7 @@ export async function setRatingOverride(
     .select({
       criticsOverride: gameRatingSummaries.criticsOverride,
       communityOverride: gameRatingSummaries.communityOverride,
+      disconnectBandOverride: gameRatingSummaries.disconnectBandOverride,
     })
     .from(gameRatingSummaries)
     .where(eq(gameRatingSummaries.gameId, gameId))
@@ -268,6 +275,14 @@ export async function setRatingOverride(
     set.communityOverride = patch.communityScore;
     set.communityOverrideReason = patch.communityScore === null ? null : reason;
     changes.communityOverride = { from: before.communityOverride, to: patch.communityScore };
+  }
+  if (patch.disconnectBand !== undefined) {
+    set.disconnectBandOverride = patch.disconnectBand;
+    set.disconnectBandOverrideReason = patch.disconnectBand === null ? null : reason;
+    changes.disconnectBandOverride = {
+      from: before.disconnectBandOverride,
+      to: patch.disconnectBand,
+    };
   }
   if (Object.keys(set).length === 0) return false;
 

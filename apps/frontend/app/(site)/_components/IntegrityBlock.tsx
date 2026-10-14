@@ -1,10 +1,5 @@
 import type { PublicIntegrityRow, TopicArticleRow } from '@/lib/public-api';
-import {
-  NO_SIGNALS_LABEL,
-  NO_SIGNALS_NOTE,
-  rowShowsNoSignals,
-  type SignalRowLike,
-} from '@/lib/bias';
+import { noSignalsLabel, NO_SIGNALS_NOTE, rowShowsNoSignals, type SignalRowLike } from '@/lib/bias';
 import { isHttpUrl } from '@/lib/url';
 import { ArticleFlags } from './BiasBar';
 
@@ -44,7 +39,7 @@ export function IntegrityBlock({
     <div className="gk-integrity" aria-label="Review integrity">
       <span className="gk-integrity-head">Review integrity</span>
       {rows.length === 0 ? (
-        <p className="gk-integrity-none">{NO_SIGNALS_LABEL}</p>
+        <p className="gk-integrity-none">{noSignalsLabel()}</p>
       ) : (
         <ul className="gk-integrity-rows">
           {rows.map((r) => {

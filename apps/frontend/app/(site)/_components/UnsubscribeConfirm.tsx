@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useSite } from './SiteProvider';
 
 /**
  * Login-free unsubscribe confirm (SPEC I8, Slice 3). The email links here with a
@@ -11,6 +12,7 @@ import { useState } from 'react';
  */
 export function UnsubscribeConfirm({ token }: { token: string }): React.JSX.Element {
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
+  const { brand } = useSite();
 
   if (!token) {
     return (
@@ -24,8 +26,8 @@ export function UnsubscribeConfirm({ token }: { token: string }): React.JSX.Elem
   if (state === 'done') {
     return (
       <p className="gk-unsub-msg">
-        You’ve been unsubscribed. You won’t receive further GamesKeep emails. You can re-subscribe
-        any time from the site.
+        You’ve been unsubscribed. You won’t receive further {brand} emails. You can re-subscribe any
+        time from the site.
       </p>
     );
   }
@@ -47,7 +49,7 @@ export function UnsubscribeConfirm({ token }: { token: string }): React.JSX.Elem
   return (
     <div className="gk-unsub">
       <p className="gk-unsub-msg">
-        Unsubscribe this email address from GamesKeep updates? You can re-subscribe any time.
+        Unsubscribe this email address from {brand} updates? You can re-subscribe any time.
       </p>
       <button className="gk-doc-cta" type="button" disabled={state === 'busy'} onClick={confirm}>
         {state === 'busy' ? 'Unsubscribing…' : 'Confirm unsubscribe'}

@@ -11,6 +11,18 @@ import { centroid, decideCluster, toVectorLiteral, type TopicCandidate } from '.
 import type { ClusterSettings } from './settings';
 import { normalizeGameRef } from './event-kind';
 import { shouldResistMerge } from './gate';
+import { rulesSettings } from '../rules/settings';
+
+/**
+ * Phase P S3b: an editor's edit LOCKS a story field — the automatic passes keep
+ * the editor's value. `lockedStatus(next)` writes `next` unless 'status' is locked.
+ */
+const lockedStatus = (next: string) =>
+  sql`CASE WHEN 'status' = ANY(${topics.lockedFields}) THEN ${topics.status} ELSE ${next}::topic_status END`;
+const lockedText = (field: 'tldr' | 'aiSummary', next: string | null) => {
+  const col = field === 'tldr' ? topics.tldr : topics.aiSummary;
+  return sql`CASE WHEN ${field} = ANY(${topics.lockedFields}) THEN ${col} ELSE ${next} END`;
+};
 
 /**
  * Inputs the secondary gate (SPEC I4a §7) needs for an incoming article: its
@@ -33,8 +45,7 @@ export interface GateInput {
  */
 
 const CANDIDATE_LIMIT = 5;
-/** A topic flips developing → ongoing once it has at least this many articles. */
-const ONGOING_AT = 3;
+// "Ongoing" from N articles is a rule (Phase P S3b: rules.clustering.ongoingAt).
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -180,6 +191,7 @@ export async function clusterArticle(
   settings: ClusterSettings,
   gateInput: GateInput,
 ): Promise<ClusterResult> {
+  const { ongoingAt } = (await rulesSettings()).clustering;
   const publishDate = clean.publishDate ?? new Date();
   const candidates = await findCandidates(embedding, publishDate, settings);
   let decision = decideCluster(candidates, settings.similarityThreshold);
@@ -270,7 +282,7 @@ export async function clusterArticle(
       .set({
         embedding: newCentroid,
         lastActivityAt: sql`GREATEST(${topics.lastActivityAt}, ${publishDate})`,
-        status: count >= ONGOING_AT ? 'ongoing' : 'developing',
+        status: lockedStatus(count >= ongoingAt ? 'ongoing' : 'developing'),
       })
       .where(eq(topics.id, topicId));
 
@@ -304,8 +316,9 @@ export async function recomputeTopic(topicId: string): Promise<number> {
   for (const r of rows) {
     if (r.publishDate && r.publishDate > lastActivity) lastActivity = r.publishDate;
   }
+  const { ongoingAt } = (await rulesSettings()).clustering;
   const patch: Record<string, unknown> = {
-    status: rows.length >= ONGOING_AT ? 'ongoing' : 'developing',
+    status: lockedStatus(rows.length >= ongoingAt ? 'ongoing' : 'developing'),
   };
   if (vectors.length > 0) patch.embedding = centroid(vectors);
   if (lastActivity.getTime() > 0) patch.lastActivityAt = lastActivity;
@@ -328,7 +341,10 @@ export async function refreshTopicSummary(topicId: string): Promise<void> {
   );
   await db
     .update(topics)
-    .set({ tldr: tldr.slice(0, 400) || null, aiSummary: summary || null })
+    .set({
+      tldr: lockedText('tldr', tldr.slice(0, 400) || null),
+      aiSummary: lockedText('aiSummary', summary || null),
+    })
     .where(eq(topics.id, topicId));
 }
 
@@ -345,5 +361,11 @@ export async function markStaleTopicsResolved(
   await db
     .update(topics)
     .set({ status: 'resolved' })
-    .where(and(sql`${topics.lastActivityAt} < ${cutoff}`, sql`${topics.status} <> 'resolved'`));
+    .where(
+      and(
+        sql`${topics.lastActivityAt} < ${cutoff}`,
+        sql`${topics.status} <> 'resolved'`,
+        sql`NOT ('status' = ANY(${topics.lockedFields}))`,
+      ),
+    );
 }

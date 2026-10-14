@@ -1,4 +1,5 @@
 import type { GenreCount } from '@/lib/public-api';
+import { label } from '@/lib/labels';
 
 /**
  * "Browse by genre" (BLUEPRINT 3.4 discovery, news-portal feel) — built from the
@@ -17,7 +18,7 @@ export function GenreRail({
     <section className="gk-container gk-section-tight" aria-label="Browse by genre">
       <div className="gk-section-head">
         <div>
-          <span className="gk-eyebrow">Find your lane</span>
+          <span className="gk-eyebrow">{label('genres.eyebrow')}</span>
           <h2 className="gk-section-title">{title}</h2>
         </div>
       </div>

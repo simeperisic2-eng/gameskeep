@@ -8,18 +8,17 @@ import {
 import {
   confirmGameTag,
   decideSuggestion,
-  migratePayToWin,
   moderationQueue,
   publishDirect,
   reconfirmIssue,
   rejectGameTag,
   reopenGameTag,
   resolveIssue,
-  syncImportedTags,
   TagError,
 } from '../tags/service';
 import { setTagSettings, tagSettings } from '../tags/settings';
 import { enqueueHomepageCompute } from '../homepage/jobs';
+import { enqueueTagSync } from '../tags/jobs';
 import { actorOf, sendError } from './http';
 
 /**
@@ -91,13 +90,11 @@ export async function registerTagAdminRoutes(admin: FastifyInstance): Promise<vo
     action((id, r) => resolveIssue(id, tagResolveInput.parse(r.body ?? {}).patchRef, r.actor)),
   );
 
-  // Re-run the import mapping + the Pay-to-win migration now (both idempotent;
-  // they also run at boot and after every catalog import).
+  // Re-run the import mapping (S3b: a background job — nothing heavy on the
+  // request); returns the job id (GET /jobs/tags/:id for its state + result).
   admin.post('/tag-queue/sync', async (_req, reply) => {
     try {
-      const synced = await syncImportedTags();
-      const payToWin = await migratePayToWin();
-      reply.send({ data: { ...synced, payToWin }, jobId: await refresh('tags') });
+      reply.code(202).send({ jobId: (await enqueueTagSync({ reason: 'admin' })) ?? null });
     } catch (err) {
       fail(reply, err);
     }

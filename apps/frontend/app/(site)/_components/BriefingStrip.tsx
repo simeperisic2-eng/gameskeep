@@ -14,6 +14,21 @@ function dayLabel(iso: string): string {
  * claiming "Today".
  */
 export function BriefingStrip({ briefing }: { briefing: Briefing }): React.JSX.Element | null {
+  // Phase P S3b: an editor's line for today replaces the counts (Rules & limits).
+  const override = briefing.overrideText?.trim() || null;
+  if (override) {
+    return (
+      <div className="gk-briefing" aria-label="Today's briefing">
+        <span className="gk-briefing-tag">
+          <span className="gk-pulse" aria-hidden />
+          Today
+        </span>
+        <div className="gk-briefing-items">
+          <span className="gk-briefing-item gk-briefing-override">{override}</span>
+        </div>
+      </div>
+    );
+  }
   if (briefing.sources === 0 && briefing.topics === 0 && briefing.reviews === 0) return null;
   const items: { value: string; label: string }[] = [
     { value: String(briefing.sources), label: briefing.sources === 1 ? 'source' : 'sources' },

@@ -11,8 +11,9 @@ import { runMigrations } from './db/migrate';
 import { seedDemo } from './db/seed';
 import { ensureBuiltinSourceTypes } from './sources/rules';
 import { applyDemoSectionDefaults, ensureHomepageSections } from './homepage/sections';
-import { ensureTagTaxonomy, migratePayToWin, syncImportedTags } from './tags/service';
-import { seedDemoTagActivity } from './tags/demo';
+import { ensureTagTaxonomy } from './tags/service';
+import { realignDemoTagDates, seedDemoTagActivity } from './tags/demo';
+import { enqueueTagSync } from './tags/jobs';
 import { armHomepageRefresh, enqueueHomepageCompute } from './homepage/jobs';
 import { ensureDemoPlayerHistory } from './steam/demo-history';
 
@@ -48,13 +49,13 @@ async function main(): Promise<void> {
   // Phase P S3: imported free-form tags → the taxonomy (or the suggestion queue),
   // the legacy predatory flag → the Pay-to-win issue tag, demo tag activity. All
   // idempotent; a hiccup must not stop the API (the catalog job re-syncs).
+  // Import mapping + the legacy Pay-to-win hand-over run in the background tags
+  // job (S3b: batched, nothing heavy at boot); the small demo seed stays inline.
   try {
-    const synced = await syncImportedTags();
-    const payToWin = await migratePayToWin();
+    const jobId = await enqueueTagSync({ reason: 'boot' });
     const demoTags = await seedDemoTagActivity();
-    if (synced.mapped || synced.queued || payToWin || demoTags) {
-      app.log.info({ ...synced, payToWin, demoTags }, 'tags synced');
-    }
+    const realigned = await realignDemoTagDates();
+    app.log.info({ jobId, demoTags, realigned }, 'tag sync enqueued');
   } catch (err) {
     app.log.error({ err }, 'tag sync failed');
   }

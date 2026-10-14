@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { apiPost } from '@/lib/client';
+import { RichText } from './DocBody';
+import { useSite } from './SiteProvider';
 
 /**
  * Awards "notify me" (SPEC I7, Slice 3). Marketing is a SEPARATE, EXPLICIT
@@ -10,6 +12,7 @@ import { apiPost } from '@/lib/client';
  * anonymous or signed-in. Posts through the same-origin BFF with a CSRF token.
  */
 export function AwardsSubscribe(): React.JSX.Element {
+  const site = useSite();
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
   const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
@@ -56,9 +59,9 @@ export function AwardsSubscribe(): React.JSX.Element {
       </label>
       <label className="gk-aw-sub-consent">
         <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        {/* Locked consent wording (legally required) — the brand fills in. */}
         <span>
-          Email me when GamesKeep Awards voting opens. This is marketing consent, separate from your
-          account — I can unsubscribe anytime (see our <a href="/privacy">Privacy notice</a>).
+          <RichText nodes={site.rich['consent.awards'] ?? []} />
         </span>
       </label>
       <button type="submit" className="gk-doc-cta" disabled={state === 'sending'}>

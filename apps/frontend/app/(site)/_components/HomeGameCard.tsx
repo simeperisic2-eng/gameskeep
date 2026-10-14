@@ -1,18 +1,11 @@
 import type { HomepageSectionItem } from '@/lib/public-api';
 import { scoreToTen } from '@/lib/format';
+import { gameStatusLabel, label } from '@/lib/labels';
 import { CoverArt } from './CoverArt';
 import { DeltaChip } from './DeltaChip';
 import { PaidLabel } from './PaidLabel';
 import { TagChips } from './TagChips';
 import { QuickView } from './QuickView';
-
-const STATUS_LABEL: Record<string, string> = {
-  announced: 'Announced',
-  in_development: 'In development',
-  early_access: 'Early access',
-  released: 'Released',
-  delisted: 'Delisted',
-};
 
 function releaseLabel(date: string | null): string | null {
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
@@ -63,7 +56,7 @@ export function HomeGameCard({
           <PaidLabel paid={item.paid} />
         </div>
       ) : ourPick ? (
-        <div className="gk-hgcard-pick">Our pick</div>
+        <div className="gk-hgcard-pick">{label('label.ourPick')}</div>
       ) : null}
       <a className="gk-hgcard-cover" href={`/games/${g.slug}`} tabIndex={-1} aria-hidden>
         <CoverArt label={g.name} imageUrl={g.coverUrl} variant="thumb" />
@@ -75,7 +68,7 @@ export function HomeGameCard({
           </a>
         </h3>
         <div className="gk-hgcard-meta">
-          <span>{STATUS_LABEL[g.status] ?? g.status}</span>
+          <span>{gameStatusLabel(g.status)}</span>
           {when ? <span>{when}</span> : null}
           {g.genres[0] ? <span>{g.genres[0]}</span> : null}
         </div>

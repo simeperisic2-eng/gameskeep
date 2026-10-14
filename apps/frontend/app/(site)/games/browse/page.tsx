@@ -7,6 +7,8 @@ import { CatalogControls } from '../../_components/CatalogControls';
 import { GameTile } from '../../_components/GameTile';
 import { Pagination } from '../../_components/Pagination';
 import { AdSlot } from '../../_components/AdSlot';
+import { getSite, siteText } from '@/lib/site';
+import { brand } from '@/lib/labels';
 
 // Server-render per request so crawlers get every catalog page (and any filter
 // view) as real HTML, not a client shell.
@@ -49,7 +51,7 @@ export async function generateMetadata({
 }: {
   searchParams: SearchParams;
 }): Promise<Metadata> {
-  const sp = await searchParams;
+  const [sp, site] = await Promise.all([searchParams, getSite()]);
   const genre = pretty(first(sp.genre));
   const platform = pretty(first(sp.platform));
   const pageNum = Math.max(1, Number.parseInt(first(sp.page) ?? '1', 10) || 1);
@@ -62,8 +64,8 @@ export async function generateMetadata({
     (pageNum > 1 ? ` — page ${pageNum}` : '');
   const description =
     parts.length > 0
-      ? `Browse ${scope} on GamesKeep — separated critic, our and community scores, the critic↔community disconnect, and content flags.`
-      : 'Browse every game on GamesKeep — separated critic, our and community ratings, the critic↔community disconnect with context, and factual content flags.';
+      ? `Browse ${scope} on ${site.brand} — separated critic, our and community scores, the critic↔community disconnect, and content flags.`
+      : siteText(site, 'browse.metaDescription');
   return {
     title,
     description,
@@ -73,7 +75,13 @@ export async function generateMetadata({
         : canonicalFor({ genre: first(sp.genre), platform: first(sp.platform) }, pageNum),
     },
     ...(tagFiltered ? { robots: { index: false, follow: true } } : {}),
-    openGraph: { type: 'website', url: `${siteUrl}/games/browse`, title, description },
+    openGraph: {
+      siteName: brand(),
+      type: 'website',
+      url: `${siteUrl}/games/browse`,
+      title,
+      description,
+    },
     twitter: { card: 'summary_large_image', title, description },
   };
 }
@@ -83,7 +91,7 @@ export default async function BrowsePage({
 }: {
   searchParams: SearchParams;
 }): Promise<React.JSX.Element> {
-  const sp = await searchParams;
+  const [sp, site] = await Promise.all([searchParams, getSite()]);
   const data = await getCatalog({
     genre: first(sp.genre),
     platform: first(sp.platform),
@@ -132,12 +140,9 @@ export default async function BrowsePage({
 
         <header className="gk-catalog-head">
           <div>
-            <span className="gk-eyebrow">Ratings &amp; rankings</span>
+            <span className="gk-eyebrow">{siteText(site, 'games.eyebrow')}</span>
             <h1 className="gk-catalog-title">{heading}</h1>
-            <p className="gk-section-sub">
-              Separated critic, our and community scores — never blended into one number — with the
-              gap surfaced where it&apos;s real.
-            </p>
+            <p className="gk-section-sub">{siteText(site, 'browse.intro')}</p>
           </div>
           <span className="gk-catalog-count">
             <b>{data.total}</b> {data.total === 1 ? 'game' : 'games'}

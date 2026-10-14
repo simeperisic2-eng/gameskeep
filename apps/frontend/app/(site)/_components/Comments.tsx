@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiPost, fetchMe } from '@/lib/client';
+import { label } from '@/lib/labels';
 
 /**
  * Comments (SPEC I6, Slice 8, decision 8) — plain text, VERIFIED-gated writes,
@@ -130,7 +131,7 @@ export function Comments({
           ))}
         </ul>
       ) : list ? (
-        <p className="gk-comments-empty">No comments yet — be the first.</p>
+        <p className="gk-comments-empty">{label('empty.comments')}</p>
       ) : (
         <p className="gk-form-quiet">Loading…</p>
       )}

@@ -19,6 +19,8 @@ import { Comments } from '../../_components/Comments';
 import { TopicArticles } from '../../_components/TopicArticles';
 import { StoryTimeline } from '../../_components/StoryTimeline';
 import { CoverArt } from '../../_components/CoverArt';
+import { getSite } from '@/lib/site';
+import { brand, excerptRule } from '@/lib/labels';
 
 // Live, server-rotated bias data — render per request so crawlers always get the
 // full story (SSR), not a cached shell.
@@ -35,20 +37,23 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const topic = await loadTopic(slug);
+  const [topic] = await Promise.all([loadTopic(slug), getSite()]);
   if (!topic) return { title: 'Story not found', robots: { index: false } };
 
   const url = `${siteUrl}/topics/${topic.slug}`;
   const description =
     distinctSubtitle(topic.title, topic.tldr) ??
-    truncateWords(topic.aiSummary, 180) ??
+    truncateWords(topic.aiSummary, excerptRule('metaDescription')) ??
     `How ${topic.sourceCount} outlets are covering this story — and the coverage signals we found.`;
 
   return {
     title: topic.title,
     description,
     alternates: { canonical: url },
+    // Phase P S3b: per-page noindex (editor override) — still followed.
+    ...(topic.noindex ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
+      siteName: brand(), // Phase P S3b: a page openGraph replaces the layout one
       type: 'article',
       url,
       title: topic.title,
@@ -74,14 +79,18 @@ export default async function TopicPage({
   params: Promise<{ slug: string }>;
 }): Promise<React.JSX.Element> {
   const { slug } = await params;
-  const [topic, coverageSlot] = await Promise.all([loadTopic(slug), getAdSlot('topic-coverage')]);
+  const [topic, coverageSlot] = await Promise.all([
+    loadTopic(slug),
+    getAdSlot('topic-coverage'),
+    getSite(), // labels + excerpt rules for everything below
+  ]);
   if (!topic) notFound();
 
   // "Resolved" is internal clustering state — no public chip (hygiene 3).
   const statusLabel = publicTopicStatus(topic.status);
   const subtitle = distinctSubtitle(topic.title, topic.tldr);
   const updated = relativeTime(topic.lastActivityAt);
-  const summary = truncateWords(topic.aiSummary, 600);
+  const summary = truncateWords(topic.aiSummary, excerptRule('topicSummary'));
 
   const crumbs = [
     { name: 'Home', url: `${siteUrl}/` },

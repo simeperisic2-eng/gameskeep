@@ -16,7 +16,10 @@ const day = (v: string | null): string =>
     ? new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(v))
     : '—';
 
-async function post(path: string, body?: unknown): Promise<{ ok: boolean; message: string }> {
+async function post(
+  path: string,
+  body?: unknown,
+): Promise<{ ok: boolean; message: string; jobId?: string | null }> {
   const res = await adminFetch(`/admin/api/${path}`, {
     method: 'POST',
     headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
@@ -25,9 +28,11 @@ async function post(path: string, body?: unknown): Promise<{ ok: boolean; messag
   const j = (await res.json().catch(() => ({}))) as {
     message?: string;
     issues?: { message?: string }[];
+    jobId?: string | null;
   };
   return {
     ok: res.ok,
+    jobId: j.jobId ?? null,
     message: res.ok
       ? 'Saved.'
       : (j.message ?? j.issues?.map((i) => i.message).join('; ') ?? `HTTP ${res.status}`),
@@ -74,6 +79,55 @@ export function TagsManager({
     setBusy(false);
     setMsg(r.message);
     if (r.ok) await reload();
+  }
+  /** Phase P S3b: import mapping runs as a background job — wait for YOUR run. */
+  async function runSync(): Promise<void> {
+    setBusy(true);
+    const r = await post('tag-queue/sync');
+    if (!r.ok || !r.jobId) {
+      setBusy(false);
+      setMsg(r.ok ? 'Import mapping queued.' : r.message);
+      return;
+    }
+    setMsg(`Import mapping running in the background (job ${r.jobId})…`);
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      const res = await adminFetch(`/admin/api/jobs/tags/${encodeURIComponent(r.jobId)}`);
+      if (res.status === 403) {
+        // Job state is an admin view; a moderator just refreshes the queue shortly.
+        setMsg(`Import mapping queued (job ${r.jobId}) — the queue refreshes in a moment.`);
+        await new Promise((ok) => setTimeout(ok, 3000));
+        await reload();
+        setBusy(false);
+        return;
+      }
+      if (!res.ok) continue;
+      const j =
+        (
+          (await res.json().catch(() => ({}))) as {
+            data?: {
+              state?: string;
+              result?: { mapped?: number; queued?: number; payToWin?: number } | null;
+            };
+          }
+        ).data ?? {};
+      if (j.state === 'completed') {
+        const x = j.result ?? {};
+        setMsg(
+          `Import mapping done (job ${r.jobId}): ${x.mapped ?? 0} mapped, ${x.queued ?? 0} queued as suggestions, ${x.payToWin ?? 0} legacy pay-to-win migrated.`,
+        );
+        await reload();
+        setBusy(false);
+        return;
+      }
+      if (j.state === 'failed') {
+        setMsg(`Import mapping failed (job ${r.jobId}).`);
+        setBusy(false);
+        return;
+      }
+    }
+    setMsg(`Import mapping still running (job ${r.jobId}) — reload later.`);
+    setBusy(false);
   }
   async function saveSettings(): Promise<void> {
     if (!s) return;
@@ -268,6 +322,50 @@ export function TagsManager({
         )}
       </section>
 
+      <section className="gk-cp-card" data-tag-pushback>
+        <h2 className="gk-cp-card-title">
+          Removed by editors — still being voted for ({q.pushback?.length ?? 0})
+        </h2>
+        <p className="gk-cp-dim">
+          Readers kept voting for these after an editor removed them. They stay removed; re-open one
+          to put it back in review.
+        </p>
+        {!q.pushback?.length ? (
+          <p className="gk-cp-dim">None.</p>
+        ) : (
+          <table className="gk-cp-table">
+            <tbody>
+              {q.pushback.map((r) => (
+                <tr key={r.id}>
+                  <td>
+                    <b>{r.tag.name}</b> on{' '}
+                    <a className="gk-cp-link" href={`/games/${r.game.slug}`}>
+                      {r.game.name}
+                    </a>{' '}
+                    <span className="gk-cp-dim">
+                      · removed {day(r.removedAt)} · <b>{r.votesSinceRemoval}</b>{' '}
+                      {r.votesSinceRemoval === 1 ? 'vote' : 'votes'} since · weighted{' '}
+                      {r.weightedScore.toFixed(1)}
+                    </span>
+                    <Flag row={r} />
+                  </td>
+                  <td>
+                    <button
+                      className="gk-cp-btn is-small"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void run(`tag-queue/${r.id}/reopen`)}
+                    >
+                      Re-open for review
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
       <section className="gk-cp-card">
         <h2 className="gk-cp-card-title">Add a tag to a game</h2>
         <div className="gk-nl-form">
@@ -303,7 +401,7 @@ export function TagsManager({
               className="gk-cp-btn"
               type="button"
               disabled={busy}
-              onClick={() => void run('tag-queue/sync')}
+              onClick={() => void runSync()}
             >
               Re-run import mapping
             </button>

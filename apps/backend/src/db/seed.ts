@@ -903,7 +903,6 @@ async function seedRatings(opts: {
       aiAssets?: 'unknown' | 'no' | 'partial' | 'yes';
       launchState?: 'unknown' | 'polished' | 'mixed' | 'rough';
       mtx?: boolean;
-      predatory?: boolean;
       complexity?: number;
     },
   ): Promise<void> {
@@ -914,7 +913,6 @@ async function seedRatings(opts: {
         aiAssets: v.aiAssets ?? 'unknown',
         launchState: v.launchState ?? 'unknown',
         hasMicrotransactions: v.mtx ?? false,
-        predatoryMonetization: v.predatory ?? false,
         complexityRating: v.complexity ?? null,
       })
       .onConflictDoNothing();
@@ -966,7 +964,6 @@ async function seedRatings(opts: {
     aiAssets: 'partial',
     launchState: 'mixed',
     mtx: true,
-    predatory: false,
     complexity: 2,
   });
 
