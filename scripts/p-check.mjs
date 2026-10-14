@@ -126,6 +126,7 @@
  *   S3b.12 (gap 2) predatory monetization only as the Pay-to-win issue tag
  *   S3b.13 (gap 3) votes on a removed tag → the pushback group
  *   S3b.14 (gap 4) demo issue dates relative to boot
+ *   S3b.15 the Promote page names the paid label "Promoted" only
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -3701,6 +3702,14 @@ COMMIT;`,
       !(queue?.pending ?? []).some((r) => r.id === removedRow?.id) &&
       stillOff,
     `row=${removedRow?.state} vote=${pushVote.status} pushback=${push ? `${push.votesSinceRemoval} since ${push.removedAt}` : 'missing'} stillOff=${stillOff}`,
+  );
+
+  // ── S3b.15 the Promote page names our paid label as "Promoted" only ───────
+  const promoteText = visibleText(await html('/promote'));
+  check(
+    'S3b.15 the Promote page (default document) says every placement carries a “Promoted” label — “Sponsored” is the outlet signal, never our paid label (owner, S2)',
+    /carries a “Promoted” label/.test(promoteText) && !/“Sponsored”/.test(promoteText),
+    `promoted=${/carries a “Promoted” label/.test(promoteText)} sponsored-as-label=${/“Sponsored”/.test(promoteText)}`,
   );
 
   // ── S3b.14 (gap 4) demo issue dates are relative to boot ───────────────────

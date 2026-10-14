@@ -79,24 +79,6 @@ export function CopyManager({ initial }: { initial: CopyConfig }): React.JSX.Ele
 
       {msg && <div className="gk-cp-note gk-cp-flash">{msg}</div>}
 
-      <div className="gk-nl-actions" style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-        <button
-          type="button"
-          className="gk-cp-btn is-primary"
-          disabled={busy || changed.length === 0}
-          onClick={saveChanges}
-        >
-          {busy
-            ? 'Saving…'
-            : `Save ${changed.length || ''} change${changed.length === 1 ? '' : 's'}`}
-        </button>
-        {changed.length > 0 ? (
-          <button type="button" className="gk-cp-btn" onClick={() => setValues(saved)}>
-            Discard
-          </button>
-        ) : null}
-      </div>
-
       {initial.groups.map((g) => {
         const defs = byGroup.get(g.key) ?? [];
         if (defs.length === 0 && g.key !== 'locked') return null;
@@ -200,6 +182,30 @@ export function CopyManager({ initial }: { initial: CopyConfig }): React.JSX.Ele
           </section>
         );
       })}
+
+      {/* Pinned to the viewport bottom: the Control Panel top bar is sticky at the top. */}
+      <div className="gk-copy-savebar" role="region" aria-label="Save copy changes">
+        <span className="gk-cp-dim">
+          {changed.length
+            ? `${changed.length} unsaved change${changed.length === 1 ? '' : 's'}`
+            : 'No unsaved changes'}
+        </span>
+        <button
+          type="button"
+          className="gk-cp-btn is-primary"
+          disabled={busy || changed.length === 0}
+          onClick={saveChanges}
+        >
+          {busy
+            ? 'Saving…'
+            : `Save ${changed.length || ''} change${changed.length === 1 ? '' : 's'}`}
+        </button>
+        {changed.length > 0 ? (
+          <button type="button" className="gk-cp-btn" onClick={() => setValues(saved)}>
+            Discard
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

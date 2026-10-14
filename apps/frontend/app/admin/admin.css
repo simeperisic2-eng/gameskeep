@@ -609,3 +609,23 @@
   margin-top: 4px;
   text-transform: none;
 }
+
+/* Copy (Phase P S3b follow-up): the save bar sits at the BOTTOM of the viewport —
+ * the Control Panel top bar is already sticky at the top, so a top-sticky bar
+ * overlapped the cards. Solid background so content never shows through. */
+.gk-copy-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 0;
+  background: var(--gk-bg);
+  border-top: 1px solid var(--gk-border);
+}
+.gk-copy-savebar > .gk-cp-dim {
+  margin-right: auto;
+}

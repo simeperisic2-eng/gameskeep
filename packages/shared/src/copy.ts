@@ -161,7 +161,7 @@ Tell us what you’d like to promote and we’ll arrange a placement — a slot 
 
 ## Always labeled — no exceptions
 
-Whoever pays gets the promotion, but the reader always knows it’s paid: every placement carries a **“Promoted” / “Sponsored”** label as prominent as our bias flags. We flag other people’s undisclosed influence; we’re not going to hide our own. That’s non-negotiable — it’s what makes the rest of the site trustworthy.
+Whoever pays gets the promotion, but the reader always knows it’s paid: every placement carries a **“Promoted”** label as prominent as our bias flags. We flag other people’s undisclosed influence; we’re not going to hide our own. That’s non-negotiable — it’s what makes the rest of the site trustworthy.
 
 ## Get in touch
 

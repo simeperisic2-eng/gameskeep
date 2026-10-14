@@ -272,6 +272,7 @@ Acceptance:
 - Admin section config and new settings (privilege by rank).
 - AI polish validator bypass.
 - Search (injection, DoS); studio, people and list pages (XSS).
+- Copy-registry document parser (S3b, `packages/shared/src/copy.ts` → `parseInline` / `findClose`): quadratic worst case on pathological unclosed `**` / `*` / `[` markers. Admin-only input (Control Panel → Copy, admin+), ≤ 20 000 characters per document, parsed on save and on each 10 s `/public/site` rebuild. Measure the worst case and bound it (linear scan or a per-paragraph cap) — no change before S10 (owner, after S3b).
 
 Findings are fixed and re-verified before the phase closes.
 
