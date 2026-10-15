@@ -41,6 +41,7 @@ const NAV: {
       { label: 'Tags · queue', href: '/admin/tags', minRank: 30 },
       { label: 'Tag taxonomy', href: '/admin/tag-taxonomy', minRank: 30 },
       { label: 'List curation', href: '/admin/curation', minRank: 30 },
+      { label: 'Editorial lists', href: '/admin/editorial-lists', minRank: 30 },
     ],
   },
   {
@@ -52,6 +53,8 @@ const NAV: {
       { label: 'Rating engine', href: '/admin/ratings', minRank: 40 },
       { label: 'Bias engine', href: '/admin/bias', minRank: 40 },
       { label: 'Unmatched games', href: '/admin/unmatched', minRank: 40 },
+      { label: 'News categories', href: '/admin/news', minRank: 40 },
+      { label: 'Search', href: '/admin/search', minRank: 40 },
     ],
   },
   {
@@ -108,6 +111,7 @@ const NAV: {
       { label: 'Topic types', href: '/admin/topic-types', minRank: 40 },
       { label: 'Source types', href: '/admin/source-types', minRank: 40 },
       { label: 'Award categories', href: '/admin/award-categories', minRank: 40 },
+      { label: 'List categories', href: '/admin/editorial-list-categories', minRank: 40 },
     ],
   },
   {

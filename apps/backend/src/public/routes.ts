@@ -20,9 +20,15 @@ import { getPublicProfile } from './profile';
 import { promotionForGame, slotPublicView } from '../ads/service';
 import { unsubscribe } from '../awards/subscribe';
 import { allowSuggest, suggestGame } from '../catalog/suggest';
-import { csrfOk, CSRF_HEADER } from '../auth/session';
+import { coarsenIp, csrfOk, CSRF_HEADER } from '../auth/session';
 import { sendError } from '../admin/http';
 import { displaySettings, publicDisplay } from '../display/settings';
+import {
+  allowSuggest as allowSearchSuggest,
+  searchSite,
+  suggest as suggestSearch,
+} from '../search/query';
+import { publicConsensus, publicListsIndex, sitemapListPages } from '../lists/service';
 import { publicSite } from '../copy/settings';
 
 /**
@@ -303,16 +309,78 @@ export async function registerPublicRoutes(app: FastifyInstance): Promise<void> 
         }
       });
 
+      // ── Phase P S4: site search ─────────────────────────────────────────────
+      // The results page (cached per query; input reduced to word tokens).
+      pub.get<{ Querystring: { q?: unknown; type?: unknown; page?: unknown } }>(
+        '/search',
+        async (req, reply) => {
+          try {
+            const q = req.query ?? {};
+            reply.send({ data: await searchSite(q.q, { type: q.type, page: q.page }) });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+      // The typeahead: minimum characters + a per-client and a global rate limit.
+      pub.get<{ Querystring: { q?: unknown } }>('/search/suggest', async (req, reply) => {
+        try {
+          if (!(await allowSearchSuggest(coarsenIp(req.ip)))) {
+            reply.code(429).header('retry-after', '30').send({
+              error: 'rate_limited',
+              message: 'Too many searches — try again in a moment.',
+            });
+            return;
+          }
+          reply.send({ data: await suggestSearch(req.query?.q) });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+
+      // ── Phase P S4: editorial lists (consensus only — never an outlet's list) ─
+      pub.get('/lists', async (_req, reply) => {
+        try {
+          reply.send({ data: await publicListsIndex() });
+        } catch (err) {
+          sendError(reply, err);
+        }
+      });
+      pub.get<{ Params: { year: string; category: string } }>(
+        '/lists/:year/:category',
+        async (req, reply) => {
+          try {
+            const year = Number.parseInt(req.params.year, 10);
+            const cat = String(req.params.category ?? '');
+            const view =
+              Number.isInteger(year) &&
+              year >= 1970 &&
+              year <= 2100 &&
+              /^[a-z0-9][a-z0-9-]{0,38}$/.test(cat)
+                ? await publicConsensus(year, cat)
+                : null;
+            if (!view) {
+              reply.code(404).send({ error: 'not_found' });
+              return;
+            }
+            reply.send({ data: view });
+          } catch (err) {
+            sendError(reply, err);
+          }
+        },
+      );
+
       // Sitemap source — topic + game + source slugs + lastmod for sitemap.xml.
       pub.get('/sitemap', async (_req, reply) => {
         try {
-          const [topics, games, sources, tags] = await Promise.all([
+          const [topics, games, sources, tags, lists] = await Promise.all([
             getSitemapTopics(),
             getSitemapGames(),
             getSitemapSources(),
             getSitemapTags(),
+            sitemapListPages(),
           ]);
-          reply.send({ data: { topics, games, sources, tags } });
+          reply.send({ data: { topics, games, sources, tags, lists } });
         } catch (err) {
           sendError(reply, err);
         }

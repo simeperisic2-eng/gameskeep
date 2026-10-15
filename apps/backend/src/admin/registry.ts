@@ -24,7 +24,11 @@ import {
   VIDEO_PROVIDERS,
   BADGE_OVERRIDE_STATES,
   CURATION_LISTS,
+  CURATION_LISTS_BY_PAGE,
   CURATION_PAGES,
+  NEWS_CATEGORY_MODES,
+  NEWS_FALLBACK_CATEGORY,
+  SEO_INDEX_MODES,
   IMPORT_FIX_REASON_LABELS,
   IMPORT_FIX_REASONS,
 } from '@gameskeep/shared/constants';
@@ -39,6 +43,8 @@ import {
   awardNominationCreate,
   awardOutcomeCreate,
   badgeCreate,
+  editorialListCategoryCreate,
+  newsCategoryCreate,
   curationCreate,
   gameCreate,
   gameContentFlagsCreate,
@@ -74,6 +80,13 @@ import { statusLockFor } from '../catalog/status';
 
 export { slugify };
 import { getRow, insertRow, slugTaken, type Row, updateRow } from './crud';
+import { ZodError } from 'zod';
+import { requestSearchRefresh } from '../search/jobs';
+import { bumpSearchVersion } from '../search/index';
+import { enqueueReclassify } from '../articles/jobs';
+import { enqueueHomepageCompute } from '../homepage/jobs';
+import { requestConsensus } from '../lists/jobs';
+import { invalidateNewsCategories } from '../news/categories';
 
 /** A form field descriptor — drives the generic admin UI (the `_meta` endpoint). */
 export interface FieldSpec {
@@ -171,6 +184,16 @@ export interface ResourceDef {
    * request itself changes that column — the editor managing locks).
    */
   fieldLocks?: { column: string; fields: readonly string[] };
+  /**
+   * Phase P S4 — after a successful create / update / delete: refresh what the
+   * change feeds (search index, categories, consensus) in the background.
+   * `changed` = the fields the update actually changed. Errors are logged, never thrown.
+   */
+  afterWrite?: (
+    kind: 'create' | 'update' | 'delete',
+    row: Row | null,
+    changed: string[],
+  ) => Promise<void>;
   /** Phase P S3b — changing any of `fields` sets the boolean column `column`. */
   boolLock?: { column: string; fields: readonly string[] };
   /**
@@ -464,7 +487,11 @@ export const RESOURCES: ResourceDef[] = [
       F.bool('upcomingFeatured'),
       F.bool('isIndie'),
       F.bool('noindex'),
+      // Phase P S4: other names (search + the name matcher); keep out of site search.
+      F.json('alternateNames'),
+      F.bool('searchHidden'),
     ],
+    afterWrite: async () => requestSearchRefresh('game-edit'),
   },
   {
     name: 'sources',
@@ -494,7 +521,10 @@ export const RESOURCES: ResourceDef[] = [
       F.num('reputationBaseline'),
       F.num('reputationCommercial'),
       F.num('reputationGeneral'),
+      // Phase P S4: keep this outlet out of site search.
+      F.bool('searchHidden'),
     ],
+    afterWrite: async () => requestSearchRefresh('source-edit'),
   },
   {
     name: 'topics',
@@ -515,8 +545,17 @@ export const RESOURCES: ResourceDef[] = [
       F.ref('typeId', 'topic-types'),
       // Phase P S3b: edited fields lock automatically; remove a name to unlock it.
       F.json('lockedFields'),
-      F.bool('noindex'),
+      // Phase P S4: automatic indexing rule, or an editor's index / noindex.
+      F.enum('seoIndex', SEO_INDEX_MODES),
+      // Phase P S4: the news category (an edit locks it against the automatic pass).
+      F.text('category'),
+      F.bool('searchHidden'),
     ],
+    validate: async (next) => categoryExists(next.category),
+    afterWrite: async () => {
+      await requestSearchRefresh('topic-edit');
+      await enqueueHomepageCompute({ reason: 'topic-edit' });
+    },
   },
   {
     name: 'articles',
@@ -561,7 +600,13 @@ export const RESOURCES: ResourceDef[] = [
       F.num('influenceScore'),
       F.num('qualityScore'),
       F.area('internalAssessment'),
+      // Phase P S4: an editor's news category (wins over the classifier).
+      F.text('categoryOverride'),
     ],
+    validate: async (next) => categoryExists(next.categoryOverride),
+    afterWrite: async (_kind, _row, changed) => {
+      if (changed.includes('categoryOverride')) await enqueueReclassify('article-category');
+    },
   },
   {
     name: 'users',
@@ -982,15 +1027,15 @@ export const RESOURCES: ResourceDef[] = [
       const pageKind = typeof next.pageKind === 'string' ? next.pageKind : null;
       const listKey = typeof next.listKey === 'string' ? next.listKey : null;
       if (!pageKind || !listKey) return null;
-      const allowed: Record<string, readonly string[]> = {
-        topic: ['related-stories', 'coverage-rows'],
-        game: ['related-stories', 'related-games'],
-        discovery: ['top-rated', 'most-discussed', 'coming-soon'],
-      };
+      const allowed = CURATION_LISTS_BY_PAGE as Record<string, readonly string[]>;
       if (!(allowed[pageKind] ?? []).includes(listKey)) {
         return `List "${listKey}" does not exist on a ${pageKind} page (allowed: ${(allowed[pageKind] ?? []).join(', ')}).`;
       }
       return null;
+    },
+    afterWrite: async (_kind, row) => {
+      // Phase P S4: cached search answers must not outlive a search pin / exclude.
+      if (row?.pageKind === 'search') await bumpSearchVersion();
     },
     labelColumn: 'pageKey',
     fields: [
@@ -1002,7 +1047,82 @@ export const RESOURCES: ResourceDef[] = [
       F.area('note'),
     ],
   },
+
+  // Phase P S4 — news categories (display mode show / low / hide + classifier
+  // keywords; owner defaults: deals + guides low, listicles hide) and the
+  // editorial-list categories (Game of the Year, Best games of the year, …).
+  {
+    name: 'news-categories',
+    label: 'News categories',
+    table: schema.newsCategories,
+    create: newsCategoryCreate,
+    update: newsCategoryCreate.partial(),
+    validate: async (next) =>
+      next.key === NEWS_FALLBACK_CATEGORY && next.active === false
+        ? 'The fallback category "news" cannot be deactivated (relabel it instead).'
+        : null,
+    ops: {
+      remove: async (id, actor) => {
+        const row = await getRow(schema.newsCategories, id);
+        if (!row) return null;
+        if (row.key === NEWS_FALLBACK_CATEGORY) {
+          throw new ZodError([
+            {
+              code: 'custom',
+              path: ['key'],
+              message: 'The fallback category "news" cannot be deleted.',
+            },
+          ]);
+        }
+        await db.delete(schema.newsCategories).where(eq(schema.newsCategories.id, id));
+        await writeAudit({
+          action: 'delete',
+          entityType: 'news-categories',
+          entityId: id,
+          changes: { deleted: row },
+          actor,
+        });
+        return row;
+      },
+    },
+    afterWrite: async () => {
+      invalidateNewsCategories();
+      await enqueueReclassify('news-categories');
+      await bumpSearchVersion();
+    },
+    labelColumn: 'label',
+    fields: [
+      F.text('key', true),
+      F.text('label', true),
+      F.enum('mode', NEWS_CATEGORY_MODES, true),
+      F.json('keywords'),
+      F.num('priority'),
+      F.bool('active'),
+    ],
+  },
+  {
+    name: 'editorial-list-categories',
+    label: 'Editorial list categories',
+    table: schema.editorialListCategories,
+    create: editorialListCategoryCreate,
+    update: editorialListCategoryCreate.partial(),
+    afterWrite: async () => requestConsensus('list-categories'),
+    labelColumn: 'label',
+    fields: [F.text('key', true), F.text('label', true), F.num('sort'), F.bool('active')],
+  },
 ];
+
+/** Phase P S4: a category key must be an existing news category (or empty / null). */
+async function categoryExists(value: unknown): Promise<string | null> {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string') return 'A category must be a category key.';
+  const [row] = await db
+    .select({ id: schema.newsCategories.id })
+    .from(schema.newsCategories)
+    .where(eq(schema.newsCategories.key, value))
+    .limit(1);
+  return row ? null : `No news category "${value}" (see News categories).`;
+}
 
 export const RESOURCE_BY_NAME = new Map(RESOURCES.map((r) => [r.name, r]));
 

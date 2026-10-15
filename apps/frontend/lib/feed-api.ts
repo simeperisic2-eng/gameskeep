@@ -28,6 +28,8 @@ export interface FeedItem {
   sourceName: string | null;
   sourceSlug: string | null;
   via: { type: 'game' | 'topic'; name: string; slug: string };
+  /** Phase P S4: the category label of a "low" item (a chip). */
+  category?: string | null;
 }
 export interface FeedData {
   followedGames: FeedGame[];

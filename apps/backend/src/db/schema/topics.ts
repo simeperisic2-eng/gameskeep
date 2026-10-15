@@ -65,8 +65,15 @@ export const topics = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    /** Phase P S3b: keep this story out of search indexes + the sitemap. */
-    noindex: boolean('noindex').notNull().default(false),
+    /**
+     * Phase P S4: indexing — 'auto' (the rule: enough sources, or an AI summary
+     * and a linked game), or an editor's 'index' / 'noindex'.
+     */
+    seoIndex: varchar('seo_index', { length: 8 }).notNull().default('auto'),
+    /** Phase P S4: the story's news category (computed from its articles; an edit locks it). */
+    category: varchar('category', { length: 40 }),
+    /** Phase P S4: an editor keeps this story out of site search. */
+    searchHidden: boolean('search_hidden').notNull().default(false),
 
     lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
     ...timestamps(),

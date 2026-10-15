@@ -127,6 +127,25 @@
  *   S3b.13 (gap 3) votes on a removed tag → the pushback group
  *   S3b.14 (gap 4) demo issue dates relative to boot
  *   S3b.15 the Promote page names the paid label "Promoted" only
+ *
+ *  S4 — Search, news indexing + noise categories, editorial lists
+ *   S4.1  (acc. 1) single-source story: visible, noindex, out of the sitemap; a
+ *         two-source story indexed; editor index / noindex both ways; migrated
+ *   S4.2  (acc. 2) a category set to hide leaves feeds, game / source pages,
+ *         search and the briefing counts (DB truth); listicles hidden by default
+ *   S4.3  article / story category overrides + index modes survive a re-cluster
+ *   S4.4  (acc. 3) an unconfirmed list candidate is never public anywhere
+ *   S4.5  consensus payload: no entries, ≥ 2 lists, math = DB truth, lines
+ *   S4.6  consensus overrides: pins / excludes / hidden line; game pages agree
+ *   S4.7  public from 3 confirmed lists (setting), both ways
+ *   S4.8  game block links out; no page per outlet list
+ *   S4.9  (acc. 4) search: partial title, alternate names, studios, typos,
+ *         low searchable / hide not, keep-out-of-search, per-query pins
+ *   S4.10 (acc. 4) typeahead: minimum characters, hostile input, rate limit 429
+ *   S4.11 no standalone page per aggregated article
+ *   S4.12 settings validated + audited; RBAC by section (UI path)
+ *   S4.13 heavy steps are background jobs with ids
+ *   S4.14 low mode: "More from the feed" only + the game-page chip
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -478,14 +497,11 @@ async function s1() {
   const briefHtml = (homeHtml.match(
     /<div class="gk-briefing"[\s\S]*?class="gk-briefing-items"[\s\S]*?<\/div>/,
   ) ?? [''])[0];
-  const hiSql = b.isToday ? 'now()' : `'${b.asOf}'::timestamptz`;
-  const loSql = `(${hiSql} - interval '${Number(b.windowHours)} hours')`;
-  const truth = sqlOne(
-    `SELECT (SELECT count(DISTINCT source_id) FROM articles WHERE source_id IS NOT NULL AND publish_date > ${loSql} AND publish_date <= ${hiSql}) || ',' || (SELECT count(DISTINCT at.topic_id) FROM article_topics at JOIN articles a ON a.id=at.article_id JOIN topics t ON t.id=at.topic_id WHERE t.bias_distribution IS NOT NULL AND a.publish_date > ${loSql} AND a.publish_date <= ${hiSql}) || ',' || (SELECT count(*) FROM articles WHERE article_type='review' AND publish_date > ${loSql} AND publish_date <= ${hiSql})`,
-  );
+  // Phase P S4: low / hide news categories never count (the rule lives in briefingTruth).
+  const truth = briefingTruth(b);
   const visibleBrief = visibleText(briefHtml);
   check(
-    'S1.4 (acc.4) briefing = sources · topics · reviews counts (DB truth), no independence percentage',
+    'S1.4 (acc.4) briefing = sources · topics · reviews counts (DB truth — since S4 without low / hidden news categories), no independence percentage',
     briefHtml.length > 0 &&
       !('independentPct' in b) &&
       !/%/.test(visibleBrief) &&
@@ -1723,7 +1739,8 @@ async function s2a() {
   // ── S2.24 (S2 review fix 1) Trending = stories active in its window only ─────
   // DB truth: a story qualifies iff it has an article in the window (engagement is
   // capped by coverage, so it cannot qualify a story on its own). Pins are clear
-  // (S2.6) and no placement is live here.
+  // (S2.6) and no placement is live here. Phase P S4: stories in a low / hidden news
+  // category never trend, so they don't count either.
   const tCfg = (await sectionsConfig()).find((x) => x.key === 'trending');
   const tWindow0 = tCfg?.deltaWindowHours ?? null;
   const tMin0 = tCfg?.minItems ?? null;
@@ -1732,7 +1749,7 @@ async function s2a() {
   const activeIn = (w) =>
     Number(
       psql(
-        `SELECT count(DISTINCT t.id) FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE t.bias_distribution IS NOT NULL AND (t.bias_distribution->>'articleCount')::int > 0 AND a.publish_date > now() - interval '${w} hours' AND a.publish_date <= now();`,
+        `SELECT count(DISTINCT t.id) FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE t.bias_distribution IS NOT NULL AND (t.bias_distribution->>'articleCount')::int > 0 AND coalesce(t.category, 'news') NOT IN (SELECT key FROM news_categories WHERE active AND mode IN ('low', 'hide')) AND a.publish_date > now() - interval '${w} hours' AND a.publish_date <= now();`,
       ),
     );
   let wLow = null;
@@ -3059,7 +3076,7 @@ const s3bRestore = {
 };
 const topicRowBySlug = (slug) => {
   const r = psql(
-    `SELECT row_to_json(x) FROM (SELECT id, slug, title, tldr, status::text AS status, locked_fields AS "lockedFields", noindex FROM topics WHERE slug = ${lit(slug)}) x;`,
+    `SELECT row_to_json(x) FROM (SELECT id, slug, title, tldr, status::text AS status, locked_fields AS "lockedFields", seo_index AS "seoIndex" FROM topics WHERE slug = ${lit(slug)}) x;`,
   );
   return r ? JSON.parse(r) : null;
 };
@@ -3093,7 +3110,7 @@ async function s3b() {
     status: 'developing',
   };
   const topicPatch = before
-    ? await adminApi(`/topics/${before.id}`, 'PATCH', { ...edited, noindex: true })
+    ? await adminApi(`/topics/${before.id}`, 'PATCH', { ...edited, seoIndex: 'noindex' })
     : { status: 0 };
   const locked = new Set(topicRowBySlug(pick)?.lockedFields ?? []);
   const reset = await api(BACK, '/admin/api/clustering/ingest', {
@@ -3119,10 +3136,10 @@ async function s3b() {
       after.tldr === edited.tldr &&
       after.status === 'developing' &&
       LOCKS.every((f) => (after.lockedFields ?? []).includes(f)) &&
-      after.noindex === true &&
+      after.seoIndex === 'noindex' &&
       carryLeft === 0 &&
       pubTopic?.title === edited.title,
-    `patch=${topicPatch.status} locks=[${[...locked]}] was=${before?.status} reset=${resetState} recreated=${after?.id !== before?.id} title=${after?.title === edited.title} tldr=${after?.tldr === edited.tldr} status=${after?.status} noindex=${after?.noindex} carryLeft=${carryLeft}`,
+    `patch=${topicPatch.status} locks=[${[...locked]}] was=${before?.status} reset=${resetState} recreated=${after?.id !== before?.id} title=${after?.title === edited.title} tldr=${after?.tldr === edited.tldr} status=${after?.status} seoIndex=${after?.seoIndex} carryLeft=${carryLeft}`,
   );
 
   // ── S3b.2 people overrides: reputation lock; badge grant / revoke ──────────
@@ -3426,7 +3443,12 @@ COMMIT;`,
   const gNo = await adminApi(`/games/${ngame[0]}`, 'PATCH', { noindex: true });
   const gameRobots = robotsOf(await html(`/games/${ngame[1]}`));
   const topicRobots = robotsOf(await html(`/topics/${pick}`));
-  const openRobots = robotsOf(await html(`/topics/${relSlug ?? pick}`));
+  // Phase P S4: the comparison story must be one the automatic rule indexes (≥ 2 sources).
+  const openSlug =
+    psql(
+      `SELECT t.slug FROM topics t WHERE t.bias_distribution IS NOT NULL AND t.seo_index = 'auto' AND t.slug <> ${lit(pick)} AND coalesce(t.category, 'news') NOT IN (SELECT key FROM news_categories WHERE active AND mode = 'hide') AND (SELECT count(DISTINCT coalesce(a.source_id::text, 'ours')) FROM article_topics at JOIN articles a ON a.id = at.article_id WHERE at.topic_id = t.id) >= 2 ORDER BY t.last_activity_at DESC LIMIT 1;`,
+    ) || relSlug;
+  const openRobots = robotsOf(await html(`/topics/${openSlug ?? pick}`));
   const sm = (await api(BACK, '/public/sitemap')).json?.data ?? {};
   const smTopics = (sm.topics ?? []).map((t) => t.slug);
   const smGames = (sm.games ?? []).map((g) => g.slug);
@@ -3767,7 +3789,7 @@ async function restoreS3b() {
       title: s3bRestore.topic.title,
       ...(s3bRestore.topic.tldr ? { tldr: s3bRestore.topic.tldr } : {}),
       status: s3bRestore.topic.status,
-      noindex: false,
+      seoIndex: 'auto',
       lockedFields: [],
     });
     if (!s3bRestore.topic.tldr) {
@@ -3834,6 +3856,1005 @@ async function restoreS2() {
   await recomputeHomepage();
 }
 
+// ── Phase P S4: search, news indexing + noise categories, editorial lists ─────
+const s4Restore = {
+  rules: null, // the S4 rule leaves we PATCHed → PATCHed back (cache-invalidating)
+  settings: null,
+  topics: new Map(), // slug → patch that puts the story back to automation
+  category: null, // { id, key } — the run's test category
+  overrideArticles: [], // article ids whose categoryOverride the run set
+  curationIds: [],
+  list: null, // { id } — the mock candidate the run edited
+  gameSearchHidden: null, // game id
+};
+const LOW_HIDE_SQL = "(SELECT key FROM news_categories WHERE active AND mode IN ('low', 'hide'))";
+const HIDE_SQL = "(SELECT key FROM news_categories WHERE active AND mode = 'hide')";
+const LOW_SQL = "(SELECT key FROM news_categories WHERE active AND mode = 'low')";
+const rulesPatch = (patch) => adminApi('/rules', 'PATCH', patch);
+const pubSearch = async (q, extra = '') =>
+  (await api(BACK, `/public/search?q=${encodeURIComponent(q)}${extra}`)).json?.data ?? null;
+const pubSuggest = (q) => api(BACK, `/public/search/suggest?q=${encodeURIComponent(q)}`);
+const slugsOf = (arr) => (arr ?? []).map((h) => h.slug);
+const sitemapData = async () => (await api(BACK, '/public/sitemap')).json?.data ?? {};
+const sectionTopicSlugs = (sections, keys) =>
+  sections
+    .filter((s) => !keys || keys.includes(s.key))
+    .flatMap((s) => s.items ?? [])
+    .map((i) => i.topic?.slug)
+    .filter(Boolean);
+/** The briefing's DB truth with S4's rule: low / hide categories never count. */
+function briefingTruth(b) {
+  const hiSql = b.isToday ? 'now()' : `'${b.asOf}'::timestamptz`;
+  const loSql = `(${hiSql} - interval '${Number(b.windowHours)} hours')`;
+  const artOk = `coalesce(a.category_override, a.category, 'news') NOT IN ${LOW_HIDE_SQL}`;
+  return psql(
+    `SELECT (SELECT count(DISTINCT a.source_id) FROM articles a WHERE a.source_id IS NOT NULL AND a.publish_date > ${loSql} AND a.publish_date <= ${hiSql} AND ${artOk}) || ',' || (SELECT count(DISTINCT at.topic_id) FROM article_topics at JOIN articles a ON a.id = at.article_id JOIN topics t ON t.id = at.topic_id WHERE t.bias_distribution IS NOT NULL AND a.publish_date > ${loSql} AND a.publish_date <= ${hiSql} AND coalesce(t.category, 'news') NOT IN ${LOW_HIDE_SQL}) || ',' || (SELECT count(*) FROM articles a WHERE a.article_type = 'review' AND a.publish_date > ${loSql} AND a.publish_date <= ${hiSql} AND ${artOk});`,
+  );
+}
+const topicIdBySlug = (slug) => psql(`SELECT id FROM topics WHERE slug = ${lit(slug)};`);
+const topicFacts = (slug) => {
+  const r = psql(
+    `SELECT row_to_json(x) FROM (SELECT id, seo_index AS "seoIndex", category, locked_fields AS "lockedFields" FROM topics WHERE slug = ${lit(slug)}) x;`,
+  );
+  return r ? JSON.parse(r) : null;
+};
+/** Public stories by the S4 automatic indexing facts (distinct sources, summary, game). */
+function storiesBySources(op, n, extra = '') {
+  return psql(
+    `SELECT t.slug FROM topics t
+     WHERE t.bias_distribution IS NOT NULL AND coalesce((t.bias_distribution->>'articleCount')::int, 0) > 0
+       AND t.seo_index = 'auto' AND coalesce(t.category, 'news') NOT IN ${LOW_HIDE_SQL}
+       AND (SELECT count(DISTINCT coalesce(a.source_id::text, 'ours')) FROM article_topics at JOIN articles a ON a.id = at.article_id WHERE at.topic_id = t.id) ${op} ${n}
+       ${extra}
+     ORDER BY t.last_activity_at DESC NULLS LAST, t.slug LIMIT 1;`,
+  );
+}
+const NO_SUMMARY_AND_GAME = `AND NOT ((t.ai_summary IS NOT NULL AND length(trim(t.ai_summary)) > 0) AND EXISTS (SELECT 1 FROM article_topics at JOIN article_subjects asj ON asj.article_id = at.article_id JOIN games g ON g.subject_id = asj.subject_id WHERE at.topic_id = t.id))`;
+const waitArticles = (id) => waitForJobLib('articles', id, 180_000);
+const reclassify = () => runJobAndWait('/news/reclassify', 'articles', {}, 180_000);
+const reindex = () => runJobAndWait('/search/reindex', 'search', {}, 120_000);
+const recomputeLists = () => runJobAndWait('/editorial-lists/recompute', 'lists', {}, 120_000);
+const titleWords = (title, n = 4) =>
+  (title.match(/[\p{L}\p{N}]{4,}/gu) ?? []).slice(0, n).join(' ');
+
+async function s4() {
+  s4Restore.settings = snapshotSettings(['rules']);
+  const rulesBefore = (await adminApi('/rules')).json?.data?.settings ?? {};
+  s4Restore.rules = {
+    search: { ...rulesBefore.search },
+    seo: { ...rulesBefore.seo },
+    news: { ...rulesBefore.news },
+    editorialLists: { ...rulesBefore.editorialLists },
+  };
+  const adminUi = await uiLogin('demo-admin');
+  const modUi = await uiLogin('demo-moderator');
+
+  // A populated volume skips the boot ingest — pull any mock items it lacks (S4 adds some).
+  const pull = await runJobAndWait('/clustering/ingest', 'articles', {}, 240_000);
+
+  // ── S4.13 heavy work = background jobs that return their id ────────────────
+  const jReclass = await reclassify();
+  const jIndex = await reindex();
+  const jLists = await recomputeLists();
+  check(
+    'S4.13 every S4 heavy step is a background job that returns its id and completes — reclassify (articles queue), search reindex (search queue), consensus recompute (lists queue); the incremental ingest pulled the S4 mock items',
+    pull.ok && jReclass.ok && jIndex.ok && jLists.ok,
+    `ingest=${pull.state} reclassify=${jReclass.state}#${jReclass.jobId} reindex=${jIndex.state}#${jIndex.jobId} consensus=${jLists.state}#${jLists.jobId}`,
+  );
+
+  // ── S4.1 (acc.1) story indexing: automatic, plus the editor's index / noindex ─
+  const single =
+    storiesBySources('=', 1, NO_SUMMARY_AND_GAME) ||
+    storiesBySources('=', 1, "AND t.slug = 'our-game-of-the-year-2025-and-why-it-won'");
+  const double = storiesBySources('>=', 2);
+  const sm0 = await sitemapData();
+  const smTopics0 = (sm0.topics ?? []).map((t) => t.slug);
+  const singlePub = await api(BACK, `/public/topic/${single}`);
+  const singlePage = await api(FRONT, `/topics/${single}`);
+  const doublePage = await api(FRONT, `/topics/${double}`);
+  const autoOk =
+    Boolean(single) &&
+    Boolean(double) &&
+    singlePub.status === 200 &&
+    singlePub.json?.data?.noindex === true &&
+    singlePage.status === 200 &&
+    /noindex/.test(robotsOf(singlePage.text)) &&
+    !smTopics0.includes(single) &&
+    !/noindex/.test(robotsOf(doublePage.text)) &&
+    smTopics0.includes(double);
+  // Overrides both ways — the "index" one through the admin UI path (BFF + session + CSRF).
+  const singleId = topicIdBySlug(single);
+  const doubleId = topicIdBySlug(double);
+  s4Restore.topics.set(single, { seoIndex: 'auto' });
+  s4Restore.topics.set(double, { seoIndex: 'auto', category: null, lockedFields: [] });
+  const setIndex = await uiApi(adminUi, `/admin/api/topics/${singleId}`, 'PATCH', {
+    seoIndex: 'index',
+  });
+  const setNoindex = await adminApi(`/topics/${doubleId}`, 'PATCH', { seoIndex: 'noindex' });
+  const badMode = await adminApi(`/topics/${doubleId}`, 'PATCH', { seoIndex: 'maybe' });
+  const sm1 = await sitemapData();
+  const smTopics1 = (sm1.topics ?? []).map((t) => t.slug);
+  const singleRobots1 = robotsOf(await html(`/topics/${single}`));
+  const doubleRobots1 = robotsOf(await html(`/topics/${double}`));
+  const seoAudit = Number(
+    psql(
+      `SELECT count(*) FROM audit_logs WHERE entity_type = 'topics' AND entity_id IN (${lit(singleId)}, ${lit(doubleId)}) AND changes::text LIKE '%seoIndex%' AND created_at > now() - interval '10 minutes';`,
+    ),
+  );
+  const migrated = Number(
+    psql(
+      "SELECT count(*) FROM information_schema.columns WHERE table_name = 'topics' AND column_name = 'noindex';",
+    ),
+  );
+  check(
+    'S4.1 (acc.1) a single-source story (no summary + game) is visible but noindex and absent from the sitemap; a two-source story is indexed and listed — and the editor wins both ways: "index" (set through the admin UI path) puts the single-source story in, "noindex" takes the two-source one out; a bad mode → 400; audited; the S3b noindex flag migrated into seo_index (old column gone)',
+    autoOk &&
+      setIndex.status === 200 &&
+      setNoindex.status === 200 &&
+      badMode.status === 400 &&
+      !/noindex/.test(singleRobots1) &&
+      smTopics1.includes(single) &&
+      /noindex/.test(doubleRobots1) &&
+      !smTopics1.includes(double) &&
+      seoAudit >= 2 &&
+      migrated === 0,
+    `single=${single} (api noindex=${singlePub.json?.data?.noindex}, page ${singlePage.status} robots="${robotsOf(singlePage.text)}", sitemap=${smTopics0.includes(single)}) double=${double} (robots="${robotsOf(doublePage.text)}", sitemap=${smTopics0.includes(double)}) · index=${setIndex.status} → robots="${singleRobots1}" sitemap=${smTopics1.includes(single)} · noindex=${setNoindex.status} → robots="${doubleRobots1}" sitemap=${smTopics1.includes(double)} · bad=${badMode.status} audit=${seoAudit} oldColumn=${migrated}`,
+  );
+
+  // ── S4.2 (acc.2) a category set to hide disappears from feeds and counts ───
+  // (a) the default: listicles are hidden (classified by title keywords).
+  const listicleIds = psql(
+    "SELECT id FROM articles WHERE external_guid LIKE 's4-listicle-%' AND coalesce(category_override, category) = 'listicle';",
+  )
+    .split('\n')
+    .filter(Boolean);
+  const homeA = (await api(BACK, '/public/homepage')).json?.data ?? {};
+  const latestIdsA = new Set((homeA.latest ?? []).map((a) => a.id));
+  const hiddenTopicSlugs = psql(
+    `SELECT slug FROM topics WHERE bias_distribution IS NOT NULL AND coalesce(category, 'news') IN ${HIDE_SQL};`,
+  )
+    .split('\n')
+    .filter(Boolean);
+  const secSlugsA = new Set(sectionTopicSlugs(homeA.sections ?? []));
+  const eldenA = (await api(BACK, '/public/game/elden-ring')).json?.data ?? {};
+  const eldenIds = new Set(
+    [...(eldenA.articles ?? []), ...(eldenA.reviews ?? [])].map((a) => a.id),
+  );
+  const listicleLeak = listicleIds.filter((id) => latestIdsA.has(id) || eldenIds.has(id));
+  const hiddenInSections = hiddenTopicSlugs.filter((s) => secSlugsA.has(s));
+  // (b) the flip: a test category on a live story's articles (article overrides,
+  // one through the admin UI path), shown → hidden.
+  const latestSec = (homeA.sections ?? []).find((s) => s.key === 'latest');
+  const flipCandidates = sectionTopicSlugs(homeA.sections ?? [], ['latest', 'trending']);
+  // Prefer a story with coverage inside the briefing window, so the count drop is exercised.
+  const bA = homeA.briefing ?? {};
+  const hiA = bA.isToday ? 'now()' : `'${bA.asOf}'::timestamptz`;
+  const loA = `(${hiA} - interval '${Number(bA.windowHours) || 24} hours')`;
+  let flip = null;
+  for (const slug of flipCandidates) {
+    if (slug === single || slug === double) continue;
+    const row = psql(
+      `SELECT t.id || '|' || coalesce(t.category, 'news') || '|' || (SELECT count(*) FROM article_topics at WHERE at.topic_id = t.id) || '|' || (SELECT count(*) FROM article_topics at JOIN articles a ON a.id = at.article_id WHERE at.topic_id = t.id AND a.publish_date > ${loA} AND a.publish_date <= ${hiA}) FROM topics t WHERE t.slug = ${lit(slug)} AND t.seo_index = 'auto' AND NOT ('category' = ANY(t.locked_fields));`,
+    ).split('|');
+    if (row[0] && row[1] === 'news' && Number(row[2]) >= 1) {
+      const cand = { slug, id: row[0], inWindow: Number(row[3]) };
+      if (!flip || (cand.inWindow > 0 && flip.inWindow === 0)) flip = cand;
+      if (flip.inWindow > 0) break;
+    }
+  }
+  const key = `s4x-${RUN}`;
+  const created = await adminApi('/news-categories', 'POST', {
+    key,
+    label: `S4 test ${RUN}`,
+    mode: 'show',
+    keywords: [],
+    priority: 0,
+  });
+  if (created.json?.data?.id) s4Restore.category = { id: created.json.data.id, key };
+  const flipArticles = flip
+    ? psql(
+        `SELECT a.id || '|' || coalesce(s.slug, '') FROM article_topics at JOIN articles a ON a.id = at.article_id LEFT JOIN sources s ON s.id = a.source_id WHERE at.topic_id = ${lit(flip.id)} ORDER BY a.publish_date DESC;`,
+      )
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [id, src] = l.split('|');
+          return { id, src };
+        })
+    : [];
+  const overrideStatus = [];
+  for (const [i, a] of flipArticles.entries()) {
+    const r =
+      i === 0
+        ? await uiApi(adminUi, `/admin/api/articles/${a.id}`, 'PATCH', { categoryOverride: key })
+        : await adminApi(`/articles/${a.id}`, 'PATCH', { categoryOverride: key });
+    overrideStatus.push(r.status);
+    if (r.status === 200) s4Restore.overrideArticles.push(a.id);
+  }
+  const badOverride = flipArticles[0]
+    ? await adminApi(`/articles/${flipArticles[0].id}`, 'PATCH', {
+        categoryOverride: 'no-such-cat',
+      })
+    : { status: 0 };
+  await reclassify();
+  await reindex();
+  await recomputeHomepage();
+  const flipCat = flip ? topicFacts(flip.slug)?.category : null;
+  const gameOfFlip = flip
+    ? psql(
+        `SELECT s.slug FROM article_topics at JOIN article_subjects asj ON asj.article_id = at.article_id JOIN subjects s ON s.id = asj.subject_id JOIN games g ON g.subject_id = s.id WHERE at.topic_id = ${lit(flip.id)} LIMIT 1;`,
+      )
+    : '';
+  const flipIds = new Set(flipArticles.map((a) => a.id));
+  const flipSrc = flipArticles.find((a) => a.src)?.src ?? '';
+  const flipTitle = flip ? psql(`SELECT title FROM topics WHERE id = ${lit(flip.id)};`) : '';
+  const flipQuery = titleWords(flipTitle);
+  async function flipSurfaces() {
+    const home = (await api(BACK, '/public/homepage')).json?.data ?? {};
+    const game = gameOfFlip ? (await api(BACK, `/public/game/${gameOfFlip}`)).json?.data : null;
+    const source = flipSrc ? (await api(BACK, `/public/source/${flipSrc}`)).json?.data : null;
+    const search = flipQuery ? await pubSearch(flipQuery) : null;
+    return {
+      sections: sectionTopicSlugs(home.sections ?? []).includes(flip?.slug),
+      latestRail: (home.latest ?? []).some((a) => flipIds.has(a.id)),
+      game: game
+        ? [...(game.articles ?? []), ...(game.reviews ?? [])].some((a) => flipIds.has(a.id))
+        : null,
+      source: source ? (source.recentArticles ?? []).some((a) => flipIds.has(a.id)) : null,
+      search: search ? slugsOf(search.groups?.stories).includes(flip?.slug) : null,
+      briefing: home.briefing ?? {},
+    };
+  }
+  const shownState = await flipSurfaces();
+  const toHide = s4Restore.category
+    ? await uiApi(adminUi, `/admin/api/news-categories/${s4Restore.category.id}`, 'PATCH', {
+        mode: 'hide',
+      })
+    : { status: 0 };
+  await reclassify();
+  await recomputeHomepage();
+  const hiddenState = await flipSurfaces();
+  const briefTruth = briefingTruth(hiddenState.briefing);
+  const hb = hiddenState.briefing;
+  const sb = shownState.briefing;
+  const flipInWindow = Number(
+    flip
+      ? psql(
+          `SELECT count(*) FROM article_topics at JOIN articles a ON a.id = at.article_id WHERE at.topic_id = ${lit(flip.id)} AND a.publish_date > (${sb.isToday ? 'now()' : `'${sb.asOf}'::timestamptz`} - interval '${Number(sb.windowHours)} hours') AND a.publish_date <= ${sb.isToday ? 'now()' : `'${sb.asOf}'::timestamptz`};`,
+        )
+      : 0,
+  );
+  const flipPage = flip ? await api(BACK, `/public/topic/${flip.slug}`) : { status: 0 };
+  check(
+    'S4.2 (acc.2) a category set to hide disappears from feeds and briefing counts — by default listicles (title keywords) are in no homepage section, not in the Latest rail, not on the game page; a test category put on a live story (article overrides, one through the admin UI path; an unknown key → 400) shows everywhere while "show", and once switched to "hide" (admin UI path) the story leaves the homepage sections, the Latest rail, its game page, its source page and search, the briefing drops it (counts = DB truth); the story page itself stays reachable, noindex',
+    listicleIds.length >= 1 &&
+      listicleLeak.length === 0 &&
+      hiddenInSections.length === 0 &&
+      Boolean(flip) &&
+      created.status === 201 &&
+      overrideStatus.length >= 1 &&
+      overrideStatus.every((s) => s === 200) &&
+      badOverride.status === 400 &&
+      flipCat === key &&
+      shownState.sections &&
+      shownState.search === true &&
+      (shownState.game ?? true) &&
+      (shownState.source ?? true) &&
+      toHide.status === 200 &&
+      !hiddenState.sections &&
+      !hiddenState.latestRail &&
+      hiddenState.game !== true &&
+      hiddenState.source !== true &&
+      hiddenState.search === false &&
+      briefTruth === `${hb.sources},${hb.topics},${hb.reviews}` &&
+      (flipInWindow === 0 || hb.topics === sb.topics - 1) &&
+      flipPage.status === 200 &&
+      flipPage.json?.data?.noindex === true,
+    `listicles=${listicleIds.length} leak=${listicleLeak.length} hiddenInSections=[${hiddenInSections}] · flip=${flip?.slug} created=${created.status} overrides=[${overrideStatus}] bad=${badOverride.status} topicCat=${flipCat} · shown ${JSON.stringify({ ...shownState, briefing: undefined })} → hide=${toHide.status} ${JSON.stringify({ ...hiddenState, briefing: undefined })} · briefing ${sb.topics}→${hb.topics} (inWindow ${flipInWindow}) api=${hb.sources},${hb.topics},${hb.reviews} db=${briefTruth} · page=${flipPage.status} noindex=${flipPage.json?.data?.noindex} game=${gameOfFlip} src=${flipSrc} q="${flipQuery}" latestSec=${latestSec ? 'yes' : 'no'}`,
+  );
+
+  // ── S4.3 overrides survive a FULL re-cluster ───────────────────────────────
+  const lockCat = doubleId
+    ? await adminApi(`/topics/${doubleId}`, 'PATCH', { category: 'opinion' })
+    : { status: 0 };
+  const lockedBefore = topicFacts(double);
+  const reset = await api(BACK, '/admin/api/clustering/ingest', {
+    method: 'POST',
+    token: TOKEN,
+    body: { reset: true },
+  });
+  const resetState = await waitArticles(reset.json?.jobId);
+  const sAfter = topicFacts(single);
+  const dAfter = topicFacts(double);
+  const flipGuids = flipArticles.length
+    ? psql(
+        `SELECT count(*) FROM articles WHERE id::text IN (${flipArticles.map((a) => lit(a.id)).join(',')});`,
+      )
+    : '0';
+  const overridesKept = Number(
+    psql(`SELECT count(*) FROM articles WHERE category_override = ${lit(key)};`),
+  );
+  const flipTopicAfter = Number(
+    psql(
+      `SELECT count(DISTINCT t.id) FROM topics t JOIN article_topics at ON at.topic_id = t.id JOIN articles a ON a.id = at.article_id WHERE a.category_override = ${lit(key)} AND t.category = ${lit(key)};`,
+    ),
+  );
+  check(
+    'S4.3 every S4 override survives a FULL re-cluster: the article category overrides (re-applied by guid — the story they form takes the category again), a story’s editor-set category (locked against the automatic pass), and both index modes (index / noindex) on the recreated stories, which keep their slugs',
+    lockCat.status === 200 &&
+      (lockedBefore?.lockedFields ?? []).includes('category') &&
+      resetState?.ok &&
+      sAfter?.seoIndex === 'index' &&
+      dAfter?.seoIndex === 'noindex' &&
+      dAfter?.category === 'opinion' &&
+      (dAfter?.lockedFields ?? []).includes('category') &&
+      overridesKept === flipArticles.length &&
+      flipTopicAfter >= 1,
+    `lock=${lockCat.status} locks=[${lockedBefore?.lockedFields}] reset=${resetState?.state} · single seo=${sAfter?.seoIndex} · double seo=${dAfter?.seoIndex} cat=${dAfter?.category} locks=[${dAfter?.lockedFields}] · overrides kept ${overridesKept}/${flipArticles.length} (old ids left ${flipGuids}) · stories with the category=${flipTopicAfter}`,
+  );
+  // Put the stories and articles back to automation now (the rest of S4 reads a clean feed).
+  await restoreS4Feed();
+
+  // ── S4.14 low mode: "More from the feed" only + a chip on game pages ───────
+  const home14 = (await api(BACK, '/public/homepage')).json?.data ?? {};
+  const lowSlugs = new Set(
+    psql(
+      `SELECT slug FROM topics WHERE bias_distribution IS NOT NULL AND coalesce(category, 'news') IN ${LOW_SQL};`,
+    )
+      .split('\n')
+      .filter(Boolean),
+  );
+  const moreSec = (home14.sections ?? []).find((s) => s.key === 'more');
+  const moreSlugs = sectionTopicSlugs(moreSec ? [moreSec] : []);
+  const topSlugs = sectionTopicSlugs(home14.sections ?? [], ['trending', 'latest']);
+  const lowArticleIds = new Set(
+    psql(
+      `SELECT id FROM articles WHERE coalesce(category_override, category, 'news') IN ${LOW_HIDE_SQL};`,
+    )
+      .split('\n')
+      .filter(Boolean),
+  );
+  const railLeak = (home14.latest ?? []).filter((a) => lowArticleIds.has(a.id)).length;
+  // A game page keeps a low-mode article, with its category chip (one whose category
+  // differs from its type — the chip never repeats the type chip next to it).
+  const lowGameRows = psql(
+    `SELECT s.slug || '|' || a.id || '|' || nc.label FROM articles a JOIN news_categories nc ON nc.key = coalesce(a.category_override, a.category) AND nc.active AND nc.mode = 'low' JOIN article_subjects asj ON asj.article_id = a.id JOIN subjects s ON s.id = asj.subject_id JOIN games g ON g.subject_id = s.id WHERE a.article_type <> 'review' AND lower(nc.label) <> lower(a.article_type::text) ORDER BY a.publish_date DESC LIMIT 8;`,
+  )
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split('|'));
+  let chip = null;
+  for (const [gslug, aid, label] of lowGameRows) {
+    const g = (await api(BACK, `/public/game/${gslug}`)).json?.data;
+    const row = (g?.articles ?? []).find((a) => a.id === aid);
+    if (row) {
+      const page = await html(`/games/${gslug}`);
+      chip = {
+        gslug,
+        label,
+        api: row.category,
+        ssr: /gk-chip-category/.test(page) && page.includes(label),
+      };
+      break;
+    }
+  }
+  check(
+    'S4.14 low-mode stories (deals, guides) appear only in the configurable "More from the feed" section — never in Trending / Latest — and low / hidden articles never in the Latest rail; a game page keeps a low-mode article with its category chip (API + SSR)',
+    Boolean(moreSec) &&
+      moreSlugs.length >= 1 &&
+      moreSlugs.every((s) => lowSlugs.has(s)) &&
+      !topSlugs.some((s) => lowSlugs.has(s)) &&
+      railLeak === 0 &&
+      chip !== null &&
+      chip.api === chip.label &&
+      chip.ssr,
+    `more=${moreSec ? moreSlugs.length : 'missing'} allLow=${moreSlugs.every((s) => lowSlugs.has(s))} lowInTop=${topSlugs.filter((s) => lowSlugs.has(s))} railLeak=${railLeak} chip=${JSON.stringify(chip)}`,
+  );
+
+  // ── S4.4 (acc.3) an unconfirmed list candidate is never public ─────────────
+  const cand = psql(
+    "SELECT id || '|' || status || '|' || coalesce(year::text, '') || '|' || coalesce(category_key, '') || '|' || coalesce(url, '') FROM editorial_lists WHERE external_guid = 's4-list-polygon-goty-2025-polygon';",
+  ).split('|');
+  const listId = cand[0] || null;
+  if (listId) s4Restore.list = { id: listId };
+  const unknownName = `Totally Unknown Game ${RUN}`;
+  const entriesPut = listId
+    ? await uiApi(modUi, `/admin/api/editorial-lists/${listId}/entries`, 'PUT', {
+        text: `1. Alan Wake 2\n2. BG3\n#3 Hades II\n4) ${unknownName}`,
+      })
+    : { status: 0 };
+  const detail = listId
+    ? (await uiApi(modUi, `/admin/api/editorial-lists/${listId}`)).json?.data
+    : null;
+  const bg3 = (detail?.entries ?? []).find((e) => e.rawName === 'BG3');
+  // Self-review regression: the queue's per-list counts read 0 (a bare column in a subquery).
+  const queueRow = (
+    await uiApi(modUi, '/admin/api/editorial-lists/queue')
+  ).json?.data?.candidates?.find((r) => r.id === listId);
+  const demoCounts = psql(
+    "SELECT count(*) FROM editorial_lists l WHERE l.external_guid LIKE 'demo-list-%';",
+  );
+  const queueConfirmed =
+    (await uiApi(modUi, '/admin/api/editorial-lists/queue')).json?.data?.confirmed ?? [];
+  const queueCountsOk =
+    queueRow?.entries === 4 &&
+    queueRow?.matched === 3 &&
+    queueConfirmed.length >= Number(demoCounts) &&
+    queueConfirmed.every((r) => r.entries > 0 && r.matched === r.entries);
+  const unknownEntry = (detail?.entries ?? []).find((e) => e.rawName === unknownName);
+  const queued = unknownEntry
+    ? await uiApi(modUi, `/admin/api/editorial-lists/entries/${unknownEntry.id}/match`, 'POST', {
+        gameSlug: null,
+        queue: true,
+      })
+    : { status: 0 };
+  const inQueue = Number(
+    psql(`SELECT count(*) FROM unmatched_games WHERE raw_name = ${lit(unknownName)};`),
+  );
+  async function polygonPublic() {
+    const index = (await api(BACK, '/public/lists')).json?.data ?? [];
+    const page = await api(BACK, '/public/lists/2025/goty');
+    const sm = await sitemapData();
+    const aw =
+      (await api(BACK, '/public/game/alan-wake-2')).json?.data?.editorialLists?.lists ?? [];
+    return {
+      index: index.some((e) => e.year === 2025 && e.categoryKey === 'goty'),
+      page: page.status,
+      pageJson: page.text,
+      sitemap: (sm.lists ?? []).some((l) => l.year === 2025),
+      gamePage: aw.find((l) => l.year === 2025 && l.outlet === 'Polygon') ?? null,
+    };
+  }
+  const asCandidate = await polygonPublic();
+  const ssrCandidate = await api(FRONT, '/lists/2025/goty');
+  const confirm = listId
+    ? await uiApi(modUi, `/admin/api/editorial-lists/${listId}/decision`, 'POST', {
+        status: 'confirmed',
+      })
+    : { status: 0 };
+  if (confirm.json?.jobId) await waitForJobLib('lists', confirm.json.jobId, 120_000);
+  const asConfirmed = await polygonPublic();
+  const decisionAudit = Number(
+    psql(
+      `SELECT count(*) FROM audit_logs WHERE entity_type = 'editorial-list' AND entity_id = ${lit(listId ?? '')} AND summary LIKE 'list confirmed%' AND actor_label <> ${lit('verify:cleanup')} AND created_at > now() - interval '10 minutes';`,
+    ),
+  );
+  // Even with the threshold at 1, a single list publishes NO games (consensus = ≥ 2 lists).
+  const thr1 = await rulesPatch({ editorialLists: { indexMinLists: 1 } });
+  const single1 = await polygonPublic();
+  const single1Json = (() => {
+    try {
+      return JSON.parse(single1.pageJson)?.data ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const single1Ssr = await html('/lists/2025/goty');
+  await rulesPatch({
+    editorialLists: { indexMinLists: s4Restore.rules.editorialLists.indexMinLists ?? 3 },
+  });
+  const reject = listId
+    ? await uiApi(modUi, `/admin/api/editorial-lists/${listId}/decision`, 'POST', {
+        status: 'rejected',
+      })
+    : { status: 0 };
+  if (reject.json?.jobId) await waitForJobLib('lists', reject.json.jobId, 120_000);
+  const asRejected = await polygonPublic();
+  // A list can only be confirmed with a link, a year and a category.
+  const hand = await uiApi(modUi, '/admin/api/editorial-lists', 'POST', {
+    outletName: `S4 Outlet ${RUN}`,
+    title: `S4 hand list ${RUN}`,
+    url: 'https://example.com/s4-list',
+  });
+  const handConfirm = hand.json?.data?.id
+    ? await uiApi(modUi, `/admin/api/editorial-lists/${hand.json.data.id}/decision`, 'POST', {
+        status: 'confirmed',
+      })
+    : { status: 0 };
+  const badUrl = await uiApi(modUi, '/admin/api/editorial-lists', 'POST', {
+    outletName: `S4 Outlet ${RUN}`,
+    title: 'x',
+    url: 'javascript:alert(1)',
+  });
+  check(
+    'S4.4 (acc.3) an unconfirmed list candidate is never public: the mock feed’s outlet list arrives as a CANDIDATE; with entries pasted (auto-matched — "BG3" by alternate name — an unknown name sent to the unmatched-games queue) it is on no lists index, no consensus page (API 404, SSR 404), no sitemap and no game page; confirmed by a moderator through the admin UI path (audited) it adds "#1 at Polygon" to the game page only — one list never makes a consensus row, even with the threshold at 1 the page lists no game and no entry; rejected, it is gone again; confirming needs year + category + link; a javascript: link → 400',
+    cand[1] === 'candidate' &&
+      cand[2] === '2025' &&
+      cand[3] === 'goty' &&
+      /^https?:\/\//.test(cand[4] ?? '') &&
+      entriesPut.status === 200 &&
+      entriesPut.json?.data?.entries === 4 &&
+      entriesPut.json?.data?.matched === 3 &&
+      bg3?.gameSlug === 'baldurs-gate-3' &&
+      queueCountsOk &&
+      queued.status === 200 &&
+      inQueue >= 1 &&
+      !asCandidate.index &&
+      asCandidate.page === 404 &&
+      ssrCandidate.status === 404 &&
+      !asCandidate.sitemap &&
+      asCandidate.gamePage === null &&
+      confirm.status === 200 &&
+      decisionAudit >= 1 &&
+      asConfirmed.gamePage?.rank === 1 &&
+      /^https?:\/\//.test(asConfirmed.gamePage?.url ?? '') &&
+      asConfirmed.page === 404 &&
+      !asConfirmed.index &&
+      thr1.status === 200 &&
+      single1.page === 200 &&
+      (single1Json?.rows ?? ['x']).length === 0 &&
+      single1Json?.totalLists === 1 &&
+      !/Alan Wake 2|Hades II|"entries"|rawName/.test(single1.pageJson) &&
+      /No game appears on enough of these lists yet/.test(single1Ssr) &&
+      reject.status === 200 &&
+      asRejected.gamePage === null &&
+      hand.status === 201 &&
+      handConfirm.status === 400 &&
+      badUrl.status === 400,
+    `candidate=${cand.slice(1).join('/')} entries=${entriesPut.status} ${JSON.stringify(entriesPut.json?.data)} bg3→${bg3?.gameSlug} queueCounts=${queueRow?.entries}/${queueRow?.matched} confirmed ${queueConfirmed.map((r) => r.entries).join(',')} queue=${queued.status}/${inQueue} · candidate public: index=${asCandidate.index} page=${asCandidate.page} ssr=${ssrCandidate.status} sitemap=${asCandidate.sitemap} game=${JSON.stringify(asCandidate.gamePage)} · confirm=${confirm.status} audit=${decisionAudit} game=${JSON.stringify(asConfirmed.gamePage)} page=${asConfirmed.page} · thr1=${thr1.status} page=${single1.page} rows=${single1Json?.rows?.length} lists=${single1Json?.totalLists} · reject=${reject.status} game=${JSON.stringify(asRejected.gamePage)} · hand=${hand.status} confirm=${handConfirm.status} badUrl=${badUrl.status}`,
+  );
+
+  // ── S4.5 the consensus: no entries, ≥ 2 lists, math = DB truth, data-only lines ─
+  const cons = await api(BACK, '/public/lists/2023/best-of-year');
+  // Self-review regression: on a FRESH volume the demo lists were seeded before the catalog
+  // import + first ingest (4 of 10, never completed) — now seeded once all their games exist.
+  const demoLists = Number(
+    psql("SELECT count(*) FROM editorial_lists WHERE external_guid LIKE 'demo-list-%';"),
+  );
+  const emptyConfirmed = Number(
+    psql(
+      "SELECT count(*) FROM editorial_lists l WHERE l.status = 'confirmed' AND NOT EXISTS (SELECT 1 FROM editorial_list_entries e WHERE e.list_id = l.id);",
+    ),
+  );
+  const c = cons.json?.data ?? {};
+  const truthRows = psql(
+    `WITH best AS (
+       SELECT l.id AS list_id, e.game_id, min(e.rank) AS r
+       FROM editorial_lists l JOIN editorial_list_entries e ON e.list_id = l.id
+       WHERE l.status = 'confirmed' AND l.year = 2023 AND l.category_key = 'best-of-year' AND e.game_id IS NOT NULL
+       GROUP BY l.id, e.game_id
+     )
+     SELECT s.slug || '|' || count(*) || '|' || round(avg(r)::numeric, 2) || '|' || min(r) || '|' || s.name
+     FROM best b JOIN games g ON g.id = b.game_id JOIN subjects s ON s.id = g.subject_id
+     GROUP BY s.slug, s.name;`,
+  )
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [slug, n, avg, bestRank, ...name] = l.split('|');
+      return { slug, n: Number(n), avg: Number(avg), best: Number(bestRank), name: name.join('|') };
+    });
+  const minApp = Math.max(2, Number(s4Restore.rules.editorialLists.minAppearances ?? 2));
+  const expected = truthRows
+    .filter((r) => r.n >= minApp)
+    .sort((a, b) => b.n - a.n || a.avg - b.avg || a.best - b.best || a.name.localeCompare(b.name))
+    .slice(0, Number(s4Restore.rules.editorialLists.maxRows ?? 25));
+  const oneListGames = truthRows.filter((r) => r.n === 1).map((r) => r.slug);
+  const gotSlugs = (c.rows ?? []).map((r) => r.game.slug);
+  const mathOk =
+    expected.length > 0 &&
+    deepEq(
+      gotSlugs,
+      expected.map((r) => r.slug),
+    ) &&
+    (c.rows ?? []).every(
+      (r, i) => r.appearances === expected[i].n && Math.abs(r.avgRank - expected[i].avg) < 0.011,
+    );
+  const listKeysOk = (c.lists ?? []).every((l) =>
+    deepEq(Object.keys(l).sort(), ['outlet', 'publishedAt', 'title', 'url']),
+  );
+  const linesOk = (c.rows ?? []).every(
+    (r) =>
+      r.lines.includes(`On ${r.appearances} of ${c.totalLists} lists`) &&
+      r.positions.length === r.appearances &&
+      r.positions.every((p) => /^https?:\/\//.test(p.url ?? '')),
+  );
+  check(
+    'S4.5 the public consensus never republishes a list: no entries anywhere in the payload (the sources are outlet + title + link only), only games on ≥ 2 confirmed lists (one-list games absent), the order and averages equal a recomputation from the DB (appearances ↓, average rank ↑, best rank ↑, name), each position links out to its list, the "On k of n lists" line is data only; the 10 demo lists are all seeded (also on a fresh volume) and no confirmed list is empty',
+    cons.status === 200 &&
+      demoLists === 10 &&
+      emptyConfirmed === 0 &&
+      !/"entries"|rawName|"match"/.test(cons.text) &&
+      listKeysOk &&
+      oneListGames.length >= 1 &&
+      !oneListGames.some((s) => gotSlugs.includes(s)) &&
+      mathOk &&
+      linesOk,
+    `demo lists=${demoLists} empty confirmed=${emptyConfirmed} · status=${cons.status} lists=${c.totalLists} rows=${gotSlugs.length} expected=${expected.length} order=${mathOk} oneList=[${oneListGames}] listKeys=${listKeysOk} lines=${linesOk} got=${gotSlugs.slice(0, 5)} exp=${expected.slice(0, 5).map((r) => r.slug)}`,
+  );
+
+  // ── S4.6 curation: pins / excludes / a hidden line — the game page agrees ──
+  const base = gotSlugs;
+  const pinSlug = base[4];
+  const exSlug = base[1];
+  const lineSlug = base[0];
+  const pinCur = await uiApi(modUi, '/admin/api/curation', 'POST', {
+    pageKind: 'lists',
+    pageKey: '2023:best-of-year',
+    listKey: 'consensus',
+    pins: [pinSlug, ...oneListGames.slice(0, 1)],
+    excludes: [exSlug],
+  });
+  const lineCur = await uiApi(modUi, '/admin/api/curation', 'POST', {
+    pageKind: 'lists',
+    pageKey: '2023:best-of-year',
+    listKey: 'comparison-lines',
+    excludes: [`${lineSlug}|coverage`],
+  });
+  for (const r of [pinCur, lineCur])
+    if (r.json?.data?.id) s4Restore.curationIds.push(r.json.data.id);
+  const curated = (await api(BACK, '/public/lists/2023/best-of-year')).json?.data ?? {};
+  const cSlugs = (curated.rows ?? []).map((r) => r.game.slug);
+  const lineRow = (curated.rows ?? []).find((r) => r.game.slug === lineSlug);
+  const pinGame = (await api(BACK, `/public/game/${pinSlug}`)).json?.data?.editorialLists ?? {};
+  const exGame = (await api(BACK, `/public/game/${exSlug}`)).json?.data?.editorialLists ?? {};
+  const lineGame = (await api(BACK, `/public/game/${lineSlug}`)).json?.data?.editorialLists ?? {};
+  const consOf = (g) =>
+    (g.consensus ?? []).find((x) => x.year === 2023 && x.categoryKey === 'best-of-year');
+  check(
+    'S4.6 every consensus value has an override: an editor pin (through the admin UI path) moves a game to #1 — a pin can’t promote a one-list game — an exclude drops one, a comparison line can be hidden per game; the game pages follow the curated page (pinned → "#1 in the consensus", excluded → no consensus link, hidden line gone)',
+    pinCur.status === 201 &&
+      lineCur.status === 201 &&
+      cSlugs[0] === pinSlug &&
+      !cSlugs.includes(exSlug) &&
+      !cSlugs.some((s) => oneListGames.includes(s)) &&
+      (curated.rows ?? []).every((r, i) => r.position === i + 1) &&
+      lineRow &&
+      !lineRow.lines.some((l) => /^On \d+ of/.test(l)) &&
+      consOf(pinGame)?.position === 1 &&
+      !consOf(exGame) &&
+      !(lineGame.lines ?? []).some((l) => l.startsWith(`${curated.category?.label} 2023: On `)),
+    `pin=${pinSlug} (${pinCur.status}) ex=${exSlug} line=${lineSlug} (${lineCur.status}) → ${cSlugs.slice(0, 4)} · line row=${JSON.stringify(lineRow?.lines)} · game pin pos=${consOf(pinGame)?.position} ex=${JSON.stringify(consOf(exGame))} lineGame=${JSON.stringify(lineGame.lines)}`,
+  );
+  for (const id of s4Restore.curationIds.splice(0)) await adminApi(`/curation/${id}`, 'DELETE');
+
+  // ── S4.7 the public threshold (3 confirmed lists, a setting) — both ways ───
+  async function pair2024() {
+    const index = (await api(BACK, '/public/lists')).json?.data ?? [];
+    const sm = await sitemapData();
+    const hd = (await api(BACK, '/public/game/helldivers-2')).json?.data?.editorialLists ?? {};
+    return {
+      index: index.some((e) => e.year === 2024 && e.categoryKey === 'best-of-year'),
+      page: (await api(BACK, '/public/lists/2024/best-of-year')).status,
+      sitemap: (sm.lists ?? []).some((l) => l.year === 2024),
+      gameLink: (hd.consensus ?? []).some((x) => x.year === 2024),
+      gameLists: (hd.lists ?? []).filter((l) => l.year === 2024).length,
+      p2023: (await api(BACK, '/public/lists/2023/best-of-year')).status,
+    };
+  }
+  const at3 = await pair2024();
+  const thr4 = await rulesPatch({ editorialLists: { indexMinLists: 4 } });
+  const at4 = await pair2024();
+  const thrBack = await rulesPatch({
+    editorialLists: { indexMinLists: s4Restore.rules.editorialLists.indexMinLists ?? 3 },
+  });
+  const back3 = await pair2024();
+  check(
+    'S4.7 a consensus page is public and indexable from 3 confirmed lists (admin setting): 2024 (3 lists) is on the index, in the sitemap and linked from the game page; at 4 it 404s and leaves the index, the sitemap and the game-page link (the game keeps its per-outlet positions) while 2023 (4 lists) stays; back at 3 it returns',
+    at3.index &&
+      at3.page === 200 &&
+      at3.sitemap &&
+      at3.gameLink &&
+      thr4.status === 200 &&
+      !at4.index &&
+      at4.page === 404 &&
+      !at4.sitemap &&
+      !at4.gameLink &&
+      at4.gameLists >= 1 &&
+      at4.p2023 === 200 &&
+      thrBack.status === 200 &&
+      back3.index &&
+      back3.page === 200,
+    `at3=${JSON.stringify(at3)} at4=${JSON.stringify(at4)} back=${JSON.stringify(back3)}`,
+  );
+
+  // ── S4.8 the game block links out; no page per outlet list ─────────────────
+  const bgPage = await html('/games/baldurs-gate-3');
+  const block = (bgPage.match(/<section class="gk-panel gk-edlists"[\s\S]*?<\/section>/) ?? [
+    '',
+  ])[0];
+  const outLinks = [...block.matchAll(/<a [^>]*href="(https?:\/\/[^"]+)"[^>]*>/g)].map((m) => m[0]);
+  const consPage = await html('/lists/2023/best-of-year');
+  const outletPage = await api(BACK, '/public/lists/2023/best-of-year/ign');
+  const outletSsr = await api(FRONT, '/lists/2023/best-of-year/ign');
+  check(
+    'S4.8 the game page "On N editorial lists" block: each position links OUT to the outlet’s own list (new tab, nofollow), plus a link to the consensus page; no nested anchors; the consensus page is indexable with ItemList + Breadcrumb JSON-LD and a canonical; there is no page per outlet list (API + SSR 404)',
+    block.length > 0 &&
+      outLinks.length >= 1 &&
+      outLinks.every((a) => /target="_blank"/.test(a) && /nofollow/.test(a)) &&
+      /href="\/lists\/2023\/best-of-year"/.test(block) &&
+      maxAnchorDepth(bgPage) <= 1 &&
+      !/noindex/.test(robotsOf(consPage)) &&
+      /"@type":"ItemList"/.test(consPage) &&
+      /"@type":"BreadcrumbList"/.test(consPage) &&
+      /<link rel="canonical" href="[^"]*\/lists\/2023\/best-of-year"/.test(consPage) &&
+      outletPage.status === 404 &&
+      outletSsr.status === 404,
+    `block=${block.length > 0} outLinks=${outLinks.length} consensusLink=${/href="\/lists\/2023\/best-of-year"/.test(block)} depth=${maxAnchorDepth(bgPage)} · page robots="${robotsOf(consPage)}" itemList=${/"@type":"ItemList"/.test(consPage)} · outlet api=${outletPage.status} ssr=${outletSsr.status}`,
+  );
+
+  // ── S4.9 (acc.4) search finds games by partial title (+ names, studios, typos) ─
+  const sEld = await pubSearch('eld');
+  const sBg3 = await pubSearch('BG3');
+  const sCp = await pubSearch('cp2077');
+  const sDev = await pubSearch('FromSoftware');
+  const sPub = await pubSearch('Larian');
+  const sTypo = await pubSearch('eldn ring');
+  const lowTopic = psql(
+    `SELECT slug || '|' || title FROM topics WHERE bias_distribution IS NOT NULL AND NOT search_hidden AND coalesce(category, 'news') IN ${LOW_SQL} ORDER BY last_activity_at DESC NULLS LAST LIMIT 1;`,
+  ).split('|');
+  const hideTopic = psql(
+    `SELECT slug || '|' || title FROM topics WHERE bias_distribution IS NOT NULL AND coalesce(category, 'news') IN ${HIDE_SQL} ORDER BY last_activity_at DESC NULLS LAST LIMIT 1;`,
+  ).split('|');
+  const lowQ = titleWords(lowTopic.slice(1).join('|'));
+  const hideQ = titleWords(hideTopic.slice(1).join('|'));
+  const sLow = lowQ ? await pubSearch(lowQ) : null;
+  const sHide = hideQ ? await pubSearch(hideQ) : null;
+  const lowHit = (sLow?.groups?.stories ?? []).find((h) => h.slug === lowTopic[0]);
+  const lowOff = await rulesPatch({ news: { lowSearchable: false } });
+  const sLowOff = lowQ ? await pubSearch(lowQ) : null;
+  await rulesPatch({ news: { lowSearchable: s4Restore.rules.news.lowSearchable ?? true } });
+  // An editor keeps a game out of search; a per-query pin leads the results.
+  const hadesId = psql(
+    "SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = 'hades-ii';",
+  );
+  s4Restore.gameSearchHidden = hadesId || null;
+  const hide = await uiApi(adminUi, `/admin/api/games/${hadesId}`, 'PATCH', { searchHidden: true });
+  await reindex();
+  const sHades = await pubSearch('hades');
+  await adminApi(`/games/${hadesId}`, 'PATCH', { searchHidden: false });
+  await reindex();
+  const sHadesBack = await pubSearch('hades');
+  const pin = await uiApi(modUi, '/admin/api/curation', 'POST', {
+    pageKind: 'search',
+    pageKey: 'eld',
+    listKey: 'results',
+    pins: ['game:hades-ii'],
+  });
+  if (pin.json?.data?.id) s4Restore.curationIds.push(pin.json.data.id);
+  const sPinned = await pubSearch('eld');
+  const sugPinned = (await pubSuggest('eld')).json?.data;
+  const searchSsr = await html('/search?q=elden');
+  check(
+    'S4.9 (acc.4) search finds games by partial title ("eld" → Elden Ring), by alternate name ("BG3", "cp2077"), by developer / publisher ("FromSoftware", "Larian") and through a typo ("eldn ring"); low-mode stories are searchable with their category chip (a setting turns that off), hidden ones are not; an editor’s "keep out of search" on a game (admin UI path) applies after the background reindex and reverts; a per-query pin leads the results and the typeahead; /search is SSR noindex,follow with real result links',
+    slugsOf(sEld?.groups?.games).includes('elden-ring') &&
+      slugsOf(sBg3?.groups?.games)[0] === 'baldurs-gate-3' &&
+      slugsOf(sCp?.groups?.games).includes('cyberpunk-2077') &&
+      slugsOf(sDev?.groups?.games).includes('elden-ring') &&
+      slugsOf(sPub?.groups?.games).includes('baldurs-gate-3') &&
+      slugsOf(sTypo?.groups?.games).includes('elden-ring') &&
+      Boolean(lowHit) &&
+      typeof lowHit?.category === 'string' &&
+      lowOff.status === 200 &&
+      !slugsOf(sLowOff?.groups?.stories).includes(lowTopic[0]) &&
+      Boolean(hideTopic[0]) &&
+      !slugsOf(sHide?.groups?.stories).includes(hideTopic[0]) &&
+      hide.status === 200 &&
+      !slugsOf(sHades?.groups?.games).includes('hades-ii') &&
+      slugsOf(sHadesBack?.groups?.games).includes('hades-ii') &&
+      pin.status === 201 &&
+      slugsOf(sPinned?.groups?.games)[0] === 'hades-ii' &&
+      slugsOf(sugPinned?.groups?.games)[0] === 'hades-ii' &&
+      /noindex/.test(robotsOf(searchSsr)) &&
+      /follow/.test(robotsOf(searchSsr)) &&
+      /href="\/games\/elden-ring"/.test(searchSsr),
+    `eld=${slugsOf(sEld?.groups?.games).slice(0, 3)} bg3=${slugsOf(sBg3?.groups?.games)[0]} cp=${slugsOf(sCp?.groups?.games)[0]} dev=${slugsOf(sDev?.groups?.games).slice(0, 2)} pub=${slugsOf(sPub?.groups?.games).slice(0, 2)} typo=${slugsOf(sTypo?.groups?.games).slice(0, 2)} · low "${lowQ}" hit=${JSON.stringify(lowHit)} off=${lowOff.status}→${slugsOf(sLowOff?.groups?.stories).includes(lowTopic[0])} · hide "${hideQ}" found=${slugsOf(sHide?.groups?.stories).includes(hideTopic[0])} · hades hidden=${hide.status}→${slugsOf(sHades?.groups?.games)} back=${slugsOf(sHadesBack?.groups?.games).includes('hades-ii')} · pin=${pin.status} → ${slugsOf(sPinned?.groups?.games)[0]} / ${slugsOf(sugPinned?.groups?.games)[0]} · ssr robots="${robotsOf(searchSsr)}"`,
+  );
+  for (const id of s4Restore.curationIds.splice(0)) await adminApi(`/curation/${id}`, 'DELETE');
+
+  // ── S4.10 (acc.4) the typeahead: minimum characters, hostile input, rate limit ─
+  const short = (await pubSuggest('e')).json?.data;
+  const two = (await pubSuggest('el')).json?.data;
+  const viaBff = await api(FRONT, '/api/public/search/suggest?q=eld');
+  const gamesBefore = psql('SELECT count(*) FROM games;');
+  const hostile = [
+    "'; DROP TABLE games; --",
+    '&|!():*<->',
+    '%_\\',
+    "zelda' | !:* & (x)",
+    '<script>alert(1)</script>',
+    'x'.repeat(5000),
+    '\u0000‮',
+  ];
+  const hostileRes = [];
+  for (const q of hostile) {
+    const a = await api(BACK, `/public/search?q=${encodeURIComponent(q)}`);
+    const b = await pubSuggest(q);
+    hostileRes.push(`${a.status}/${b.status}`);
+  }
+  const arrayQ = await api(BACK, '/public/search?q=a&q=b&type=games&page=-3');
+  // Self-review regression: a prototype key as ?type= was a 500 (and junk groups).
+  const protoTypes = [];
+  for (const t of ['__proto__', 'constructor', 'toString']) {
+    const r = await api(BACK, `/public/search?q=elden&type=${t}`);
+    protoTypes.push(
+      r.status === 200 &&
+        r.json?.data?.type === null &&
+        Object.keys(r.json?.data?.groups ?? {}).length === 3,
+    );
+  }
+  const gamesAfter = psql('SELECT count(*) FROM games;');
+  const lim = await rulesPatch({ search: { rateLimitPerClient: 5 } });
+  let limited = null;
+  for (let i = 0; i < 12 && !limited; i += 1) {
+    const r = await pubSuggest('elden');
+    if (r.status === 429) limited = r;
+  }
+  await rulesPatch({
+    search: { rateLimitPerClient: s4Restore.rules.search.rateLimitPerClient ?? 60 },
+  });
+  check(
+    'S4.10 (acc.4) the typeahead answers from the admin-set minimum (2 characters), also through the frontend proxy; hostile input (SQL, tsquery operators, wildcards, markup, 5 000 characters, control characters, an array query, a prototype key as ?type=) never errors and changes nothing; the per-visitor rate limit (admin setting) answers 429 "rate_limited" with Retry-After',
+    short?.tooShort === true &&
+      two?.tooShort === false &&
+      viaBff.status === 200 &&
+      slugsOf(viaBff.json?.data?.groups?.games).includes('elden-ring') &&
+      hostileRes.every((s) => s === '200/200') &&
+      arrayQ.status === 200 &&
+      protoTypes.every(Boolean) &&
+      gamesBefore === gamesAfter &&
+      lim.status === 200 &&
+      limited !== null &&
+      limited.json?.error === 'rate_limited' &&
+      Boolean(limited.res.headers.get('retry-after')),
+    `e→tooShort=${short?.tooShort} el→${two?.tooShort} bff=${viaBff.status} hostile=[${hostileRes}] array=${arrayQ.status} protoType=[${protoTypes}] games ${gamesBefore}→${gamesAfter} · limit=${lim.status} 429=${limited?.status} ${limited?.json?.error} retry=${limited?.res.headers.get('retry-after')}`,
+  );
+
+  // ── S4.11 no standalone page per aggregated article ────────────────────────
+  const anArticle = psql("SELECT id FROM articles WHERE origin = 'aggregated' LIMIT 1;");
+  const artIndex = await api(FRONT, '/articles');
+  const artPage = await api(FRONT, `/articles/${anArticle}`);
+  const smXml = await html('/sitemap.xml');
+  const siteDirs = readdirSync('apps/frontend/app/(site)');
+  check(
+    'S4.11 there is no standalone page per aggregated article: no /articles route (404 for the index and an article id), no article URLs in sitemap.xml — an aggregated piece is only an excerpt + link out on story / game / source pages',
+    artIndex.status === 404 &&
+      artPage.status === 404 &&
+      !/\/articles\//.test(smXml) &&
+      /\/lists\/2023\/best-of-year/.test(smXml) &&
+      !siteDirs.includes('articles'),
+    `/articles=${artIndex.status} /articles/:id=${artPage.status} sitemap article urls=${/\/articles\//.test(smXml)} lists in sitemap=${/\/lists\/2023\/best-of-year/.test(smXml)} route dir=${siteDirs.includes('articles')}`,
+  );
+
+  // ── S4.12 settings validated, RBAC by section, audited — through the UI path ─
+  const badFloor = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    editorialLists: { minAppearances: 1 },
+  });
+  const badMin = await uiApi(adminUi, '/admin/api/rules', 'PATCH', { search: { minChars: 1 } });
+  const badType = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    seo: { topicMinSources: '2' },
+  });
+  const auditBefore = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'rules' AND changes::text LIKE '%search.suggestPerGroup%';",
+    ),
+  );
+  const good = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    search: { suggestPerGroup: 6 },
+  });
+  const auditAfter = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id = 'rules' AND changes::text LIKE '%search.suggestPerGroup%';",
+    ),
+  );
+  await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    search: { suggestPerGroup: s4Restore.rules.search.suggestPerGroup ?? 5 },
+  });
+  const modQueue = await uiApi(modUi, '/admin/api/editorial-lists/queue');
+  const modNews = await uiApi(modUi, '/admin/api/news/overview');
+  const modSearch = await uiApi(modUi, '/admin/api/search/test?q=eld');
+  const modCat = await uiApi(modUi, '/admin/api/news-categories', 'POST', {
+    key: `s4m-${RUN}`,
+    label: 'x',
+    mode: 'show',
+  });
+  const modRules = await uiApi(modUi, '/admin/api/rules', 'PATCH', { search: { pageSize: 10 } });
+  const anon = await api(FRONT, '/admin/api/editorial-lists/queue');
+  const overview = await uiApi(adminUi, '/admin/api/news/overview');
+  const testQ = await uiApi(adminUi, '/admin/api/search/test?q=eld');
+  const newsId = psql("SELECT id FROM news_categories WHERE key = 'news';");
+  const delNews = await uiApi(adminUi, `/admin/api/news-categories/${newsId}`, 'DELETE');
+  const offNews = await uiApi(adminUi, `/admin/api/news-categories/${newsId}`, 'PATCH', {
+    active: false,
+  });
+  const badKey = await uiApi(adminUi, '/admin/api/news-categories', 'POST', {
+    key: 'Bad Key',
+    label: 'x',
+    mode: 'show',
+  });
+  const pages = [];
+  for (const p of ['/admin/editorial-lists', '/admin/news', '/admin/search']) {
+    const r = await uiApi(adminUi, p);
+    pages.push(`${p}=${r.status}`);
+  }
+  const ovRows = overview.json?.data ?? [];
+  check(
+    'S4.12 the S4 settings are validated (the consensus floor of 2, the 2-character minimum, types) and audited per rule; RBAC by section through the admin UI path — moderators work the lists queue but get 403 on news categories, search tools and rules; anonymous is refused; the fallback category "news" can’t be deleted or deactivated; keys are validated; the three Control Panel pages render',
+    badFloor.status === 400 &&
+      badMin.status === 400 &&
+      badType.status === 400 &&
+      good.status === 200 &&
+      auditAfter === auditBefore + 1 &&
+      modQueue.status === 200 &&
+      modNews.status === 403 &&
+      modSearch.status === 403 &&
+      modCat.status === 403 &&
+      modRules.status === 403 &&
+      [401, 403].includes(anon.status) &&
+      overview.status === 200 &&
+      ovRows.some((r) => r.key === 'listicle' && r.mode === 'hide') &&
+      ovRows.some((r) => r.key === 'deals' && r.mode === 'low') &&
+      ovRows.some((r) => r.key === 'guide' && r.mode === 'low') &&
+      testQ.status === 200 &&
+      typeof testQ.json?.data?.hits?.games?.[0]?.score === 'number' &&
+      delNews.status === 400 &&
+      offNews.status === 400 &&
+      badKey.status === 400 &&
+      pages.every((p) => p.endsWith('=200')),
+    `bad floor=${badFloor.status} min=${badMin.status} type=${badType.status} good=${good.status} audit ${auditBefore}→${auditAfter} · mod queue=${modQueue.status} news=${modNews.status} search=${modSearch.status} cat=${modCat.status} rules=${modRules.status} anon=${anon.status} · overview=${overview.status} test=${testQ.status} · news delete=${delNews.status} deactivate=${offNews.status} badKey=${badKey.status} · ${pages.join(' ')}`,
+  );
+}
+
+/** Stories / articles back to automation + the run's test category gone (idempotent). */
+async function restoreS4Feed() {
+  for (const [slug, patch] of s4Restore.topics) {
+    const id = topicIdBySlug(slug);
+    if (id) await adminApi(`/topics/${id}`, 'PATCH', patch);
+  }
+  s4Restore.topics.clear();
+  const leftover = s4Restore.category
+    ? psql(`SELECT id FROM articles WHERE category_override = ${lit(s4Restore.category.key)};`)
+        .split('\n')
+        .filter(Boolean)
+    : [];
+  for (const id of new Set([...s4Restore.overrideArticles, ...leftover])) {
+    if (psql(`SELECT count(*) FROM articles WHERE id = ${lit(id)};`) === '1')
+      await adminApi(`/articles/${id}`, 'PATCH', { categoryOverride: null });
+  }
+  s4Restore.overrideArticles = [];
+  if (s4Restore.category) {
+    await adminApi(`/news-categories/${s4Restore.category.id}`, 'DELETE');
+    s4Restore.category = null;
+  }
+  await reclassify();
+  await reindex();
+  await recomputeHomepage();
+}
+
+async function restoreS4() {
+  for (const id of s4Restore.curationIds) await adminApi(`/curation/${id}`, 'DELETE');
+  if (s4Restore.gameSearchHidden)
+    await adminApi(`/games/${s4Restore.gameSearchHidden}`, 'PATCH', { searchHidden: false });
+  if (s4Restore.rules) await rulesPatch(s4Restore.rules);
+  const stmts = [];
+  if (s4Restore.list) {
+    const id = lit(s4Restore.list.id);
+    stmts.push(
+      `DELETE FROM editorial_list_entries WHERE list_id = ${id};`,
+      `UPDATE editorial_lists SET status = 'candidate', decided_by_label = NULL, decided_at = NULL, updated_at = now() WHERE id = ${id};`,
+      auditSql({
+        entityType: 'editorial-list',
+        entityId: s4Restore.list.id,
+        summary: `verify cleanup: run ${RUN} put the mock list candidate back`,
+      }),
+    );
+  }
+  stmts.push(
+    `DELETE FROM editorial_lists WHERE outlet_name = ${lit(`S4 Outlet ${RUN}`)};`,
+    `DELETE FROM unmatched_games WHERE raw_name = ${lit(`Totally Unknown Game ${RUN}`)};`,
+    auditSql({
+      action: 'delete',
+      entityType: 'verify-run',
+      entityId: `verify-run-${RUN}`,
+      summary: `verify cleanup removed run ${RUN}'s S4 list fixtures`,
+    }),
+  );
+  psql(`BEGIN;\n${stmts.join('\n')}\nCOMMIT;`);
+  await restoreS4Feed();
+  await recomputeLists();
+  if (s4Restore.settings) restoreSettings(s4Restore.settings);
+}
+
 async function main() {
   if (!check('0. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
   try {
@@ -3844,7 +4865,9 @@ async function main() {
     await s2Fixes();
     await s3();
     await s3b();
+    await s4();
   } finally {
+    await restoreS4();
     await restoreS3b();
     await restoreS3();
     await restoreS2();

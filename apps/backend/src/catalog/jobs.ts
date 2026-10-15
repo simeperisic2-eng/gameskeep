@@ -5,6 +5,8 @@ import { syncDerivedGameStatuses } from './status';
 import { recomputeHomepageQuietly } from '../homepage/jobs';
 import { importCatalog, type CatalogImportResult } from './import';
 import { enqueueTagSync } from '../tags/jobs';
+import { seedS4Demo } from '../demo/s4-seed';
+import { requestSearchRefresh } from '../search/jobs';
 
 /**
  * Catalog-import background job (SPEC I2 §2; CLAUDE.md "nothing heavy on user
@@ -91,6 +93,9 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
       await syncDerivedGameStatuses();
       // …and their free-form tags mapped onto the taxonomy (or queued) — its own job (S3b).
       await enqueueTagSync({ reason: 'catalog' }).catch(() => undefined);
+      // Phase P S4: imported games are searchable; the demo lists can now match them.
+      await seedS4Demo('catalog').catch(() => undefined);
+      await requestSearchRefresh('catalog');
       await recomputeHomepageQuietly('catalog');
       return result;
     },

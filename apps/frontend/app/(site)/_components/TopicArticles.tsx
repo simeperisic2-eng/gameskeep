@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import type { AdSlotView, PublicDisplay, TopicArticleRow } from '@/lib/public-api';
 import { isHttpUrl } from '@/lib/url';
 import { PaidLabel } from './PaidLabel';
-import { relativeTime, truncateWords } from '@/lib/format';
+import { categoryChip, relativeTime, truncateWords } from '@/lib/format';
 import { noSignalsLabel } from '@/lib/bias';
 import { brand, excerptRule } from '@/lib/labels';
 import { useSite } from './SiteProvider';
@@ -88,6 +88,11 @@ function ArticleRow({ a }: { a: TopicArticleRow }): React.JSX.Element {
         <div className="gk-srcrow-top">
           <span className="gk-srcrow-source">{source}</span>
           <span className="gk-srcrow-type">{a.articleType}</span>
+          {categoryChip(a.category, a.articleType) ? (
+            <span className="gk-chip gk-chip-category">
+              {categoryChip(a.category, a.articleType)}
+            </span>
+          ) : null}
         </div>
         {/* B1: the headline itself links out to the original (same target as
             "Read at" — excerpt + link only, the I1 copyright posture). */}

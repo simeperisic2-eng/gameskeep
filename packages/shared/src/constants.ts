@@ -784,6 +784,23 @@ export const HOMEPAGE_SECTIONS = {
       minItems: null,
     },
   },
+  // Phase P S4: stories in "low" news categories (deals, guides…) — never in
+  // Trending / Latest / the briefing counts; only here.
+  more: {
+    kind: 'data',
+    items: 'topic',
+    delta: false,
+    title: 'More from the feed',
+    defaults: {
+      position: 14,
+      enabled: true,
+      mode: 'auto',
+      itemCount: 6,
+      deltaWindowHours: null,
+      paidPositions: [],
+      minItems: null,
+    },
+  },
   community: {
     kind: 'block',
     items: 'none',
@@ -908,11 +925,26 @@ export const IMPORT_FIX_REASON_LABELS: Record<ImportFixReason, string> = {
 };
 
 /** Story fields an editor's edit LOCKS against the automatic passes (and a re-cluster). */
-export const TOPIC_LOCKABLE_FIELDS = ['title', 'tldr', 'aiSummary', 'status', 'typeId'] as const;
+export const TOPIC_LOCKABLE_FIELDS = [
+  'title',
+  'tldr',
+  'aiSummary',
+  'status',
+  'typeId',
+  // Phase P S4: an editor's story category sticks (the automatic category pass skips it).
+  'category',
+] as const;
 export type TopicLockableField = (typeof TOPIC_LOCKABLE_FIELDS)[number];
 
 /** Editor pin / exclude lists for the computed lists on a page (owner: every list curatable). */
-export const CURATION_PAGES = ['topic', 'game', 'discovery'] as const;
+export const CURATION_PAGES = [
+  'topic',
+  'game',
+  'discovery',
+  // Phase P S4: search results per query; editorial-list consensus per year:category.
+  'search',
+  'lists',
+] as const;
 export const CURATION_LISTS = [
   'related-stories',
   'related-games',
@@ -920,7 +952,20 @@ export const CURATION_LISTS = [
   'top-rated',
   'most-discussed',
   'coming-soon',
+  // Phase P S4
+  'results', // search: keys "game:slug" | "topic:slug" | "source:slug"
+  'consensus', // lists (page key "year:category"): game slugs
+  'comparison-lines', // lists: "game-slug|lineKey" (excludes only)
+  'editorial-lists', // game page: editorial list ids (excludes only)
 ] as const;
+/** Which lists exist on which page kind (the curation admin validates against this). */
+export const CURATION_LISTS_BY_PAGE: Record<(typeof CURATION_PAGES)[number], readonly string[]> = {
+  topic: ['related-stories', 'coverage-rows'],
+  game: ['related-stories', 'related-games', 'editorial-lists'],
+  discovery: ['top-rated', 'most-discussed', 'coming-soon'],
+  search: ['results'],
+  lists: ['consensus', 'comparison-lines'],
+};
 export type CurationPage = (typeof CURATION_PAGES)[number];
 export type CurationList = (typeof CURATION_LISTS)[number];
 
@@ -1000,6 +1045,68 @@ export const RULES_DEFAULTS = {
     /** Named reasons shown under "Why these signals?". */
     whyReasons: 3,
   },
+  // ── Phase P S4 ──
+  search: {
+    /** The typeahead answers from this many characters. */
+    minChars: 2,
+    /** Typeahead results per group (games / stories / sources). */
+    suggestPerGroup: 5,
+    /** Results per page on /search. */
+    pageSize: 20,
+    /** Typeahead requests per client per window (behind the proxy: see TRUST_PROXY). */
+    rateLimitPerClient: 60,
+    /** Typeahead requests across everyone per window (a ceiling). */
+    rateLimitGlobal: 1200,
+    rateLimitWindowSeconds: 60,
+    /** Typo-tolerant matching when the exact words find nothing. */
+    fuzzy: true,
+    /** Fuzzy similarity threshold (percent). */
+    fuzzyThresholdPct: 30,
+    /** Ranking weights. */
+    weightExact: 30,
+    weightPrefix: 10,
+    weightText: 10,
+    /** Results are cached this many seconds per query. */
+    cacheSeconds: 60,
+    /** Longer queries are cut to this many characters. */
+    maxQueryChars: 100,
+  },
+  seo: {
+    /** A story is indexable from this many sources … */
+    topicMinSources: 2,
+    /** … or when it has an AI summary AND a linked game. */
+    indexIfSummaryAndGame: true,
+    /** Stories in a category set to "hide" are never indexed (automatic mode). */
+    noindexHiddenCategories: true,
+  },
+  news: {
+    /** A story takes a category when at least this share (percent) of its articles carry it. */
+    topicCategorySharePct: 50,
+    /** The classifier also reads the excerpt (default: title only). */
+    classifyExcerpt: false,
+    /** Stories in "low" categories are searchable. */
+    lowSearchable: true,
+    /** Stories in "hide" categories are searchable. */
+    hideSearchable: false,
+  },
+  editorialLists: {
+    /** A game enters a consensus from this many lists (never 1 — no outlet's list is republished). */
+    minAppearances: 2,
+    /** Rows on a consensus page. */
+    maxRows: 25,
+    /** "Absent from every other outlet's top N". */
+    deviationTopN: 10,
+    /** A consensus page is public + indexable from this many confirmed lists. */
+    indexMinLists: 3,
+    /** Lists shown on a game page. */
+    gamePageMax: 10,
+    /** Comparison lines (each on / off). */
+    lineSoloTop: true,
+    lineCoverage: true,
+    lineSpread: true,
+    /** "Lists" in the header navigation. */
+    showInNav: true,
+  },
 };
 export type RulesSettings = typeof RULES_DEFAULTS;
 
@@ -1033,4 +1140,142 @@ export const RULE_BOUNDS: Record<string, readonly [number, number]> = {
   'lists.discoveryMostDiscussed': [0, 24],
   'lists.discoveryComingSoon': [0, 24],
   'lists.whyReasons': [0, 10],
+  // Phase P S4
+  'search.minChars': [2, 10],
+  'search.suggestPerGroup': [1, 20],
+  'search.pageSize': [5, 50],
+  'search.rateLimitPerClient': [1, 10000],
+  'search.rateLimitGlobal': [1, 100000],
+  'search.rateLimitWindowSeconds': [1, 3600],
+  'search.fuzzyThresholdPct': [10, 90],
+  'search.weightExact': [0, 100],
+  'search.weightPrefix': [0, 100],
+  'search.weightText': [0, 100],
+  'search.cacheSeconds': [0, 3600],
+  'search.maxQueryChars': [10, 200],
+  'seo.topicMinSources': [1, 20],
+  'news.topicCategorySharePct': [1, 100],
+  // Floor 2 (owner): a consensus never shows a game that is on one list only,
+  // so no outlet's list is republished as a page of ours.
+  'editorialLists.minAppearances': [2, 20],
+  'editorialLists.maxRows': [1, 100],
+  'editorialLists.deviationTopN': [3, 100],
+  'editorialLists.indexMinLists': [1, 50],
+  'editorialLists.gamePageMax': [0, 50],
 };
+
+// ── Phase P S4: news categories, indexing, editorial lists, search ──────────
+/** How a news category shows: everywhere / only in "More from the feed" / nowhere in feeds. */
+export const NEWS_CATEGORY_MODES = ['show', 'low', 'hide'] as const;
+export type NewsCategoryMode = (typeof NEWS_CATEGORY_MODES)[number];
+
+/** The fallback category (built in; it can be relabelled but not removed). */
+export const NEWS_FALLBACK_CATEGORY = 'news';
+
+/**
+ * The seeded categories (fresh installs; editors own them after). A feed-given
+ * article type (review / opinion / preview / guide) wins; otherwise the keyword
+ * phrases decide (highest priority first, title only by default); else news.
+ * Owner defaults (S4): deals → low, guides → low, listicles → hide.
+ */
+export const NEWS_CATEGORY_SEED: readonly {
+  key: string;
+  label: string;
+  mode: NewsCategoryMode;
+  keywords: readonly string[];
+  priority: number;
+}[] = [
+  { key: 'news', label: 'News', mode: 'show', keywords: [], priority: 0 },
+  { key: 'review', label: 'Review', mode: 'show', keywords: [], priority: 0 },
+  { key: 'opinion', label: 'Opinion', mode: 'show', keywords: [], priority: 0 },
+  { key: 'preview', label: 'Preview', mode: 'show', keywords: [], priority: 0 },
+  {
+    key: 'guide',
+    label: 'Guide',
+    mode: 'low',
+    keywords: [
+      'guide',
+      'how to',
+      'walkthrough',
+      'tips and tricks',
+      'best settings',
+      'where to find',
+      'all locations',
+    ],
+    priority: 30,
+  },
+  {
+    key: 'deals',
+    label: 'Deals',
+    mode: 'low',
+    keywords: [
+      '% off',
+      'deals',
+      'deal alert',
+      'discounted',
+      'on sale',
+      'price drop',
+      'lowest price',
+      'cheapest',
+    ],
+    priority: 40,
+  },
+  {
+    key: 'listicle',
+    label: 'Listicle',
+    mode: 'hide',
+    keywords: [
+      'games like',
+      ', ranked',
+      'best games of',
+      'best games to play',
+      'top 5',
+      'top 10',
+      'top 15',
+      'top 20',
+      'top 25',
+      'reasons why',
+      'things you need to know',
+    ],
+    priority: 35,
+  },
+];
+
+/** A story's indexing: the automatic rule, or an editor's index / noindex. */
+export const SEO_INDEX_MODES = ['auto', 'index', 'noindex'] as const;
+export type SeoIndexMode = (typeof SEO_INDEX_MODES)[number];
+
+/** Editorial lists: only CONFIRMED ones are ever public. */
+export const LIST_STATUSES = ['candidate', 'confirmed', 'rejected'] as const;
+export type ListStatus = (typeof LIST_STATUSES)[number];
+export const LIST_ENTRY_MATCHES = ['auto', 'editor', 'unmatched'] as const;
+export type ListEntryMatch = (typeof LIST_ENTRY_MATCHES)[number];
+/** Comparison line templates (data only, no adjectives). */
+export const LIST_LINE_KEYS = ['soloTop', 'coverage', 'spread'] as const;
+export type ListLineKey = (typeof LIST_LINE_KEYS)[number];
+
+/** Seeded editorial-list categories (owner, S4; admin-editable after). */
+export const LIST_CATEGORY_SEED: readonly { key: string; label: string; sort: number }[] = [
+  { key: 'goty', label: 'Game of the Year', sort: 1 },
+  { key: 'best-of-year', label: 'Best games of the year', sort: 2 },
+];
+
+/** Title phrases that make an article a LIST CANDIDATE (editor queue; admin-editable). */
+export const LIST_DETECT_DEFAULTS: { patterns: string[]; gotyPatterns: string[] } = {
+  patterns: [
+    'best games of',
+    'game of the year',
+    'games of the year',
+    'goty',
+    'top 10 games of',
+    'top 20 games of',
+    'top 25 games of',
+    'top 50 games of',
+    'top 100 games of',
+  ],
+  gotyPatterns: ['game of the year', 'goty'],
+};
+
+/** Search result groups (studios arrive with S6). */
+export const SEARCH_GROUPS = ['games', 'stories', 'sources'] as const;
+export type SearchGroup = (typeof SEARCH_GROUPS)[number];

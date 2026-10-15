@@ -6,6 +6,8 @@ import { startReputationWorker } from './reputation/jobs';
 import { armSteamSync, startSteamWorker } from './steam/jobs';
 import { startHomepageWorker } from './homepage/jobs';
 import { startTagsWorker } from './tags/jobs';
+import { startSearchWorker } from './search/jobs';
+import { startListsWorker } from './lists/jobs';
 
 /**
  * Background-worker process entrypoint. Runs as its own container in compose
@@ -75,6 +77,20 @@ tagsWorker.on('completed', (job, result) => log(`tag sync ${job.id} completed`, 
 tagsWorker.on('failed', (job, err) => log(`tag sync ${job?.id ?? '?'} failed: ${err.message}`));
 tagsWorker.on('error', (err) => log(`tags worker error: ${err.message}`));
 
+// Phase P S4: the search index + the editorial-list consensus.
+const searchWorker = startSearchWorker();
+searchWorker.on('completed', (job, result) => log(`search index ${job.id} completed`, result));
+searchWorker.on('failed', (job, err) =>
+  log(`search index ${job?.id ?? '?'} failed: ${err.message}`),
+);
+searchWorker.on('error', (err) => log(`search worker error: ${err.message}`));
+const listsWorker = startListsWorker();
+listsWorker.on('completed', (job, result) => log(`list consensus ${job.id} completed`, result));
+listsWorker.on('failed', (job, err) =>
+  log(`list consensus ${job?.id ?? '?'} failed: ${err.message}`),
+);
+listsWorker.on('error', (err) => log(`lists worker error: ${err.message}`));
+
 log(
   'worker started — heartbeat + catalog + articles + ratings + reputation + steam + homepage processors waiting',
 );
@@ -90,6 +106,8 @@ const shutdown = async (signal: string): Promise<void> => {
     steam.close(),
     homepage.close(),
     tagsWorker.close(),
+    searchWorker.close(),
+    listsWorker.close(),
   ]);
   process.exit(0);
 };

@@ -89,7 +89,8 @@ function validatePatch(def: Tree, patch: unknown, prefix: string, errors: string
   }
   for (const [k, v] of Object.entries(patch)) {
     const path = prefix ? `${prefix}.${k}` : k;
-    const d = def[k];
+    // Own keys only: an inherited name ("constructor", "toString") is not a rule.
+    const d = Object.prototype.hasOwnProperty.call(def, k) ? def[k] : undefined;
     if (d === undefined) {
       errors.push(`${path}: unknown rule`);
       continue;

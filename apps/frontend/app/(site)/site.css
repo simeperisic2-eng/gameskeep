@@ -6844,3 +6844,352 @@ a.gk-tagchip:focus-visible {
   font-weight: 700;
   color: var(--gk-text);
 }
+
+/* ── Phase P S4: header search typeahead ─────────────────────────────────── */
+.gk-search {
+  position: relative;
+}
+.gk-search-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, 90vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 60;
+  padding: var(--s2) 0;
+  border-radius: var(--r-md, 12px);
+  border: 1px solid var(--gk-border);
+  background: var(--gk-surface);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+.gk-search-group {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s1) 0;
+}
+.gk-search-group + .gk-search-group {
+  border-top: 1px solid var(--gk-border);
+}
+.gk-search-group-label {
+  padding: 4px var(--s3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+}
+.gk-search-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 8px var(--s3);
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-search-option:hover,
+.gk-search-option.is-active {
+  background: rgba(var(--gk-amber), 0.1);
+}
+.gk-search-title {
+  font-weight: 600;
+}
+.gk-search-sub {
+  flex-basis: 100%;
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-search-note {
+  margin: 0;
+  padding: 8px var(--s3);
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-search-all {
+  display: block;
+  padding: 10px var(--s3) 6px;
+  border-top: 1px solid var(--gk-border);
+  font-size: 13px;
+  color: rgb(var(--gk-amber));
+  text-decoration: none;
+}
+.gk-search-mobile {
+  display: none;
+}
+@media (max-width: 760px) {
+  .gk-search-mobile {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--gk-border);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--gk-text);
+  }
+  /* The search button joined the phone header: a compact header keeps the
+     menu button on screen (S4 visual gate — it was pushed past the edge). */
+  .gk-header-inner {
+    gap: var(--s3);
+  }
+  .gk-header-right {
+    gap: var(--s2);
+  }
+  .gk-brand {
+    gap: var(--s2);
+  }
+  .gk-header .gk-logo-img {
+    height: 52px;
+  }
+}
+@media (max-width: 430px) {
+  /* Narrow phones: the emblem carries the brand (the link's label and the
+     image alt still name it). */
+  .gk-brand > span {
+    display: none;
+  }
+}
+
+/* ── Phase P S4: search page ──────────────────────────────────────────────── */
+.gk-searchform {
+  display: flex;
+  gap: var(--s2);
+  margin: var(--s4) 0 var(--s5);
+  max-width: 640px;
+}
+.gk-searchform input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 var(--s3);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--gk-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--gk-text);
+  font: inherit;
+}
+.gk-searchform input:focus {
+  outline: none;
+  border-color: rgba(var(--gk-amber), 0.55);
+}
+.gk-searchfilter {
+  margin: 0 0 var(--s4);
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-resultgroup {
+  margin-bottom: var(--s6, 40px);
+}
+.gk-result-count {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gk-text-dim);
+}
+.gk-results {
+  list-style: none;
+  margin: var(--s3) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+.gk-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: var(--s3);
+  border-radius: var(--r-md, 12px);
+  border: 1px solid var(--gk-card-border);
+  background: var(--gk-surface);
+}
+.gk-result-title {
+  font-weight: 600;
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-result-title:hover {
+  color: var(--gk-accent);
+}
+.gk-result-sub {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-searchpages {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: var(--s4) 0;
+  font-size: 14px;
+}
+
+/* ── Phase P S4: editorial lists ─────────────────────────────────────────── */
+.gk-listcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+.gk-listcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s4);
+  border-radius: var(--r-md, 12px);
+  border: 1px solid var(--gk-card-border);
+  background: var(--gk-surface);
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-listcard:hover {
+  border-color: rgba(var(--gk-amber), 0.45);
+}
+.gk-listcard-kicker {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gk-text-dim);
+}
+.gk-listcard-title {
+  font-family: var(--gk-font-display);
+  font-size: 20px;
+  font-weight: 600;
+}
+.gk-listcard-top {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+  color: var(--gk-text-dim);
+}
+.gk-listcard-cta {
+  margin-top: auto;
+  font-size: 13px;
+  color: var(--gk-accent);
+}
+.gk-consensus {
+  list-style: none;
+  margin: var(--s4) 0 var(--s6, 40px);
+  padding: 0;
+  display: grid;
+  gap: var(--s3);
+}
+.gk-consensus-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-md, 12px);
+  border: 1px solid var(--gk-card-border);
+  background: var(--gk-surface);
+}
+.gk-consensus-pos {
+  font-family: var(--gk-font-mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--gk-accent);
+}
+.gk-consensus-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.gk-consensus-game {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-consensus-game:hover {
+  color: var(--gk-accent);
+}
+.gk-consensus-stats {
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-consensus-positions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gk-consensus-lines,
+.gk-edlists-lines {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--gk-text-dim);
+}
+.gk-consensus-sources ul {
+  margin: var(--s2) 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.gk-consensus-sources a {
+  color: var(--gk-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.gk-consensus-sources a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.gk-consensus-sources li::marker {
+  color: var(--gk-text-dim);
+}
+.gk-edlists-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.gk-edlists-rows a {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2);
+  padding: 8px 0;
+  color: var(--gk-text);
+  text-decoration: none;
+}
+.gk-edlists-rows a:hover .gk-edlists-outlet {
+  color: var(--gk-accent);
+}
+.gk-edlists-rank {
+  font-family: var(--gk-font-mono);
+  font-weight: 600;
+  color: var(--gk-accent);
+}
+.gk-edlists-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.gk-edlists-outlet {
+  font-weight: 600;
+}
+.gk-edlists-title {
+  font-size: 12.5px;
+  color: var(--gk-text-dim);
+}
+.gk-edlists-consensus {
+  margin: var(--s2) 0 0;
+  font-size: 13px;
+}
+.gk-edlists-consensus a {
+  color: var(--gk-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.gk-edlists-consensus a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.gk-edlists-note {
+  margin: var(--s2) 0 0;
+  font-size: 12px;
+  color: var(--gk-text-dim);
+}

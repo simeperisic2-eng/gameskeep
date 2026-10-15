@@ -1,0 +1,2 @@
+ALTER TABLE "homepage_sections" DROP CONSTRAINT "homepage_sections_kind_by_key";--> statement-breakpoint
+ALTER TABLE "homepage_sections" ADD CONSTRAINT "homepage_sections_kind_by_key" CHECK ((key IN ('trending', 'latest', 'by_players', 'our_picks', 'focus', 'top_rated', 'more') AND kind = 'data') OR (key IN ('featured', 'new', 'upcoming') AND kind = 'discovery') OR (key IN ('briefing', 'genres', 'community', 'newsletter') AND kind = 'block'));

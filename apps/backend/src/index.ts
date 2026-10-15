@@ -3,7 +3,7 @@ import { env, isDemo } from './config/env';
 import { scheduleHeartbeat } from './queue/heartbeat';
 import { armGameStatusSync, enqueueCatalogImport } from './catalog/jobs';
 import { syncDerivedGameStatuses } from './catalog/status';
-import { enqueueArticleIngest } from './articles/jobs';
+import { enqueueArticleIngest, enqueueReclassify } from './articles/jobs';
 import { realignStoredDemoFeedDates } from './articles/demo-dates';
 import { enqueueRatingRecompute } from './ratings/jobs';
 import { enqueueReputationRecompute } from './reputation/jobs';
@@ -16,6 +16,11 @@ import { realignDemoTagDates, seedDemoTagActivity } from './tags/demo';
 import { enqueueTagSync } from './tags/jobs';
 import { armHomepageRefresh, enqueueHomepageCompute } from './homepage/jobs';
 import { ensureDemoPlayerHistory } from './steam/demo-history';
+import { countUnclassifiedArticles, ensureNewsCategories } from './news/categories';
+import { ensureListCategories } from './lists/service';
+import { enqueueConsensus } from './lists/jobs';
+import { enqueueSearchRebuild } from './search/jobs';
+import { seedS4Demo } from './demo/s4-seed';
 
 /** API process entrypoint. */
 async function main(): Promise<void> {
@@ -58,6 +63,26 @@ async function main(): Promise<void> {
     app.log.info({ jobId, demoTags, realigned }, 'tag sync enqueued');
   } catch (err) {
     app.log.error({ err }, 'tag sync failed');
+  }
+
+  // Phase P S4: news + list categories (seeded once; editors own them after), demo
+  // lists + alternate names, a reclassify only when articles predate S4, then the
+  // search index and the list consensus — all as background jobs.
+  try {
+    await ensureNewsCategories();
+    await ensureListCategories();
+    // Demo lists + alternate names: again after the catalog import / ingest (a fresh volume).
+    const { lists: demoLists, alternateNames } = await seedS4Demo('boot');
+    const reclassifyJobId =
+      (await countUnclassifiedArticles()) > 0 ? await enqueueReclassify('boot') : null;
+    const searchJobId = await enqueueSearchRebuild({ reason: 'boot' });
+    const consensusJobId = await enqueueConsensus({ reason: 'boot' });
+    app.log.info(
+      { demoLists, alternateNames, reclassifyJobId, searchJobId, consensusJobId },
+      'S4 categories, lists and search enqueued',
+    );
+  } catch (err) {
+    app.log.error({ err }, 'S4 boot steps failed');
   }
 
   // Game status derived from release dates (hygiene 3) — at boot and daily. A

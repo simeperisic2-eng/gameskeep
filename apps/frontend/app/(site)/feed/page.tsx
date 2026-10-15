@@ -33,6 +33,7 @@ function FeedCard({ item }: { item: FeedItem }): React.JSX.Element {
         <Link href={href} className="gk-chip-link">
           {item.via.type === 'game' ? '🎮' : '🗞'} {item.via.name}
         </Link>
+        {item.category ? <span className="gk-chip gk-chip-category">{item.category}</span> : null}
       </div>
       <h3 className="gk-feed-item-title">
         {item.url ? (

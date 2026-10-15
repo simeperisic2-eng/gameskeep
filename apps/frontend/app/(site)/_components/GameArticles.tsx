@@ -1,5 +1,5 @@
 import type { GameArticleRow } from '@/lib/public-api';
-import { relativeTime, truncateWords } from '@/lib/format';
+import { categoryChip, relativeTime, truncateWords } from '@/lib/format';
 import { brand, excerptRule } from '@/lib/labels';
 import { ArticleFlags } from './BiasBar';
 import { NoSignalsNote, ReviewSignals } from './IntegrityBlock';
@@ -25,6 +25,11 @@ function Row({ a }: { a: GameArticleRow }): React.JSX.Element {
         <div className="gk-srcrow-top">
           <span className="gk-srcrow-source">{source}</span>
           <span className="gk-srcrow-type">{a.articleType}</span>
+          {categoryChip(a.category, a.articleType) ? (
+            <span className="gk-chip gk-chip-category">
+              {categoryChip(a.category, a.articleType)}
+            </span>
+          ) : null}
           {a.origin === 'ours' ? <span className="gk-chip amber">Ours</span> : null}
         </div>
         {/* B1: the headline links out to the original (same target as "Read at"). */}

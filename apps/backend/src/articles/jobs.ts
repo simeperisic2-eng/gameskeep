@@ -4,6 +4,9 @@ import { redis } from '../redis/client';
 import { runIngest, type IngestOptions, type IngestResult } from './pipeline';
 import { recomputeBias, type RecomputeResult } from './bias-engine';
 import { recomputeHomepageQuietly } from '../homepage/jobs';
+import { classifyArticles, recomputeTopicCategories } from '../news/categories';
+import { requestSearchRefresh } from '../search/jobs';
+import { seedS4Demo } from '../demo/s4-seed';
 
 /**
  * Article-ingest background job (SPEC I3 §6; CLAUDE.md "nothing heavy on user
@@ -22,8 +25,11 @@ export interface ArticleJobData {
   skipIfPopulated?: boolean;
   limit?: number;
   reason?: string;
-  /** `bias` recomputes scores only (after a weight re-tune); default re-ingests. */
-  mode?: 'ingest' | 'bias';
+  /**
+   * `bias` recomputes scores only (after a weight re-tune); `categories` re-runs the
+   * news-category classifier + story categories (Phase P S4); default re-ingests.
+   */
+  mode?: 'ingest' | 'bias' | 'categories';
 }
 
 export interface BiasRecomputeState extends RecomputeResult {
@@ -61,6 +67,21 @@ export async function enqueueArticleIngest(data: ArticleJobData = {}): Promise<s
   return job.id;
 }
 
+/** Phase P S4: re-run the news-category classifier (after a category / keyword / rule change). */
+export async function enqueueReclassify(reason = 'manual'): Promise<string | undefined> {
+  const job = await getArticlesQueue().add(
+    ARTICLES_INGEST_JOB,
+    { mode: 'categories', reason },
+    {
+      removeOnComplete: 20,
+      removeOnFail: 20,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 3000 },
+    },
+  );
+  return job.id;
+}
+
 /** Enqueue a bias-only recompute (after a weight re-tune) — off the request path. */
 export async function enqueueBiasRecompute(reason = 'manual'): Promise<string | undefined> {
   const q = getArticlesQueue();
@@ -80,7 +101,17 @@ export async function enqueueBiasRecompute(reason = 'manual'): Promise<string | 
 export function startArticlesWorker(): Worker<ArticleJobData> {
   return new Worker<ArticleJobData>(
     ARTICLES_QUEUE,
-    async (job: Job<ArticleJobData>): Promise<IngestResult | RecomputeResult> => {
+    async (
+      job: Job<ArticleJobData>,
+    ): Promise<IngestResult | RecomputeResult | { articles: number; stories: number }> => {
+      // Phase P S4: re-classify every article + recompute every story's category.
+      if (job.data.mode === 'categories') {
+        const changedArticles = await classifyArticles();
+        const changedStories = await recomputeTopicCategories();
+        await recomputeHomepageQuietly('categories');
+        await requestSearchRefresh('categories');
+        return { articles: changedArticles, stories: changedStories };
+      }
       // Bias-only recompute (no re-ingest) — recomputes scores after a re-tune.
       if (job.data.mode === 'bias') {
         const result = await recomputeBias();
@@ -100,6 +131,8 @@ export function startArticlesWorker(): Worker<ArticleJobData> {
         limit: job.data.limit,
       };
       const result = await runIngest(options);
+      // Phase P S4 (demo): the outlets exist now — seed any demo list still waiting for them.
+      await seedS4Demo('ingest').catch(() => undefined);
       const state: ArticleIngestState = {
         ...result,
         reason: job.data.reason ?? 'manual',

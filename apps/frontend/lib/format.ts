@@ -67,6 +67,19 @@ export function distinctSubtitle(
 }
 
 /**
+ * The news-category chip for an article row (Phase P S4): null when there is
+ * none, or when it only repeats the article-type chip next to it ("Guide" twice).
+ */
+export function categoryChip(
+  category: string | null | undefined,
+  articleType: string | null | undefined,
+): string | null {
+  const c = category?.trim();
+  if (!c) return null;
+  return c.toLowerCase() === (articleType ?? '').trim().toLowerCase() ? null : c;
+}
+
+/**
  * Topic status chip label for PUBLIC pages (hygiene 3). "Resolved" is internal
  * clustering state, not reader information — it renders nothing.
  */

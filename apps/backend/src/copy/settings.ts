@@ -94,7 +94,14 @@ export function brandName(): string {
 
 // ── the public payload ───────────────────────────────────────────────────────
 export interface PublicSite extends SiteCopy {
-  layout: { heroRotateMinutes: number; heroSecondaryCount: number; latestInitial: number };
+  layout: {
+    heroRotateMinutes: number;
+    heroSecondaryCount: number;
+    latestInitial: number;
+    /** Phase P S4 */
+    searchMinChars: number;
+    listsInNav: boolean;
+  };
   display: {
     qualityFilterMin: number;
     excerpt: Record<string, number>;
@@ -112,6 +119,8 @@ export function buildPublicSite(
       heroRotateMinutes: rules.homepage.heroRotateMinutes,
       heroSecondaryCount: rules.homepage.heroSecondaryCount,
       latestInitial: rules.homepage.latestInitial,
+      searchMinChars: rules.search.minChars,
+      listsInNav: rules.editorialLists.showInNav,
     },
     display: {
       qualityFilterMin: rules.display.qualityFilterMin,

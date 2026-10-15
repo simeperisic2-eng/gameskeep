@@ -25,6 +25,9 @@ import { getClusterSettings } from './settings';
 import { classifyEventKind, normalizeGameRef } from './event-kind';
 import { recomputeBias } from './bias-engine';
 import { relinkIntegrityByIdentity, scanIntegrity } from './integrity';
+import { classifyArticles, recomputeTopicCategories } from '../news/categories';
+import { detectListCandidates, relinkListArticles } from '../lists/service';
+import { requestSearchRefresh } from '../search/jobs';
 import { displaySettings } from '../display/settings';
 
 /**
@@ -120,25 +123,30 @@ async function resetFeed(): Promise<void> {
         coalesce(array_agg(a.external_guid) FILTER (WHERE a.external_guid IS NOT NULL), '{}'),
         t.locked_fields,
         jsonb_build_object('title', t.title, 'tldr', t.tldr, 'aiSummary', t.ai_summary,
-          'status', t.status, 'typeId', t.type_id, 'noindex', t.noindex)
+          'status', t.status, 'typeId', t.type_id, 'category', t.category,
+          'seoIndex', t.seo_index, 'searchHidden', t.search_hidden)
       FROM topics t
       LEFT JOIN article_topics at ON at.topic_id = t.id
       LEFT JOIN articles a ON a.id = at.article_id
-      WHERE t.embedding IS NOT NULL AND (cardinality(t.locked_fields) > 0 OR t.noindex)
+      WHERE t.embedding IS NOT NULL
+        AND (cardinality(t.locked_fields) > 0 OR t.seo_index <> 'auto' OR t.search_hidden)
       GROUP BY t.id
     `);
     await tx.execute(sql`
       INSERT INTO article_editorial_carryover (
         external_guid, source_id, influence_override, quality_override,
-        influence_override_reason, quality_override_reason, editor_note, internal_assessment
+        influence_override_reason, quality_override_reason, editor_note, internal_assessment,
+        category_override
       )
       SELECT external_guid, source_id, influence_override, quality_override,
-        influence_override_reason, quality_override_reason, editor_note, internal_assessment
+        influence_override_reason, quality_override_reason, editor_note, internal_assessment,
+        category_override
       FROM articles
       WHERE origin = 'aggregated' AND external_guid IS NOT NULL AND (
         influence_override IS NOT NULL OR quality_override IS NOT NULL
         OR influence_override_reason IS NOT NULL OR quality_override_reason IS NOT NULL
         OR editor_note IS NOT NULL OR internal_assessment IS NOT NULL
+        OR category_override IS NOT NULL
       )
       ON CONFLICT (external_guid) DO UPDATE SET
         source_id = EXCLUDED.source_id,
@@ -147,7 +155,8 @@ async function resetFeed(): Promise<void> {
         influence_override_reason = EXCLUDED.influence_override_reason,
         quality_override_reason = EXCLUDED.quality_override_reason,
         editor_note = EXCLUDED.editor_note,
-        internal_assessment = EXCLUDED.internal_assessment
+        internal_assessment = EXCLUDED.internal_assessment,
+        category_override = EXCLUDED.category_override
     `);
     // Aggregated articles (cascades article_topics / article_subjects); our own
     // CMS articles and the inline seed topic (no embedding) are preserved.
@@ -185,9 +194,12 @@ async function restoreTopicCarryover(): Promise<number> {
     const best = rows[0];
     if (!best || best.n * 2 < c.memberGuids.length) continue;
     const f = (c.fields ?? {}) as Record<string, unknown>;
+    const seo = f.seoIndex === 'index' || f.seoIndex === 'noindex' ? f.seoIndex : null;
     const set: Record<string, unknown> = {
       lockedFields: c.lockedFields,
-      noindex: f.noindex === true,
+      // Phase P S4 (an S3b row carried "noindex": true → the same choice).
+      seoIndex: seo ?? (f.noindex === true ? 'noindex' : 'auto'),
+      searchHidden: f.searchHidden === true,
     };
     for (const field of c.lockedFields) {
       if (field === 'title' && typeof f.title === 'string') set.title = f.title;
@@ -196,6 +208,7 @@ async function restoreTopicCarryover(): Promise<number> {
         set.aiSummary = typeof f.aiSummary === 'string' ? f.aiSummary : null;
       if (field === 'status' && typeof f.status === 'string') set.status = f.status;
       if (field === 'typeId') set.typeId = typeof f.typeId === 'string' ? f.typeId : null;
+      if (field === 'category') set.category = typeof f.category === 'string' ? f.category : null;
     }
     const [taken] = await db
       .select({ id: topics.id })
@@ -225,7 +238,8 @@ async function restoreEditorialCarryover(): Promise<void> {
       influence_override_reason = c.influence_override_reason,
       quality_override_reason = c.quality_override_reason,
       editor_note = c.editor_note,
-      internal_assessment = c.internal_assessment
+      internal_assessment = c.internal_assessment,
+      category_override = c.category_override
     FROM article_editorial_carryover AS c
     WHERE a.external_guid = c.external_guid
       AND (c.source_id IS NULL OR a.source_id IS NULL OR a.source_id = c.source_id)
@@ -314,6 +328,7 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
 
   // Cluster sequentially (each article may seed a topic the next one joins).
   const touchedTopics = new Set<string>();
+  const freshArticleIds: string[] = [];
   const createdTopics = new Set<string>();
   let newArticles = 0;
   let gamesAttached = 0;
@@ -344,6 +359,7 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
       continue;
     }
     newArticles += 1;
+    freshArticleIds.push(result.articleId);
     touchedTopics.add(result.topicId);
     if (result.action === 'create') createdTopics.add(result.topicId);
     if (result.gateResisted) gateResisted += 1;
@@ -377,6 +393,17 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
   await relinkIntegrityByIdentity();
   await restoreEditorialCarryover();
   await restoreTopicCarryover();
+
+  // Phase P S4: news categories (the classifier; an editor's override wins) →
+  // each story's category; list-like articles → the editors' list queue.
+  try {
+    await classifyArticles(freshArticleIds);
+    await recomputeTopicCategories();
+    await detectListCandidates(fresh.map((c) => c.guid));
+    await relinkListArticles();
+  } catch {
+    // A classification hiccup must not fail the whole ingest.
+  }
 
   // Refresh summaries for every touched topic (off the request path), then run
   // the status auto-maintenance pass.
@@ -424,6 +451,9 @@ export async function runIngest(opts: IngestOptions = {}): Promise<IngestResult>
   } catch {
     /* integrity scan hiccup — the next ingest re-scans idempotently */
   }
+
+  // Phase P S4: the search index follows the new stories (debounced background job).
+  await requestSearchRefresh('ingest');
 
   return {
     provider: provider.name,

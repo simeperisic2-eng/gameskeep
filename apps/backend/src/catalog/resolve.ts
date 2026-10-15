@@ -29,7 +29,7 @@ export interface ResolveOutcome {
   unmatchedId?: string;
 }
 
-/** Find an existing game by deterministic slug or case-insensitive exact name. */
+/** Find an existing game by deterministic slug, case-insensitive exact name, or an alternate name. */
 export async function findGameByName(name: string): Promise<GameRef | null> {
   const trimmed = name.trim();
   if (!trimmed) return null;
@@ -41,8 +41,18 @@ export async function findGameByName(name: string): Promise<GameRef | null> {
     .where(
       and(
         eq(subjects.type, 'game'),
-        or(eq(subjects.slug, slug), sql`lower(${subjects.name}) = ${trimmed.toLowerCase()}`),
+        or(
+          eq(subjects.slug, slug),
+          sql`lower(${subjects.name}) = ${trimmed.toLowerCase()}`,
+          // Phase P S4: the editor-maintained alternate names ("BG3", "GTA VI").
+          sql`EXISTS (SELECT 1 FROM unnest(${games.alternateNames}) AS alt WHERE lower(alt) = ${trimmed.toLowerCase()})`,
+        ),
       ),
+    )
+    // An exact slug / name beats another game's alternate name.
+    .orderBy(
+      sql`(${subjects.slug} = ${slug}) DESC`,
+      sql`(lower(${subjects.name}) = ${trimmed.toLowerCase()}) DESC`,
     )
     .limit(1);
   return row ?? null;

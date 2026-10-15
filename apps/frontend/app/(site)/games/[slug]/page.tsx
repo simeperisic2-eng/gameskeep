@@ -28,7 +28,8 @@ import { PlayerActivity } from '../../_components/PlayerActivity';
 import { AdSlot } from '../../_components/AdSlot';
 import { GameTags } from '../../_components/GameTags';
 import { TagVoting } from '../../_components/TagVoting';
-import { getSite } from '@/lib/site';
+import { getSite, siteText } from '@/lib/site';
+import { EditorialListsBlock } from '../../_components/EditorialListsBlock';
 import { brand, excerptRule, gameStatusLabel, label } from '@/lib/labels';
 
 // Render per request so crawlers always get the full hub (SSR), not a shell.
@@ -123,7 +124,7 @@ export default async function GamePage({
   params: Promise<{ slug: string }>;
 }): Promise<React.JSX.Element> {
   const { slug } = await params;
-  const [game] = await Promise.all([loadGame(slug), getSite()]);
+  const [game, site] = await Promise.all([loadGame(slug), getSite()]);
   if (!game) notFound();
 
   const statusLabel = gameStatusLabel(game.status);
@@ -237,6 +238,12 @@ export default async function GamePage({
         <div className="gk-game-body">
           <aside className="gk-game-aside">
             <AtAGlance game={game} />
+
+            {/* Phase P S4: positions on outlets' confirmed lists (links out) + comparison lines. */}
+            <EditorialListsBlock
+              data={game.editorialLists}
+              note={siteText(site, 'game.lists.note')}
+            />
 
             {game.relatedTopics.length > 0 ? (
               <section className="gk-panel" aria-label="Related stories">

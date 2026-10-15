@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
   index,
@@ -105,6 +106,13 @@ export const games = pgTable(
     isIndie: boolean('is_indie').notNull().default(false),
     /** Phase P S3b: keep this game page out of search indexes + the sitemap. */
     noindex: boolean('noindex').notNull().default(false),
+    /** Phase P S4: other names the game goes by (search + the name matcher). */
+    alternateNames: text('alternate_names')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /** Phase P S4: an editor keeps this game out of site search. */
+    searchHidden: boolean('search_hidden').notNull().default(false),
 
     // Demo-seed marker (see DemoSeedMarker). Null for every real, imported or
     // admin-created game; deliberately NOT an admin-editable field.

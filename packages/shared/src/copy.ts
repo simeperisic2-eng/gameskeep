@@ -454,6 +454,39 @@ export const COPY_DEFS: readonly CopyDef[] = [
     320,
   ),
   T('header.sub', 'pages', 'Header · line under the brand', 'News · Bias · Ratings', 'text', 60),
+  // Phase P S4: search + editorial lists
+  T(
+    'search.intro',
+    'pages',
+    'Search · intro',
+    'Games, stories and sources — matched on titles, other names and studios.',
+    'longtext',
+    300,
+  ),
+  T(
+    'lists.intro',
+    'pages',
+    'Lists · intro',
+    'Where the outlets’ year-end lists agree. We show how often a game appears and where it ranked — each list stays the outlet’s own, one click away.',
+    'longtext',
+    400,
+  ),
+  T(
+    'lists.metaDescription',
+    'pages',
+    'Lists · meta description',
+    'The consensus of outlets’ Game of the Year and best-of-the-year lists: appearances, average rank and where each outlet placed a game — with links to every original list.',
+    'longtext',
+    320,
+  ),
+  T(
+    'lists.consensusIntro',
+    'pages',
+    'Lists · consensus intro',
+    'Games ranked by how many of these lists include them, then by their average position. Positions are the outlets’ own; follow the links to read each list.',
+    'longtext',
+    400,
+  ),
   T(
     'footer.blurb',
     'pages',
@@ -614,6 +647,16 @@ export const COPY_DEFS: readonly CopyDef[] = [
     80,
   ),
   T('sources.eyebrow', 'sections', 'Sources · eyebrow', 'Who’s covering games', 'text', 80),
+  T('lists.eyebrow', 'sections', 'Lists · eyebrow', 'Editorial lists', 'text', 80),
+  T('search.eyebrow', 'sections', 'Search · eyebrow', 'Search', 'text', 80),
+  T(
+    'game.lists.note',
+    'sections',
+    'Game page · editorial lists note',
+    'Positions on outlets’ own lists — follow a link to read the original.',
+    'longtext',
+    300,
+  ),
   T(
     'sources.owners.sub',
     'sections',
@@ -766,6 +809,19 @@ export const COPY_DEFS: readonly CopyDef[] = [
     'No scores yet — critic, our and community ratings appear here as they land.',
   ),
   T('empty.comments', 'empty', 'Comments · none yet', 'No comments yet — be the first.'),
+  T(
+    'empty.search',
+    'empty',
+    'Search · nothing found',
+    'Nothing matched. Try fewer words, or another name for the game.',
+  ),
+  T(
+    'empty.searchPrompt',
+    'empty',
+    'Search · before typing',
+    'Type at least two letters to search games, stories and sources.',
+  ),
+  T('empty.lists', 'empty', 'Lists · none yet', 'No editorial lists are published yet.'),
 
   // ── notes ───────────────────────────────────────────────────────────────────
   T(

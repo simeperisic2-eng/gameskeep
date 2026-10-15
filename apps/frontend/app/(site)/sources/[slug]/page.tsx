@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getSource, type SourceDetail } from '@/lib/public-api';
 import { JsonLd } from '@/lib/jsonld';
-import { relativeTime, scoreToTen, truncateWords } from '@/lib/format';
+import { categoryChip, relativeTime, scoreToTen, truncateWords } from '@/lib/format';
 import { breadcrumbLd, sourceOrganizationLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
 import { SourceIcon } from '../../_components/SourceIcon';
@@ -274,6 +274,11 @@ export default async function SourcePage({
                       <div className="gk-srcrow-body">
                         <div className="gk-srcrow-top">
                           <span className="gk-srcrow-type">{a.articleType}</span>
+                          {categoryChip(a.category, a.articleType) ? (
+                            <span className="gk-chip gk-chip-category">
+                              {categoryChip(a.category, a.articleType)}
+                            </span>
+                          ) : null}
                           {a.origin === 'ours' ? <span className="gk-chip amber">Ours</span> : null}
                         </div>
                         {/* B1: headline links out to the original article. */}

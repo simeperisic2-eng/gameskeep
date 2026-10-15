@@ -1,4 +1,16 @@
-import { and, arrayOverlaps, asc, desc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  arrayOverlaps,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import {
   type BiasBreakdown,
   type IntegritySignalKind,
@@ -49,6 +61,10 @@ import { tagSettings } from '../tags/settings';
 import { briefingOverrideToday, rulesSettings, rulesSnapshot } from '../rules/settings';
 import { curateList, curationFor, curationsOf, type Curation } from '../curation/service';
 import { brandName, copyState } from '../copy/settings';
+import { indexableTopics, isTopicIndexable } from '../seo/indexing';
+import { articleCategorySql, keysInModes, modeMap, newsCategories } from '../news/categories';
+import { gameEditorialLists, type GameEditorialLists } from '../lists/service';
+import { NEWS_FALLBACK_CATEGORY, type NewsCategoryMode } from '@gameskeep/shared/constants';
 import { redis } from '../redis/client';
 import { homepageSettings } from '../homepage/settings';
 import { playersDelta } from '../homepage/rules';
@@ -506,7 +522,36 @@ function rowSignals(
   return { isReview, biasMode, ...shaped };
 }
 
+/** Phase P S4: `expr NOT IN (keys)` — or nothing when there is nothing to exclude. */
+function notInCategories(expr: SQL, keys: string[]): SQL | undefined {
+  return keys.length
+    ? sql`${expr} NOT IN (${sql.join(
+        keys.map((k) => sql`${k}`),
+        sql`, `,
+      )})`
+    : undefined;
+}
+
+/** Phase P S4: the news categories as the public reads need them. */
+async function categoryContext(): Promise<{
+  labels: Map<string, string>;
+  modes: Map<string, NewsCategoryMode>;
+  hide: string[];
+  lowHide: string[];
+}> {
+  const cats = await newsCategories();
+  return {
+    labels: new Map(cats.map((c) => [c.key, c.label])),
+    modes: modeMap(cats),
+    hide: keysInModes(cats, ['hide']),
+    lowHide: keysInModes(cats, ['low', 'hide']),
+  };
+}
+const topicCategorySql = sql`coalesce(${topics.category}, ${NEWS_FALLBACK_CATEGORY})`;
+
 interface DetailRowInput {
+  /** Phase P S4: the effective news category key. */
+  category?: string | null;
   id: string;
   title: string;
   excerpt: string | null;
@@ -531,6 +576,7 @@ async function detailRows(
   rows: DetailRowInput[],
   settings: DisplaySettings,
   evidence: IntegrityEvidence,
+  cats?: { labels: Map<string, string>; modes: Map<string, NewsCategoryMode> },
 ): Promise<TopicArticleRow[]> {
   const reviewIds = rows.filter((r) => r.articleType === 'review').map((r) => r.id);
   const integrity = await publicIntegrityFor(reviewIds, settings.integrityAutoPublish);
@@ -553,6 +599,11 @@ async function detailRows(
       flags: s.flags,
       reasons: s.reasons,
       integrity: s.isReview ? (integrity.get(r.id) ?? []) : null,
+      // Phase P S4: a chip for an article outside the "show" categories.
+      category:
+        cats && r.category && (cats.modes.get(r.category) ?? 'show') !== 'show'
+          ? (cats.labels.get(r.category) ?? r.category)
+          : null,
     };
   });
 }
@@ -578,7 +629,13 @@ async function loadLatestArticles(
     })
     .from(articles)
     .leftJoin(sources, eq(articles.sourceId, sources.id))
-    .where(isNotNull(articles.publishDate))
+    .where(
+      and(
+        isNotNull(articles.publishDate),
+        // Phase P S4: "low" and "hide" categories never reach the Latest rail.
+        notInCategories(articleCategorySql, (await categoryContext()).lowHide),
+      ),
+    )
     .orderBy(desc(articles.publishDate))
     .limit(limit);
 
@@ -691,17 +748,28 @@ async function buildBriefing(windowHours: number): Promise<Briefing> {
   const hi = new Date(isToday ? now : anchor.getTime());
   const lo = new Date(hi.getTime() - windowMs);
 
+  // Phase P S4: "low" and "hide" categories never count in the briefing.
+  const { lowHide } = await categoryContext();
+  const artOk =
+    notInCategories(
+      sql`coalesce(a.category_override, a.category, ${NEWS_FALLBACK_CATEGORY})`,
+      lowHide,
+    ) ?? sql`true`;
+  const topicOk =
+    notInCategories(sql`coalesce(t.category, ${NEWS_FALLBACK_CATEGORY})`, lowHide) ?? sql`true`;
   const res = await db.execute(sql`
     SELECT
       (SELECT count(DISTINCT a.source_id)::int FROM articles a
-        WHERE a.source_id IS NOT NULL AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS sources,
+        WHERE a.source_id IS NOT NULL AND a.publish_date > ${lo} AND a.publish_date <= ${hi}
+          AND ${artOk}) AS sources,
       (SELECT count(DISTINCT at.topic_id)::int FROM article_topics at
         JOIN articles a ON a.id = at.article_id
         JOIN topics t ON t.id = at.topic_id
         WHERE t.bias_distribution IS NOT NULL
-          AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS topics,
+          AND a.publish_date > ${lo} AND a.publish_date <= ${hi} AND ${topicOk}) AS topics,
       (SELECT count(*)::int FROM articles a
-        WHERE a.article_type = 'review' AND a.publish_date > ${lo} AND a.publish_date <= ${hi}) AS reviews
+        WHERE a.article_type = 'review' AND a.publish_date > ${lo} AND a.publish_date <= ${hi}
+          AND ${artOk}) AS reviews
   `);
   const raw = res as unknown as { rows?: Record<string, unknown>[] } | Record<string, unknown>[];
   const row = (Array.isArray(raw) ? raw[0] : raw.rows?.[0]) ?? {};
@@ -906,6 +974,8 @@ export interface TopicArticleRow {
   reasons: string[];
   /** Review rows only: the public integrity rows (empty ⇒ "No signals found"). */
   integrity: PublicIntegrityRow[] | null;
+  /** Phase P S4: the category label when it is a "low" / "hide" one (a chip); else null. */
+  category: string | null;
 }
 
 export interface TopicTimelineEntry {
@@ -1101,7 +1171,14 @@ async function relatedTopicsForGame(
         lastActivityAt: topics.lastActivityAt,
       })
       .from(topics)
-      .where(and(inArray(topics.id, ids), isNotNull(topics.biasDistribution))),
+      .where(
+        and(
+          inArray(topics.id, ids),
+          isNotNull(topics.biasDistribution),
+          // Phase P S4: stories in a "hide" category are not offered as related.
+          notInCategories(topicCategorySql, (await categoryContext()).hide),
+        ),
+      ),
     sourceCountsByTopic(ids),
   ]);
 
@@ -1143,7 +1220,6 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       distribution: topics.biasDistribution,
       createdAt: topics.createdAt,
       lastActivityAt: topics.lastActivityAt,
-      noindex: topics.noindex,
     })
     .from(topics)
     .leftJoin(topicTypes, eq(topics.typeId, topicTypes.id))
@@ -1170,6 +1246,7 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
         qualityScore: articles.qualityScore,
         qualityOverride: articles.qualityOverride,
         influenceBreakdown: articles.influenceBreakdown,
+        category: articleCategorySql,
       })
       .from(articleTopics)
       .innerJoin(articles, eq(articleTopics.articleId, articles.id))
@@ -1209,7 +1286,12 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
     await relatedTopicCardsBySlug(relatedCur.pins.filter((x) => x !== topic.slug)),
   );
 
-  const articleRows = await detailRows(artRows, settings, evidence);
+  const articleRows = await detailRows(
+    artRows.map((r) => ({ ...r, category: String(r.category) })),
+    settings,
+    evidence,
+    await categoryContext(),
+  );
   const entry = flagTallies.get(topic.id) ?? emptyTopicTally();
 
   return {
@@ -1239,7 +1321,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       label: t.label,
     })),
     related,
-    noindex: topic.noindex,
+    // Phase P S4: the indexing rule (sources / summary + game / category) or the editor's setting.
+    noindex: !(await isTopicIndexable(topic.id)),
   };
 }
 
@@ -1422,6 +1505,8 @@ export interface GameDetail {
   tagGroups: GameTagGroups;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
+  /** Phase P S4: this game on confirmed editorial lists ("#3 at IGN" + link out) + comparison lines. */
+  editorialLists: GameEditorialLists;
   /** Outlet review articles — their own block, pinned above the news (Phase P S1). */
   reviews: GameArticleRow[];
   /** Other coverage that mentions the game (reviews excluded). */
@@ -1587,6 +1672,7 @@ async function articlesForGame(
         qualityScore: articles.qualityScore,
         qualityOverride: articles.qualityOverride,
         influenceBreakdown: articles.influenceBreakdown,
+        category: articleCategorySql,
       })
       .from(articleSubjects)
       .innerJoin(articles, eq(articleSubjects.articleId, articles.id))
@@ -1595,14 +1681,19 @@ async function articlesForGame(
         and(
           eq(articleSubjects.subjectId, subjectId),
           reviewsOnly ? eq(articles.articleType, 'review') : ne(articles.articleType, 'review'),
+          // Phase P S4 (owner): "hide" drops; "low" stays with a category chip.
+          notInCategories(articleCategorySql, cats.hide),
         ),
       )
       .orderBy(desc(articles.publishDate))
       .limit(limit);
+  const cats = await categoryContext();
   const [reviewRows, newsRows] = await Promise.all([query(true), query(false)]);
+  const asInput = (rows: Awaited<ReturnType<typeof query>>) =>
+    rows.map((r) => ({ ...r, category: String(r.category) }));
   const [reviews, news] = await Promise.all([
-    detailRows(reviewRows, settings, evidence),
-    detailRows(newsRows, settings, evidence),
+    detailRows(asInput(reviewRows), settings, evidence, cats),
+    detailRows(asInput(newsRows), settings, evidence, cats),
   ]);
   return { reviews, news };
 }
@@ -1627,7 +1718,14 @@ async function relatedTopicsForGameSubject(subjectId: string): Promise<RelatedTo
         lastActivityAt: topics.lastActivityAt,
       })
       .from(topics)
-      .where(and(inArray(topics.id, ids), isNotNull(topics.biasDistribution))),
+      .where(
+        and(
+          inArray(topics.id, ids),
+          isNotNull(topics.biasDistribution),
+          // Phase P S4: stories in a "hide" category are not offered as related.
+          notInCategories(topicCategorySql, (await categoryContext()).hide),
+        ),
+      ),
     sourceCountsByTopic(ids),
   ]);
   return rows
@@ -1897,9 +1995,14 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   }
 
   const player = playerRows[0];
-  const recordedPeak = await recordedPlayerPeak(g.gameId);
+  const [recordedPeak, editorialLists] = await Promise.all([
+    recordedPlayerPeak(g.gameId),
+    // Phase P S4: positions on confirmed lists + comparison lines (never a full list).
+    gameEditorialLists(g.gameId, g.slug),
+  ]);
 
   return {
+    editorialLists,
     noindex: g.noindex,
     id: g.gameId, // I6 Slice 8: the community write components address the game by id
     slug: g.slug,
@@ -3082,6 +3185,7 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
   }
 
   const sourceRules = (await rulesSettings()).lists;
+  const srcCats = await categoryContext();
   const [recentRows, topGameRows, siblingRows] = await Promise.all([
     db
       .select({
@@ -3096,9 +3200,11 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
         qualityScore: articles.qualityScore,
         qualityOverride: articles.qualityOverride,
         influenceBreakdown: articles.influenceBreakdown,
+        category: articleCategorySql,
       })
       .from(articles)
-      .where(eq(articles.sourceId, s.id))
+      // Phase P S4 (owner): "hide" drops; "low" stays with a category chip.
+      .where(and(eq(articles.sourceId, s.id), notInCategories(articleCategorySql, srcCats.hide)))
       .orderBy(desc(articles.publishDate))
       .limit(sourceRules.sourceRecentCoverage),
     db
@@ -3133,9 +3239,15 @@ export async function getSourceDetail(slug: string): Promise<SourceDetail | null
   ]);
 
   const recentArticles = await detailRows(
-    recentRows.map((r) => ({ ...r, sourceName: s.name, sourceSlug: s.slug })),
+    recentRows.map((r) => ({
+      ...r,
+      sourceName: s.name,
+      sourceSlug: s.slug,
+      category: String(r.category),
+    })),
     settings,
     evidence,
+    srcCats,
   );
 
   return {
@@ -3187,24 +3299,15 @@ export interface SitemapEntry {
   lastModified: string | null;
 }
 
-/** Every public, rendered topic slug for the sitemap (real stories, ≥1 article). */
+/**
+ * Every INDEXABLE story for the sitemap (Phase P S4): enough sources, or an AI
+ * summary and a linked game, or an editor's "index" — never an editor's noindex.
+ */
 export async function getSitemapTopics(): Promise<SitemapEntry[]> {
-  const rows = await db
-    .select({
-      slug: topics.slug,
-      distribution: topics.biasDistribution,
-      lastActivityAt: topics.lastActivityAt,
-      updatedAt: topics.updatedAt,
-    })
-    .from(topics)
-    .where(and(isNotNull(topics.biasDistribution), eq(topics.noindex, false)))
-    .orderBy(desc(topics.lastActivityAt));
-  return rows
-    .filter((r) => (r.distribution?.articleCount ?? 0) > 0)
-    .map((r) => ({
-      slug: r.slug,
-      lastModified: (r.lastActivityAt ?? r.updatedAt)?.toISOString() ?? null,
-    }));
+  return (await indexableTopics()).map((t) => ({
+    slug: t.slug,
+    lastModified: t.lastModified ? t.lastModified.toISOString() : null,
+  }));
 }
 
 /** Every catalog game slug for the sitemap (each game has a public hub page). */

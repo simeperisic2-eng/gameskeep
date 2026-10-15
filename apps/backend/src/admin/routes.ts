@@ -24,6 +24,7 @@ import { registerBiasAdminRoutes } from './bias-routes';
 import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerTagAdminRoutes } from './tag-routes';
 import { registerRulesAdminRoutes } from './rules-routes';
+import { registerS4AdminRoutes } from './s4-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
@@ -101,7 +102,35 @@ async function assertValid(resource: ResourceDef, next: Row): Promise<void> {
   if (message) throw new ZodError([{ code: 'custom', path: [], message }]);
 }
 
+/**
+ * Phase P S4: the resource's follow-up after a write (search index, categories,
+ * consensus — background jobs). A failure is logged, never surfaced: the write
+ * itself succeeded.
+ */
+async function runAfterWrite(
+  resource: ResourceDef,
+  kind: 'create' | 'update' | 'delete',
+  row: Row | null,
+  changed: string[],
+): Promise<void> {
+  if (!resource.afterWrite) return;
+  try {
+    await resource.afterWrite(kind, row, changed);
+  } catch (err) {
+    console.error(
+      `[admin] afterWrite ${resource.name} failed:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 async function createOne(resource: ResourceDef, body: unknown, actor: Actor): Promise<Row> {
+  const row = await createOneRaw(resource, body, actor);
+  await runAfterWrite(resource, 'create', row, []);
+  return row;
+}
+
+async function createOneRaw(resource: ResourceDef, body: unknown, actor: Actor): Promise<Row> {
   const parsed = resource.create.parse(body) as Row;
   await assertValid(resource, parsed);
   if (resource.ops?.create) return resource.ops.create(parsed, actor);
@@ -202,6 +231,7 @@ async function updateOne(
         actor,
       });
     }
+    if (out) await runAfterWrite(resource, 'update', out, changedKeys);
     return out;
   }
   const before = await getRow(resource.table, id);
@@ -248,10 +278,22 @@ async function updateOne(
     summary: reason ? `import fix (${reason})` : undefined,
     actor,
   });
+  await runAfterWrite(resource, 'update', after, changed);
   return redactRow(resource, after)!;
 }
 
 async function deleteOne(
+  resource: ResourceDef,
+  id: string,
+  actor: Actor,
+  rawReason?: unknown,
+): Promise<Row | null> {
+  const row = await deleteOneRaw(resource, id, actor, rawReason);
+  if (row) await runAfterWrite(resource, 'delete', row, []);
+  return row;
+}
+
+async function deleteOneRaw(
   resource: ResourceDef,
   id: string,
   actor: Actor,
@@ -520,6 +562,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       await registerHomepageAdminRoutes(admin);
       // Phase P S3b: rules & limits, briefing override, copy registry.
       await registerRulesAdminRoutes(admin);
+      // Phase P S4: editorial lists, news categories overview, search tools.
+      await registerS4AdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

@@ -2696,6 +2696,102 @@ const EVENTS_EXTRA: FeedEvent[] = [
       },
     ],
   },
+  // ── Phase P S4: news categories + editorial-list candidates ──────────────────
+  // Typed "news" by the feed, so the title keywords decide: deals / guide → low,
+  // listicle → hide (admin-switchable). Two outlet year lists arrive as CANDIDATES
+  // (never public until an editor confirms them).
+  {
+    key: 's4-summer-sale-deals',
+    gameRefs: ['Cyberpunk 2077'],
+    date: '2026-06-11',
+    type: 'news',
+    articles: [
+      {
+        source: 'pc-gamer',
+        title: 'Steam Summer Sale 2026: the best deals on Cyberpunk 2077 and more',
+        excerpt:
+          'The annual sale is live, with steep cuts on the biggest RPGs of the last few years.',
+        affiliate: true,
+      },
+      {
+        source: 'gamesradar',
+        title: 'Cyberpunk 2077 is 60% off in the Steam Summer Sale',
+        excerpt:
+          'CD Projekt’s RPG and its Phantom Liberty expansion are discounted until the sale ends.',
+        affiliate: true,
+      },
+    ],
+  },
+  {
+    key: 's4-helldivers-guide',
+    gameRefs: ['Helldivers 2'],
+    date: '2026-06-09',
+    type: 'news',
+    articles: [
+      {
+        source: 'gamesradar',
+        title: 'Helldivers 2 guide: how to unlock every stratagem fast',
+        excerpt: 'The quickest route through the stratagem tree, mission by mission.',
+      },
+      {
+        source: 'pc-gamer',
+        title: 'Helldivers 2 best settings for smooth PC performance',
+        excerpt: 'The options that cost the most frames, and what to turn down first.',
+      },
+    ],
+  },
+  {
+    key: 's4-listicle-ranked',
+    gameRefs: ['Elden Ring'],
+    date: '2026-06-07',
+    type: 'news',
+    articles: [
+      {
+        source: 'vg247',
+        title: 'Every FromSoftware game, ranked',
+        excerpt: 'From King’s Field to Elden Ring, the studio’s catalogue in order.',
+      },
+    ],
+  },
+  {
+    key: 's4-listicle-games-like',
+    gameRefs: ['Elden Ring'],
+    date: '2026-06-06',
+    type: 'news',
+    articles: [
+      {
+        source: 'gamesradar',
+        title: '10 games like Elden Ring to play next',
+        excerpt: 'Open worlds, hard bosses and build-crafting to fill the gap.',
+      },
+    ],
+  },
+  {
+    key: 's4-list-ign-2026',
+    gameRefs: [],
+    date: '2026-06-12',
+    type: 'news',
+    articles: [
+      {
+        source: 'ign',
+        title: 'The best games of 2026 so far',
+        excerpt: 'Our running list of the year’s standout releases, updated as the year goes on.',
+      },
+    ],
+  },
+  {
+    key: 's4-list-polygon-goty-2025',
+    gameRefs: [],
+    date: '2025-12-11',
+    type: 'news',
+    articles: [
+      {
+        source: 'polygon',
+        title: 'Our Game of the Year 2025, and why it won',
+        excerpt: 'The staff vote, the shortlist and the game that came out on top.',
+      },
+    ],
+  },
 ];
 
 function buildFeed(): RawFeedItem[] {

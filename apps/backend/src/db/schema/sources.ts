@@ -39,5 +39,8 @@ export const sources = pgTable('sources', {
   statAffiliatePct: real('stat_affiliate_pct'),
   statAvgTrust: real('stat_avg_trust'),
 
+  /** Phase P S4: an editor keeps this source out of site search. */
+  searchHidden: boolean('search_hidden').notNull().default(false),
+
   ...timestamps(),
 });

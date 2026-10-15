@@ -1,5 +1,6 @@
 import { NavLinks } from './NavLinks';
 import { HeaderAuth } from './HeaderAuth';
+import { HeaderSearch } from './HeaderSearch';
 import { siteText, type PublicSite } from '@/lib/site';
 
 function SearchIcon(): React.JSX.Element {
@@ -40,10 +41,11 @@ export function SiteHeader({ site }: { site: PublicSite }): React.JSX.Element {
         <NavLinks />
 
         <div className="gk-header-right">
-          <label className="gk-search" aria-label="Search games, stories and sources">
+          <HeaderSearch />
+          {/* Phones: the box is hidden — a plain link to the search page. */}
+          <a className="gk-search-mobile" href="/search" aria-label="Search">
             <SearchIcon />
-            <input type="search" placeholder="Search…" name="q" autoComplete="off" />
-          </label>
+          </a>
           <HeaderAuth />
           <button className="gk-burger" type="button" aria-label="Open menu">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>

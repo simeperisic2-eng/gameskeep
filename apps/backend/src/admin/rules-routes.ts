@@ -16,6 +16,9 @@ import {
 } from '../rules/settings';
 import { copyState, CopyError, invalidatePublicSite, setCopy } from '../copy/settings';
 import { enqueueHomepageCompute } from '../homepage/jobs';
+import { enqueueConsensus } from '../lists/jobs';
+import { enqueueReclassify } from '../articles/jobs';
+import { bumpSearchVersion } from '../search/index';
 import { RANK } from './rbac';
 import { getAdminAuth } from './guard';
 import { actorOf, sendError } from './http';
@@ -45,7 +48,19 @@ export async function registerRulesAdminRoutes(admin: FastifyInstance): Promise<
       const recomputeJobId = changed.some((c) => c.startsWith('homepage.'))
         ? ((await enqueueHomepageCompute({ reason: 'rules' })) ?? null)
         : null;
-      reply.send({ data: settings, changed, recomputeJobId });
+      // Phase P S4: list rules → the consensus; news rules → the classifier;
+      // search rules → drop cached answers.
+      const consensusJobId = changed.some((c) => c.startsWith('editorialLists.'))
+        ? ((await enqueueConsensus({ reason: 'rules' })) ?? null)
+        : null;
+      const reclassifyJobId = changed.some(
+        (c) => c === 'news.topicCategorySharePct' || c === 'news.classifyExcerpt',
+      )
+        ? ((await enqueueReclassify('rules')) ?? null)
+        : null;
+      if (changed.some((c) => c.startsWith('search.') || c.startsWith('news.')))
+        await bumpSearchVersion();
+      reply.send({ data: settings, changed, recomputeJobId, consensusJobId, reclassifyJobId });
     } catch (err) {
       if (err instanceof RulesError) {
         reply.code(400).send({ error: 'validation', message: err.message });

@@ -99,6 +99,8 @@ export const articleEditorialCarryover = pgTable(
     qualityOverrideReason: text('quality_override_reason'),
     editorNote: text('editor_note'),
     internalAssessment: text('internal_assessment'),
+    /** Phase P S4: an editor's news category for the article. */
+    categoryOverride: varchar('category_override', { length: 40 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('article_editorial_carryover_guid').on(t.externalGuid)],

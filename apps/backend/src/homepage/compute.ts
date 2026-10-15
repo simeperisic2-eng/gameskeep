@@ -39,6 +39,8 @@ import {
   type RuleLists,
 } from './rules';
 import { rulesSettings } from '../rules/settings';
+import { articleCategorySql, modeMap, modeOf, newsCategories } from '../news/categories';
+import type { NewsCategoryMode } from '@gameskeep/shared/constants';
 import type { RulesSettings } from '@gameskeep/shared/constants';
 import { publishedTagSlugsByGame } from '../tags/service';
 
@@ -57,6 +59,8 @@ interface TopicRow {
   id: string;
   slug: string;
   lastActivity: number;
+  /** Phase P S4: the story's news-category display mode. */
+  mode: NewsCategoryMode;
   attrs: RuleLists;
   now: { articles: number; sources: Set<string> };
   prev: { articles: number; sources: Set<string> };
@@ -70,9 +74,11 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
       slug: topics.slug,
       lastActivityAt: topics.lastActivityAt,
       dist: topics.biasDistribution,
+      category: topics.category,
     })
     .from(topics)
     .where(isNotNull(topics.biasDistribution));
+  const modes = modeMap(await newsCategories());
   const out = new Map<string, TopicRow>();
   for (const r of rows) {
     const count = (r.dist as { articleCount?: number } | null)?.articleCount ?? 0;
@@ -81,6 +87,7 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
       id: r.id,
       slug: r.slug,
       lastActivity: r.lastActivityAt ? r.lastActivityAt.getTime() : 0,
+      mode: modeOf(modes, r.category),
       attrs: { categories: [], sources: [], genres: [], tags: [] },
       now: { articles: 0, sources: new Set() },
       prev: { articles: 0, sources: new Set() },
@@ -92,7 +99,9 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
     .select({
       topicId: articleTopics.topicId,
       articleId: articles.id,
-      type: articles.articleType,
+      // Phase P S4: the rule dimension "categories" = the effective news category
+      // (its keys include the old article types, so saved rules keep working).
+      type: articleCategorySql,
       publishDate: articles.publishDate,
       sourceSlug: sources.slug,
     })
@@ -105,7 +114,7 @@ async function loadTopics(windowMs: number, nowMs: number): Promise<Map<string, 
     const t = out.get(a.topicId);
     if (!t) continue;
     topicOfArticle.set(a.articleId, a.topicId);
-    t.attrs.categories!.push(a.type);
+    t.attrs.categories!.push(String(a.type));
     if (a.sourceSlug) t.attrs.sources!.push(a.sourceSlug);
     const at = a.publishDate ? a.publishDate.getTime() : NaN;
     if (!Number.isFinite(at) || at > nowMs) continue;
@@ -510,7 +519,7 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
       // coverage and no counted engagement ⇒ not trending. Fewer qualify → a
       // shorter list; below the section's minimum it is hidden (end of function).
       auto = scored
-        .filter((x) => x.now > 0 && topicPass(x.t))
+        .filter((x) => x.now > 0 && x.t.mode === 'show' && topicPass(x.t))
         .sort((a, b) => b.now - a.now || b.t.lastActivity - a.t.lastActivity)
         .map((x) => `t:${x.t.slug}`);
       break;
@@ -520,10 +529,18 @@ function buildSection(s: SectionRow, ctx: BuildCtx): SnapshotPayload {
         ctx.rules.latestExcludesTrending ? (ctx.composedRefs.get('trending') ?? []) : [],
       );
       auto = [...ctx.topicRows.values()]
-        .filter(topicPass)
+        .filter((t) => t.mode === 'show' && topicPass(t))
         .sort((a, b) => b.lastActivity - a.lastActivity)
         .map((t) => `t:${t.slug}`)
         .filter((r) => !shown.has(r));
+      break;
+    }
+    case 'more': {
+      // Phase P S4: the "low" categories (deals, guides…) — only here.
+      auto = [...ctx.topicRows.values()]
+        .filter((t) => t.mode === 'low' && topicPass(t))
+        .sort((a, b) => b.lastActivity - a.lastActivity)
+        .map((t) => `t:${t.slug}`);
       break;
     }
     case 'focus': {

@@ -22,6 +22,9 @@ import {
   TAG_FAMILIES,
   TOPIC_LOCKABLE_FIELDS,
   BADGE_OVERRIDE_STATES,
+  LIST_STATUSES,
+  NEWS_CATEGORY_MODES,
+  SEO_INDEX_MODES,
   CURATION_LISTS,
   CURATION_PAGES,
   DISCONNECT_BANDS,
@@ -131,6 +134,13 @@ export const subjectCreate = z.object({
   description: longText.optional(),
 });
 
+/** Phase P S4: a news / list category key (lowercase slug). */
+const categoryKey = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9][a-z0-9-]{0,38}$/, 'lowercase letters, digits and dashes');
+
 export const gameCreate = z.object({
   // A Game is a Subject specialization — creating one creates its Subject too.
   name: shortText,
@@ -166,6 +176,10 @@ export const gameCreate = z.object({
   isIndie: z.boolean().optional(),
   /** Phase P S3b: keep the game page out of search indexes + the sitemap. */
   noindex: z.boolean().optional(),
+  /** Phase P S4: other names the game goes by (search + the name matcher). */
+  alternateNames: z.array(z.string().trim().min(1).max(120)).max(30).optional(),
+  /** Phase P S4: keep this game out of site search. */
+  searchHidden: z.boolean().optional(),
 });
 
 export const sourceCreate = z.object({
@@ -185,6 +199,8 @@ export const sourceCreate = z.object({
   reputationBaseline: weight0to1.optional(),
   reputationCommercial: weight0to1.optional(),
   reputationGeneral: weight0to1.optional(),
+  /** Phase P S4: keep this source out of site search. */
+  searchHidden: z.boolean().optional(),
 });
 
 export const topicCreate = z.object({
@@ -196,7 +212,12 @@ export const topicCreate = z.object({
   typeId: uuid.optional(),
   /** Phase P S3b: fields the automatic passes leave alone (an edit adds itself). */
   lockedFields: z.array(z.enum(TOPIC_LOCKABLE_FIELDS)).max(TOPIC_LOCKABLE_FIELDS.length).optional(),
-  noindex: z.boolean().optional(),
+  /** Phase P S4: automatic indexing rule, or an editor's index / noindex (replaces S3b's noindex). */
+  seoIndex: z.enum(SEO_INDEX_MODES).optional(),
+  /** Phase P S4: the story's news category (an editor's choice locks it). */
+  category: categoryKey.nullable().optional(),
+  /** Phase P S4: keep this story out of site search. */
+  searchHidden: z.boolean().optional(),
 });
 
 /** Base article shape (no cross-field rule) — reused for the PATCH/update schema. */
@@ -221,6 +242,8 @@ export const articleBase = z.object({
   influenceScore: score0to100.optional(),
   qualityScore: score0to100.optional(),
   internalAssessment: z.string().max(5000).optional(),
+  /** Phase P S4: an editor's news category for this article (null = the classifier's). */
+  categoryOverride: categoryKey.nullable().optional(),
 });
 
 export const articleCreate = articleBase.refine((a) => a.origin === 'ours' || !a.body, {
@@ -1210,3 +1233,64 @@ export const tagSuggestionDecision = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reject') }).strict(),
 ]);
 export type TagSuggestionDecision = z.infer<typeof tagSuggestionDecision>;
+
+// ── Phase P S4: news categories, editorial lists, search ─────────────────────
+export const newsCategoryCreate = z.object({
+  key: categoryKey,
+  label: z.string().trim().min(1).max(60),
+  mode: z.enum(NEWS_CATEGORY_MODES).default('show'),
+  keywords: z.array(z.string().trim().toLowerCase().min(1).max(60)).max(60).default([]),
+  priority: z.number().int().min(0).max(100).default(10),
+  active: z.boolean().default(true),
+});
+
+export const editorialListCategoryCreate = z.object({
+  key: categoryKey,
+  label: z.string().trim().min(1).max(80),
+  sort: z.number().int().min(0).max(1000).default(0),
+  active: z.boolean().default(true),
+});
+
+const listYear = z.number().int().min(1970).max(2100);
+const httpsUrl = z
+  .string()
+  .trim()
+  .max(2000)
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), 'http(s) link only');
+
+/** An editor adds a list by hand (outlet + link required: facts carry source + link). */
+export const editorialListInput = z.object({
+  outletName: z.string().trim().min(1).max(200),
+  sourceSlug: z.string().trim().max(160).nullable().optional(),
+  title: z.string().trim().min(1).max(300),
+  url: httpsUrl,
+  year: listYear.nullable().optional(),
+  categoryKey: categoryKey.nullable().optional(),
+  publishedAt: z.coerce.date().nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+export const editorialListUpdate = editorialListInput.partial();
+
+/** Confirm (needs year + category + link), reject, or reopen a list. */
+export const editorialListDecision = z.object({
+  status: z.enum(LIST_STATUSES),
+  note: z.string().trim().max(500).optional(),
+});
+
+/** Entries pasted as ranked lines ("1. Name", "#2 Name", "3) Name" or one name per line). */
+export const editorialListEntriesInput = z.object({
+  text: z.string().max(20_000),
+});
+
+/** Re-match one entry: a game slug, no game (unmatched), or send it to the unmatched queue. */
+export const editorialListEntryMatch = z.object({
+  gameSlug: z.string().trim().max(160).nullable(),
+  queue: z.boolean().optional(),
+});
+
+/** The detection lexicon (lowercase phrases). */
+export const listLexiconInput = z.object({
+  patterns: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(100),
+  gotyPatterns: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(50),
+});

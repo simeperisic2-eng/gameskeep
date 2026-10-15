@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { useSite } from './SiteProvider';
 
 /**
  * Primary nav (BLUEPRINT 3 global nav): Home / Games / Topics / Upcoming /
@@ -19,9 +20,14 @@ const ITEMS: { href: string; label: string }[] = [
 
 export function NavLinks(): React.JSX.Element {
   const pathname = usePathname();
+  // Phase P S4: "Lists" (editorial-list consensus) after Awards — an admin rule.
+  const { layout } = useSite();
+  const items = layout.listsInNav
+    ? [...ITEMS.slice(0, 5), { href: '/lists', label: 'Lists' }, ...ITEMS.slice(5)]
+    : ITEMS;
   return (
     <nav className="gk-nav" aria-label="Primary">
-      {ITEMS.map((item) => {
+      {items.map((item) => {
         const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
         return (
           <a key={item.href} href={item.href} aria-current={active ? 'page' : undefined}>

@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next';
 import {
   getAwardsArchive,
   getSitemapGames,
+  getSitemapLists,
   getSitemapSources,
   getSitemapTags,
   getSitemapTopics,
@@ -19,12 +20,13 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 export const dynamic = 'force-dynamic';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const [topics, games, sources, awards, tagPages] = await Promise.all([
+  const [topics, games, sources, awards, tagPages, listPages] = await Promise.all([
     getSitemapTopics(),
     getSitemapGames(),
     getSitemapSources(),
     getAwardsArchive(),
     getSitemapTags(),
+    getSitemapLists(),
   ]);
   const now = new Date();
 
@@ -81,6 +83,23 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     entries.push({
       url: `${siteUrl}/games/tag/${t.slug}`,
       lastModified: t.lastModified ? new Date(t.lastModified) : now,
+      changeFrequency: 'weekly',
+      priority: 0.5,
+    });
+  }
+  // Phase P S4: editorial-list consensus pages (public from the admin-set minimum of lists).
+  if (listPages.length) {
+    entries.push({
+      url: `${siteUrl}/lists`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.5,
+    });
+  }
+  for (const l of listPages) {
+    entries.push({
+      url: `${siteUrl}/lists/${l.year}/${l.categoryKey}`,
+      lastModified: l.lastModified ? new Date(l.lastModified) : now,
       changeFrequency: 'weekly',
       priority: 0.5,
     });

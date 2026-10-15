@@ -18,7 +18,14 @@ export type { Block, Inline } from '@gameskeep/shared/copy';
  * page never shows a blank brand or label.
  */
 export interface PublicSite extends SiteCopy {
-  layout: { heroRotateMinutes: number; heroSecondaryCount: number; latestInitial: number };
+  layout: {
+    heroRotateMinutes: number;
+    heroSecondaryCount: number;
+    latestInitial: number;
+    /** Phase P S4 */
+    searchMinChars: number;
+    listsInNav: boolean;
+  };
   display: { qualityFilterMin: number; excerpt: Record<string, number> };
 }
 
@@ -31,6 +38,8 @@ export function fallbackSite(): PublicSite {
       heroRotateMinutes: RULES_DEFAULTS.homepage.heroRotateMinutes,
       heroSecondaryCount: RULES_DEFAULTS.homepage.heroSecondaryCount,
       latestInitial: RULES_DEFAULTS.homepage.latestInitial,
+      searchMinChars: RULES_DEFAULTS.search.minChars,
+      listsInNav: RULES_DEFAULTS.editorialLists.showInNav,
     },
     display: {
       qualityFilterMin: RULES_DEFAULTS.display.qualityFilterMin,
@@ -75,6 +84,8 @@ export function coerceSite(raw: unknown): PublicSite | null {
       heroRotateMinutes: num(layout.heroRotateMinutes, fb.layout.heroRotateMinutes),
       heroSecondaryCount: num(layout.heroSecondaryCount, fb.layout.heroSecondaryCount),
       latestInitial: num(layout.latestInitial, fb.layout.latestInitial),
+      searchMinChars: num(layout.searchMinChars, fb.layout.searchMinChars),
+      listsInNav: typeof layout.listsInNav === 'boolean' ? layout.listsInNav : fb.layout.listsInNav,
     },
     display: {
       qualityFilterMin: num(display.qualityFilterMin, fb.display.qualityFilterMin),
@@ -121,7 +132,14 @@ export interface ClientSite {
 }
 
 /** Text keys client components read (labels, empty states, newsletter block). */
-const CLIENT_TEXT_PREFIXES = ['brand.name', 'label.', 'empty.', 'home.newsletter.', 'paid.'];
+const CLIENT_TEXT_PREFIXES = [
+  'brand.name',
+  'label.',
+  'empty.',
+  'home.newsletter.',
+  'paid.',
+  'search.',
+];
 
 export function toClientSite(site: PublicSite): ClientSite {
   return {

@@ -18,6 +18,22 @@ const GROUPS: { key: string; title: string; sub: string }[] = [
   { key: 'community', title: 'Community', sub: 'Reader feed.' },
   { key: 'upcoming', title: '/upcoming', sub: 'Ordering of the upcoming slate.' },
   { key: 'lists', title: 'List sizes', sub: 'How many items each list shows.' },
+  { key: 'search', title: 'Search', sub: 'Site search, the typeahead and its rate limit.' },
+  {
+    key: 'seo',
+    title: 'Story indexing',
+    sub: 'When a story page is indexable (a story set to index / noindex overrides this).',
+  },
+  {
+    key: 'news',
+    title: 'News categories',
+    sub: 'How articles and stories get a category (modes: News categories page).',
+  },
+  {
+    key: 'editorialLists',
+    title: 'Editorial lists',
+    sub: 'The consensus of outlets’ confirmed year-end lists.',
+  },
 ];
 
 const LABELS: Record<string, string> = {
@@ -54,6 +70,37 @@ const LABELS: Record<string, string> = {
   'lists.discoveryMostDiscussed': '/games · most discussed',
   'lists.discoveryComingSoon': '/games · coming soon',
   'lists.whyReasons': 'Why-it’s-ranked reasons per item',
+  'search.minChars': 'Minimum characters before searching',
+  'search.suggestPerGroup': 'Typeahead · suggestions per group',
+  'search.pageSize': 'Results per page',
+  'search.rateLimitPerClient': 'Typeahead · requests per visitor per window',
+  'search.rateLimitGlobal': 'Typeahead · requests site-wide per window',
+  'search.rateLimitWindowSeconds': 'Typeahead · rate-limit window (seconds)',
+  'search.fuzzy': 'Fuzzy matching for typos when the exact words find nothing',
+  'search.fuzzyThresholdPct': 'Fuzzy · minimum similarity (%)',
+  'search.weightExact': 'Ranking · exact title match bonus',
+  'search.weightPrefix': 'Ranking · title-starts-with bonus',
+  'search.weightText': 'Ranking · text relevance weight',
+  'search.cacheSeconds': 'Results cached for (seconds)',
+  'search.maxQueryChars': 'Longest query accepted (characters)',
+  'seo.topicMinSources': 'A story is indexable from this many distinct sources',
+  'seo.indexIfSummaryAndGame': '…or with fewer sources when it has a summary and a linked game',
+  'seo.noindexHiddenCategories': 'Stories in a hidden category are never indexed',
+  'news.topicCategorySharePct':
+    'A story takes a category when at least this % of its articles have it',
+  'news.classifyExcerpt': 'Keywords also match the excerpt (not only the title)',
+  'news.lowSearchable': 'Low-mode stories are searchable',
+  'news.hideSearchable': 'Hidden-mode stories are searchable',
+  'editorialLists.minAppearances': 'A game enters the consensus from this many lists (minimum 2)',
+  'editorialLists.maxRows': 'Consensus page · games shown',
+  'editorialLists.deviationTopN': 'Comparison line · “absent from every other top N”',
+  'editorialLists.indexMinLists':
+    'A consensus page is public and indexable from this many confirmed lists',
+  'editorialLists.gamePageMax': 'Game page · lists shown',
+  'editorialLists.lineSoloTop': 'Comparison line · #1 at one outlet only',
+  'editorialLists.lineCoverage': 'Comparison line · “On k of n lists”',
+  'editorialLists.lineSpread': 'Comparison line · highest to lowest position',
+  'editorialLists.showInNav': 'Show “Lists” in the site navigation',
 };
 
 const isTree = (v: unknown): v is RuleTree =>

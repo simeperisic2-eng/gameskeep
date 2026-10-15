@@ -234,6 +234,8 @@ export interface TopicArticleRow {
   reasons: string[];
   /** Review rows only (empty ⇒ "No signals found"). */
   integrity: PublicIntegrityRow[] | null;
+  /** Phase P S4: the category label of a "low" / "hide" item (a chip); else null. */
+  category?: string | null;
 }
 
 export interface TopicTimelineEntry {
@@ -449,6 +451,8 @@ export interface GameDetail {
   tagGroups: GameTagGroups;
   review: PublicReview | null;
   relatedTopics: RelatedTopic[];
+  /** Phase P S4: positions on confirmed editorial lists + comparison lines. */
+  editorialLists?: GameEditorialLists;
   /** Outlet review articles — own block, pinned above the news (Phase P S1). */
   reviews: GameArticleRow[];
   /** Other coverage (reviews excluded). */
@@ -820,8 +824,9 @@ async function getSitemap(): Promise<{
   games: SitemapTopic[];
   sources: SitemapTopic[];
   tags: SitemapTopic[];
+  lists: SitemapListPage[];
 }> {
-  const empty = { topics: [], games: [], sources: [], tags: [] };
+  const empty = { topics: [], games: [], sources: [], tags: [], lists: [] };
   try {
     const res = await fetch(`${backendUrl}/public/sitemap`, { cache: 'no-store' });
     if (!res.ok) return empty;
@@ -831,6 +836,7 @@ async function getSitemap(): Promise<{
         games?: SitemapTopic[];
         sources?: SitemapTopic[];
         tags?: SitemapTopic[];
+        lists?: SitemapListPage[];
       };
     };
     return {
@@ -838,6 +844,7 @@ async function getSitemap(): Promise<{
       games: body.data?.games ?? [],
       sources: body.data?.sources ?? [],
       tags: body.data?.tags ?? [],
+      lists: body.data?.lists ?? [],
     };
   } catch {
     return empty;
@@ -919,6 +926,11 @@ export async function getSitemapGames(): Promise<SitemapTopic[]> {
 
 export async function getSitemapSources(): Promise<SitemapTopic[]> {
   return (await getSitemap()).sources;
+}
+
+/** Phase P S4: public editorial-list consensus pages (≥ the admin-set minimum of lists). */
+export async function getSitemapLists(): Promise<SitemapListPage[]> {
+  return (await getSitemap()).lists;
 }
 
 /** Indexable tag pages only (≥ the admin-set minimum of published games). */
@@ -1076,5 +1088,113 @@ export async function getGameAwardWins(slug: string): Promise<GameAwardWin[]> {
     return body.data ?? [];
   } catch {
     return [];
+  }
+}
+
+// ── Phase P S4: search ────────────────────────────────────────────────────────
+export type SearchGroup = 'games' | 'stories' | 'sources';
+export interface SearchHit {
+  slug: string;
+  title: string;
+  subtitle: string | null;
+  category: string | null;
+}
+export interface SearchResult {
+  q: string;
+  tooShort: boolean;
+  groups: Record<SearchGroup, SearchHit[]>;
+  totals?: Record<SearchGroup, number>;
+  type?: SearchGroup | null;
+  page?: number;
+  pageSize?: number;
+}
+const EMPTY_SEARCH: SearchResult = {
+  q: '',
+  tooShort: true,
+  groups: { games: [], stories: [], sources: [] },
+  totals: { games: 0, stories: 0, sources: 0 },
+};
+
+/** The /search page (SSR). Never throws — an outage reads as "nothing found". */
+export async function getSearch(q: string, type?: string, page?: number): Promise<SearchResult> {
+  try {
+    const qs = new URLSearchParams({ q: q.slice(0, 200) });
+    if (type) qs.set('type', type);
+    if (page && page > 1) qs.set('page', String(page));
+    const res = await fetch(`${backendUrl}/public/search?${qs.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return { ...EMPTY_SEARCH, q };
+    return ((await res.json()) as { data?: SearchResult }).data ?? { ...EMPTY_SEARCH, q };
+  } catch {
+    return { ...EMPTY_SEARCH, q };
+  }
+}
+
+// ── Phase P S4: editorial lists (consensus only — never an outlet's full list) ─
+export interface SitemapListPage {
+  year: number;
+  categoryKey: string;
+  lastModified: string | null;
+}
+export interface ListsIndexEntry {
+  year: number;
+  categoryKey: string;
+  label: string;
+  lists: number;
+  top: { slug: string; name: string }[];
+}
+export interface ListConsensus {
+  year: number;
+  category: { key: string; label: string };
+  totalLists: number;
+  lists: { outlet: string; title: string; url: string; publishedAt: string | null }[];
+  rows: {
+    position: number;
+    game: { slug: string; name: string; releaseDate: string | null };
+    appearances: number;
+    avgRank: number;
+    positions: { outlet: string; rank: number; url: string | null }[];
+    lines: string[];
+  }[];
+  computedAt: string | null;
+}
+export interface GameEditorialLists {
+  count: number;
+  lists: {
+    id: string;
+    outlet: string;
+    title: string;
+    url: string;
+    rank: number;
+    year: number;
+    category: string;
+  }[];
+  lines: string[];
+  consensus: { year: number; categoryKey: string; label: string; position: number }[];
+}
+
+export async function getListsIndex(): Promise<ListsIndexEntry[]> {
+  try {
+    const res = await fetch(`${backendUrl}/public/lists`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    return ((await res.json()) as { data?: ListsIndexEntry[] }).data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** One consensus page; null → 404 (not public, or no such year / category). */
+export async function getListConsensus(
+  year: number,
+  category: string,
+): Promise<ListConsensus | null> {
+  try {
+    const res = await fetch(
+      `${backendUrl}/public/lists/${encodeURIComponent(String(year))}/${encodeURIComponent(category)}`,
+      { cache: 'no-store' },
+    );
+    if (!res.ok) return null;
+    return ((await res.json()) as { data?: ListConsensus }).data ?? null;
+  } catch {
+    return null;
   }
 }

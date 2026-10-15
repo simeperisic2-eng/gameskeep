@@ -1,4 +1,5 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { articleCategorySql, keysInModes, newsCategories } from '../news/categories';
 import { db } from '../db/client';
 import { rulesSettings } from '../rules/settings';
 import {
@@ -112,6 +113,8 @@ export interface FeedItem {
   sourceSlug: string | null;
   /** Which followed entity surfaced this item into the feed. */
   via: { type: 'game' | 'topic'; name: string; slug: string };
+  /** Phase P S4: the category label of a "low" item (a chip); else null. */
+  category: string | null;
 }
 export interface FeedData {
   followedGames: FeedGame[];
@@ -128,6 +131,18 @@ export interface FeedData {
 export async function getFeed(userId: string): Promise<FeedData> {
   // Phase P S3b: the feed length is a rule (Rules & limits; default 30).
   const FEED_LIMIT = (await rulesSettings()).community.feedLimit;
+  // Phase P S4: a "hide" category drops; a "low" one stays with a chip (it was followed).
+  const allCats = await newsCategories();
+  const hidden = keysInModes(allCats, ['hide']);
+  const cats = {
+    lowLabels: new Map(allCats.filter((c) => c.mode === 'low').map((c) => [c.key, c.label])),
+  };
+  const notHidden = hidden.length
+    ? sql`${articleCategorySql} NOT IN (${sql.join(
+        hidden.map((k) => sql`${k}`),
+        sql`, `,
+      )})`
+    : sql`true`;
   const followRows = await db
     .select({ entityType: follows.entityType, entityId: follows.entityId })
     .from(follows)
@@ -173,13 +188,14 @@ export async function getFeed(userId: string): Promise<FeedData> {
           sourceSlug: sources.slug,
           viaName: subjects.name,
           viaSlug: subjects.slug,
+          category: articleCategorySql,
         })
         .from(articles)
         .innerJoin(articleSubjects, eq(articleSubjects.articleId, articles.id))
         .innerJoin(subjects, eq(subjects.id, articleSubjects.subjectId))
         .innerJoin(games, eq(games.subjectId, subjects.id))
         .leftJoin(sources, eq(sources.id, articles.sourceId))
-        .where(inArray(games.id, gameIds))
+        .where(and(inArray(games.id, gameIds), notHidden))
         .orderBy(desc(articles.publishDate))
         .limit(FEED_LIMIT)
     : [];
@@ -198,12 +214,13 @@ export async function getFeed(userId: string): Promise<FeedData> {
           sourceSlug: sources.slug,
           viaName: topics.title,
           viaSlug: topics.slug,
+          category: articleCategorySql,
         })
         .from(articles)
         .innerJoin(articleTopics, eq(articleTopics.articleId, articles.id))
         .innerJoin(topics, eq(topics.id, articleTopics.topicId))
         .leftJoin(sources, eq(sources.id, articles.sourceId))
-        .where(inArray(topics.id, topicIds))
+        .where(and(inArray(topics.id, topicIds), notHidden))
         .orderBy(desc(articles.publishDate))
         .limit(FEED_LIMIT)
     : [];
@@ -224,6 +241,7 @@ export async function getFeed(userId: string): Promise<FeedData> {
         sourceName: r.sourceName,
         sourceSlug: r.sourceSlug,
         via: { type, name: r.viaName, slug: r.viaSlug },
+        category: cats.lowLabels.get(String(r.category)) ?? null,
       });
     }
   };

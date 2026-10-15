@@ -697,3 +697,51 @@ export interface CopyConfig {
 export async function getCopyConfig(): Promise<CopyConfig> {
   return (await adminGet<{ data: CopyConfig }>('/copy')).data;
 }
+
+// ── Phase P S4: editorial lists, news categories, search ─────────────────────
+export interface AdminListRow {
+  id: string;
+  status: 'candidate' | 'confirmed' | 'rejected';
+  outletName: string;
+  title: string;
+  url: string | null;
+  year: number | null;
+  categoryKey: string | null;
+  publishedAt: string | null;
+  detectedBy: string;
+  decidedBy: string | null;
+  entries: number;
+  matched: number;
+}
+export interface ListsQueueData {
+  candidates: AdminListRow[];
+  confirmed: AdminListRow[];
+  rejected: AdminListRow[];
+  categories: { key: string; label: string; sort: number; active: boolean }[];
+  pairs: { year: number; categoryKey: string; label: string; lists: number; isPublic: boolean }[];
+}
+export async function getListsQueueData(): Promise<ListsQueueData> {
+  return (await adminGet<{ data: ListsQueueData }>('/editorial-lists/queue')).data;
+}
+export async function getListLexicon(): Promise<{ patterns: string[]; gotyPatterns: string[] }> {
+  return (
+    await adminGet<{ data: { patterns: string[]; gotyPatterns: string[] } }>(
+      '/editorial-lists/lexicon',
+    )
+  ).data;
+}
+
+export interface NewsCategoryOverview {
+  id: string;
+  key: string;
+  label: string;
+  mode: 'show' | 'low' | 'hide';
+  keywords: string[];
+  priority: number;
+  active: boolean;
+  articles: number;
+  stories: number;
+}
+export async function getNewsOverview(): Promise<NewsCategoryOverview[]> {
+  return (await adminGet<{ data: NewsCategoryOverview[] }>('/news/overview')).data;
+}

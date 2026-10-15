@@ -85,6 +85,10 @@ export const articles = pgTable(
     internalAssessment: text('internal_assessment'),
     /** Mechanical event-kind for the clustering secondary gate (SPEC I4a §7). */
     eventKind: varchar('event_kind', { length: 40 }),
+    /** Phase P S4: the classifier's news category (deals / guide / listicle / …). */
+    category: varchar('category', { length: 40 }),
+    /** Phase P S4: an editor's category (wins over the classifier; survives a re-cluster). */
+    categoryOverride: varchar('category_override', { length: 40 }),
 
     // Clustering embedding (empty until I3).
     embedding: vector('embedding', { dimensions: EMBEDDING_DIM }),

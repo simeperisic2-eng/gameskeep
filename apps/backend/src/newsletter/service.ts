@@ -7,6 +7,7 @@ import type {
 import type { z } from 'zod';
 import { db } from '../db/client';
 import { copyState } from '../copy/settings';
+import { keysInModes, newsCategories } from '../news/categories';
 import { newsletterCampaigns, newsletterSubscriptions, topics, userConsents } from '../db/schema';
 import { env } from '../config/env';
 import { sendNewsletterEmail } from '../email/send';
@@ -103,6 +104,7 @@ export async function audienceSize(segment: string): Promise<number> {
 export async function buildDigest(
   limit = 6,
 ): Promise<{ subject: string; preheader: string; body: string } | null> {
+  const lowHide = keysInModes(await newsCategories(), ['low', 'hide']);
   const rows = await db
     .select({
       slug: topics.slug,
@@ -111,7 +113,18 @@ export async function buildDigest(
       aiSummary: topics.aiSummary,
     })
     .from(topics)
-    .where(or(sql`${topics.tldr} is not null`, sql`${topics.aiSummary} is not null`))
+    .where(
+      and(
+        or(sql`${topics.tldr} is not null`, sql`${topics.aiSummary} is not null`),
+        // Phase P S4: only "show" categories reach the digest.
+        lowHide.length
+          ? sql`coalesce(${topics.category}, 'news') NOT IN (${sql.join(
+              lowHide.map((k) => sql`${k}`),
+              sql`, `,
+            )})`
+          : undefined,
+      ),
+    )
     .orderBy(sql`${topics.lastActivityAt} desc nulls last`)
     .limit(limit);
 
