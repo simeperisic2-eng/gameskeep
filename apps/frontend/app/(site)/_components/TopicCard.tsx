@@ -3,6 +3,7 @@ import { PaidLabel } from './PaidLabel';
 import { TagChips } from './TagChips';
 import type { CardTag } from '@/lib/public-api';
 import { distinctSubtitle, relativeTime } from '@/lib/format';
+import { AiLabel } from './AiLabel';
 import { CoverArt } from './CoverArt';
 import { BiasMini } from './BiasBar';
 
@@ -59,7 +60,12 @@ export function TopicCard({
             {topic.title}
           </a>
         </h3>
-        {subtitle ? <p className="gk-topiccard-tldr">{subtitle}</p> : null}
+        {subtitle ? (
+          <p className="gk-topiccard-tldr">
+            {topic.tldrIsAi !== false ? <AiLabel compact /> : null}
+            {subtitle}
+          </p>
+        ) : null}
         <BiasMini
           flags={topic.flags}
           integrity={topic.integrityTally}

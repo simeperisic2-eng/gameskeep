@@ -112,3 +112,22 @@ export async function summarizeTopic(
     sourceCount: typeof body.sourceCount === 'number' ? body.sourceCount : 0,
   };
 }
+
+/**
+ * Phase P S5 — tidy an editor's text ("Polish with AI"). The result is NEVER
+ * used as-is: the main app's no-new-claims validator checks it and the editor
+ * approves (`community/notes.ts`).
+ */
+export async function polishText(
+  text: string,
+  timeoutMs = 15_000,
+): Promise<{ text: string; model: string }> {
+  const body = (await postJson('/polish', { text }, timeoutMs)) as {
+    text?: unknown;
+    model?: unknown;
+  };
+  return {
+    text: typeof body.text === 'string' ? body.text : '',
+    model: typeof body.model === 'string' ? body.model.slice(0, 40) : 'unknown',
+  };
+}

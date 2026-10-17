@@ -140,3 +140,24 @@ export function shortDate(iso: string | null | undefined): string | null {
     timeZone: 'UTC',
   });
 }
+
+/**
+ * Phase P S5 — the text a search result, share card or structured data may carry
+ * for a story: EDITORIAL text only (an edited / approved TL;DR or summary). Those
+ * surfaces cannot show the AI label, so automatic AI text never goes there; the
+ * caller falls back to the headline. A missing flag counts as AI (safe default).
+ */
+export function editorialDescription(
+  t: {
+    title: string;
+    tldr: string | null;
+    aiSummary: string | null;
+    tldrIsAi?: boolean;
+    summaryIsAi?: boolean;
+  },
+  maxChars: number,
+): string | null {
+  const tldr = t.tldrIsAi === false ? distinctSubtitle(t.title, t.tldr) : null;
+  if (tldr) return truncateWords(tldr, maxChars);
+  return t.summaryIsAi === false ? truncateWords(t.aiSummary, maxChars) : null;
+}

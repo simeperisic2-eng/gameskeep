@@ -41,6 +41,7 @@ export * from './curation';
 export * from './news';
 export * from './search';
 export * from './lists';
+export * from './community-voice';
 export * from './ads';
 // (ads exported above; barrel keeps a single import surface for the seed/client)
 export * from './unmatched';

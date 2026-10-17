@@ -147,6 +147,17 @@
  *   S4.13 heavy steps are background jobs with ids
  *   S4.14 low mode: "More from the feed" only + the game-page chip
  *   S4.15 (follow-up) the phone menu: SSR contract (keyboard / screen reader: browser probe)
+ *
+ *  S5 — Community voice, Steam reviews summary, team score, critic feed
+ *   S5.1  (acc. 1) an AI polish that adds a number or a name is rejected; case-insensitive
+ *   S5.2  (acc. 2) no source link → no publish; the live copy is separate from the draft
+ *   S5.3  (acc. 3) Steam summary: threshold, locked label, never a reviewer name
+ *   S5.3b Steam summary overrides (approve / edit / hide / back to automatic)
+ *   S5.4  (acc. 4) team score off → nowhere public, never in an aggregate; on → own Review
+ *   S5.5  the locked AI label: automatic vs editorial, approval, regeneration, digest
+ *   S5.6  "Score this review": suggestions confirmed, never auto-published
+ *   S5.7  settings (community + reputation knobs) validated, audited; RBAC (UI path)
+ *   S5.8  the demo note; no reviewer names on public pages
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -3802,6 +3813,12 @@ COMMIT;`,
       );
     }
   }
+  if (t) {
+    // Phase P S5: the fixture's edits recorded approvals (an edit makes AI text editorial).
+    psql(
+      `BEGIN;\nUPDATE topics SET tldr_approved_by_label = NULL, tldr_approved_at = NULL, ai_summary_approved_by_label = NULL, ai_summary_approved_at = NULL WHERE id = ${lit(t.id)};\n${auditSql({ entityType: 'topics', entityId: t.id, summary: `verify cleanup: run ${RUN} cleared its story fixture's approvals` })}\nCOMMIT;`,
+    );
+  }
   if (s3bRestore.settings) restoreSettings(s3bRestore.settings);
   await recomputeHomepage();
 }
@@ -3877,10 +3894,13 @@ const pubSearch = async (q, extra = '') =>
 const pubSuggest = (q) => api(BACK, `/public/search/suggest?q=${encodeURIComponent(q)}`);
 const slugsOf = (arr) => (arr ?? []).map((h) => h.slug);
 const sitemapData = async () => (await api(BACK, '/public/sitemap')).json?.data ?? {};
-const sectionTopicSlugs = (sections, keys) =>
+const sectionTopicSlugs = (sections, keys, organicOnly = false) =>
   sections
     .filter((s) => !keys || keys.includes(s.key))
     .flatMap((s) => s.items ?? [])
+    // organicOnly: a paid insert or an editor pin is an override that shows by design
+    // (earlier groups' fixtures stay live until the final cleanup).
+    .filter((i) => !organicOnly || (!i.paid && !i.pinned))
     .map((i) => i.topic?.slug)
     .filter(Boolean);
 /** The briefing's DB truth with S4's rule: low / hide categories never count. */
@@ -4026,7 +4046,7 @@ async function s4() {
   // (b) the flip: a test category on a live story's articles (article overrides,
   // one through the admin UI path), shown → hidden.
   const latestSec = (homeA.sections ?? []).find((s) => s.key === 'latest');
-  const flipCandidates = sectionTopicSlugs(homeA.sections ?? [], ['latest', 'trending']);
+  const flipCandidates = sectionTopicSlugs(homeA.sections ?? [], ['latest', 'trending'], true);
   // Prefer a story with coverage inside the briefing window, so the count drop is exercised.
   const bA = homeA.briefing ?? {};
   const hiA = bA.isToday ? 'now()' : `'${bA.asOf}'::timestamptz`;
@@ -4096,7 +4116,7 @@ async function s4() {
     const source = flipSrc ? (await api(BACK, `/public/source/${flipSrc}`)).json?.data : null;
     const search = flipQuery ? await pubSearch(flipQuery) : null;
     return {
-      sections: sectionTopicSlugs(home.sections ?? []).includes(flip?.slug),
+      sections: sectionTopicSlugs(home.sections ?? [], undefined, true).includes(flip?.slug),
       latestRail: (home.latest ?? []).some((a) => flipIds.has(a.id)),
       game: game
         ? [...(game.articles ?? []), ...(game.reviews ?? [])].some((a) => flipIds.has(a.id))
@@ -4909,6 +4929,720 @@ async function restoreS4() {
   if (s4Restore.settings) restoreSettings(s4Restore.settings);
 }
 
+// ── Phase P S5: community voice, Steam reviews summary, team score, critic feed ─
+const s5Restore = {
+  rules: null, // the S5 rule groups as they were (PATCHed back)
+  settings: null,
+  noteGame: null, // slug whose note the run wrote
+  criticRows: [], // game_critic_reviews ids the run created
+  dismissed: [], // feed guids the run dismissed
+  topic: null, // { id, aiSummary, lockedFields } — the story the run approved / edited
+  campaignIds: [],
+  steamGames: [], // slugs whose Steam override the run changed
+  communityKnobs: null,
+  reputationKnobs: null,
+};
+const MOCK_PERSONAS = [
+  'NightOwl_42',
+  'Kestrel Vale',
+  'pixelpilgrim',
+  'Captain Crumb',
+  'Mara.exe',
+  'xXFrostbiteXx',
+  'TheLastBard',
+  'ZephyrRune',
+];
+const gameJson = async (slug) => (await api(BACK, `/public/game/${slug}`)).json?.data ?? null;
+const ldOf = (h) =>
+  jsonLdBlocks(h)
+    .map((b) => {
+      try {
+        return JSON.parse(b);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+const flatLd = (h) => ldOf(h).flatMap((x) => (Array.isArray(x) ? x : [x]));
+const metaContent = (h, name) =>
+  (h.match(new RegExp(`<meta (?:name|property)="${name}" content="([^"]*)"`)) ?? [])[1] ?? '';
+const decodeHtml = (s) =>
+  s
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
+async function s5() {
+  s5Restore.settings = snapshotSettings(['rules', 'community', 'reputation']);
+  const rulesBefore = (await adminApi('/rules')).json?.data?.settings ?? {};
+  s5Restore.rules = {
+    editorial: { ...rulesBefore.editorial },
+    communityNote: { ...rulesBefore.communityNote },
+    steamReviews: { ...rulesBefore.steamReviews },
+    criticFeed: { ...rulesBefore.criticFeed },
+  };
+  const adminUi = await uiLogin('demo-admin');
+  const modUi = await uiLogin('demo-moderator');
+
+  // ── S5.1 (acc.1) the AI polish never adds a claim ──────────────────────────
+  const noteGame = 'hades-ii';
+  s5Restore.noteGame = noteGame;
+  const original =
+    'players on reddit say the 1.0 patch fixed most crashes, really. performance on steam deck is still uneven.';
+  const src = [{ url: 'https://www.reddit.com/r/HadesTheGame/', label: 'r/HadesTheGame' }];
+  const draft = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: original,
+    sources: src,
+  });
+  const polish = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/polish`, 'POST', {
+    text: original,
+  });
+  const pv = polish.json?.data?.verdict ?? {};
+  const accept = await uiApi(
+    modUi,
+    `/admin/api/community-voice/${noteGame}/polish/accept`,
+    'POST',
+    {},
+  );
+  const accepted = accept.json?.data?.text ?? '';
+  const withNumber = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/polish`, 'POST', {
+    text: accepted,
+    candidate: accepted.replace('fixed most crashes', 'fixed 80% of crashes'),
+  });
+  const acceptNumber = await uiApi(
+    modUi,
+    `/admin/api/community-voice/${noteGame}/polish/accept`,
+    'POST',
+    {},
+  );
+  const withName = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/polish`, 'POST', {
+    text: accepted,
+    candidate: `${accepted} Supergiant says a fix is coming.`,
+  });
+  // Owner rule: compared case-insensitively — the editor's lower-case words may come back capitalised.
+  const capitalised = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/polish`, 'POST', {
+    text: original,
+    candidate:
+      'Players on Reddit say the 1.0 patch fixed most crashes. Performance on Steam Deck is still uneven.',
+  });
+  const nameIssues = (withName.json?.data?.verdict?.issues ?? []).map(
+    (i) => `${i.kind}:${i.token}`,
+  );
+  const numberIssues = (withNumber.json?.data?.verdict?.issues ?? []).map(
+    (i) => `${i.kind}:${i.token}`,
+  );
+  const polishAudit = Number(
+    psql(
+      `SELECT count(*) FROM audit_logs WHERE entity_type = 'community-note' AND summary LIKE 'community note polish%' AND changes::text LIKE '%original%' AND changes::text LIKE '%candidate%' AND created_at > now() - interval '10 minutes';`,
+    ),
+  );
+  const discard = await uiApi(
+    modUi,
+    `/admin/api/community-voice/${noteGame}/polish/discard`,
+    'POST',
+    {},
+  );
+  check(
+    'S5.1 (acc.1) "Polish with AI" only tidies the editor’s words: the AI rewrite passes the no-new-claims check and can be used (through the admin UI path, moderator); a rewrite that adds a number ("80%") or a name ("Supergiant") is REJECTED and can never be accepted (422); comparison is case-insensitive (a rewrite that capitalises the editor’s lower-case "reddit" / "steam deck" passes); both texts of every polish are audited',
+    draft.status === 200 &&
+      polish.status === 200 &&
+      pv.ok === true &&
+      accept.status === 200 &&
+      /^Players on reddit say the 1\.0 patch fixed most crashes\./u.test(accepted) &&
+      !/really/u.test(accepted) &&
+      withNumber.json?.data?.verdict?.ok === false &&
+      numberIssues.includes('number:80%') &&
+      acceptNumber.status === 422 &&
+      withName.json?.data?.verdict?.ok === false &&
+      nameIssues.includes('name:Supergiant') &&
+      capitalised.json?.data?.verdict?.ok === true &&
+      polishAudit >= 3 &&
+      discard.status === 200,
+    `draft=${draft.status} polish=${polish.status} ok=${pv.ok} accept=${accept.status} "${accepted}" · +number ok=${withNumber.json?.data?.verdict?.ok} [${numberIssues}] accept=${acceptNumber.status} · capitalised ok=${capitalised.json?.data?.verdict?.ok} · +name ok=${withName.json?.data?.verdict?.ok} [${nameIssues}] · audit=${polishAudit}`,
+  );
+
+  // ── S5.2 (acc.2) no source link → no publish; the live copy is separate ────
+  const noLink = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: accepted,
+    sources: [],
+  });
+  const publishNoLink = await uiApi(
+    modUi,
+    `/admin/api/community-voice/${noteGame}/publish`,
+    'POST',
+    {},
+  );
+  const badLink = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: accepted,
+    sources: [{ url: 'javascript:alert(1)' }],
+  });
+  const oneSentence = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: 'Players like the patch.',
+    sources: src,
+  });
+  const publishOne = await uiApi(
+    modUi,
+    `/admin/api/community-voice/${noteGame}/publish`,
+    'POST',
+    {},
+  );
+  const publicBefore = (await gameJson(noteGame))?.communityNote ?? null;
+  const good = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: accepted,
+    sources: src,
+    asOf: new Date().toISOString().slice(0, 10),
+  });
+  const publish = await uiApi(modUi, `/admin/api/community-voice/${noteGame}/publish`, 'POST', {});
+  const live = (await gameJson(noteGame))?.communityNote ?? null;
+  const pageHtml = await html(`/games/${noteGame}`);
+  const block = (pageHtml.match(
+    /<section class="gk-panel gk-community-voice"[\s\S]*?<\/section>/,
+  ) ?? [''])[0];
+  const noteBlock = (block.match(/<div class="gk-cv-note">[\s\S]*?<\/div>/) ?? [''])[0];
+  // A later draft edit never changes what readers see until it is published again.
+  await uiApi(modUi, `/admin/api/community-voice/${noteGame}/note`, 'PUT', {
+    text: 'Draft change. Not live yet.',
+    sources: src,
+  });
+  const liveAfterDraft = (await gameJson(noteGame))?.communityNote?.text ?? null;
+  const anon = await api(FRONT, `/admin/api/community-voice/${noteGame}`);
+  check(
+    'S5.2 (acc.2) a note without a source link cannot be published (400 "Add at least one source link."), a javascript: link is refused, the sentence rule (2–3, admin-set) holds; with a link it publishes: the game page shows "What the community says" with the text, the source link (new tab, nofollow), the as-of date and the editor’s name — no AI label on the editor note; a later draft edit leaves the live copy alone; anonymous is refused',
+    noLink.status === 200 &&
+      publishNoLink.status === 400 &&
+      /Add at least one source link/u.test(publishNoLink.json?.message ?? '') &&
+      badLink.status === 400 &&
+      oneSentence.status === 200 &&
+      publishOne.status === 400 &&
+      publicBefore === null &&
+      good.status === 200 &&
+      publish.status === 200 &&
+      live?.text === accepted &&
+      live?.sources?.[0]?.url === src[0].url &&
+      typeof live?.editor === 'string' &&
+      /What the community says/u.test(block) &&
+      decodeHtml(noteBlock).includes(accepted) &&
+      /href="https:\/\/www\.reddit\.com\/r\/HadesTheGame\/"[^>]*rel="noopener noreferrer nofollow"|rel="noopener noreferrer nofollow"[^>]*href="https:\/\/www\.reddit\.com\/r\/HadesTheGame\/"/u.test(
+        noteBlock,
+      ) &&
+      /<time dateTime=|<time datetime=/u.test(noteBlock) &&
+      !/data-ai-label/u.test(noteBlock) &&
+      liveAfterDraft === accepted &&
+      [401, 403].includes(anon.status),
+    `noLink publish=${publishNoLink.status} "${publishNoLink.json?.message}" badLink=${badLink.status} oneSentence publish=${publishOne.status} · publish=${publish.status} live=${JSON.stringify(live)} · block=${block.length > 0} aiInNote=${/data-ai-label/u.test(noteBlock)} · liveAfterDraft=${liveAfterDraft === accepted} anon=${anon.status}`,
+  );
+
+  // ── S5.3 (acc.3) the Steam reviews summary: threshold, no reviewer data ────
+  const steamRun = await uiApi(adminUi, '/admin/api/community-voice/steam/run', 'POST', {});
+  const steamDone = steamRun.json?.jobId
+    ? await waitForJobLib('steam-reviews', steamRun.json.jobId, 180_000)
+    : { ok: false, state: 'no job id' };
+  const steamRows = psql(
+    "SELECT s.slug || E'\\t' || r.review_count || E'\\t' || coalesce(r.summary_text, '') FROM game_steam_review_summaries r JOIN games g ON g.id = r.game_id JOIN subjects s ON s.id = g.subject_id ORDER BY r.review_count DESC;",
+  )
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      const [slug, n, text] = l.split('\t');
+      return { slug, n: Number(n), text: text ?? '' };
+    });
+  const leaks = steamRows.filter(
+    (r) =>
+      MOCK_PERSONAS.some((p) => r.text.toLowerCase().includes(p.toLowerCase())) ||
+      /steamcommunity|7656119\d{10}|@\w{2,}|https?:\/\//iu.test(r.text),
+  );
+  const columns = psql(
+    "SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name = 'game_steam_review_summaries';",
+  );
+  const min = Number(s5Restore.rules.steamReviews.reviewsMin ?? 50);
+  const above = steamRows.find((r) => r.n >= min && r.text);
+  const below = steamRows.find((r) => r.n < min);
+  const aboveJson = above ? (await gameJson(above.slug))?.steamReviews : null;
+  const belowJson = below ? (await gameJson(below.slug))?.steamReviews : undefined;
+  const aboveHtml = above ? await html(`/games/${above.slug}`) : '';
+  const aiLabelText = above
+    ? `AI summary of ${above.n.toLocaleString('en-US')} Steam reviews, last 30 days`
+    : '—';
+  const raise = above
+    ? await rulesPatch({ steamReviews: { reviewsMin: above.n + 1 } })
+    : { status: 0 };
+  const raisedJson = above ? (await gameJson(above.slug))?.steamReviews : undefined;
+  await rulesPatch({ steamReviews: { reviewsMin: min } });
+  check(
+    'S5.3 (acc.3) the Steam reviews summary (a background job with an id; mock reviews that quote other reviewers by name and profile link): no stored summary contains a reviewer name, a Steam id, a handle, a profile link or a URL, and the table holds no reviewer column — only counts, % positive, the window and the text; a game below the threshold shows nothing, one above shows the text with the LOCKED label "AI summary of N Steam reviews, last 30 days" + a link to its Steam page; raising the threshold (admin setting) hides it',
+    steamRun.status === 202 &&
+      steamDone.ok &&
+      steamRows.length >= 3 &&
+      leaks.length === 0 &&
+      !/author|persona|steamid|reviewer/iu.test(columns) &&
+      Boolean(above) &&
+      aboveJson?.isAi === true &&
+      aboveJson?.text === above?.text &&
+      /^https:\/\/store\.steampowered\.com\/app\/\d+\/$/u.test(aboveJson?.storeUrl ?? '') &&
+      decodeHtml(aboveHtml).includes(aiLabelText) &&
+      Boolean(below) &&
+      belowJson === null &&
+      raise.status === 200 &&
+      raisedJson === null,
+    `run=${steamRun.status} job=${steamDone.state} rows=${steamRows.length} leaks=[${leaks.map((l) => l.slug)}] columns=${columns} · above=${above?.slug}(${above?.n}) json=${JSON.stringify(aboveJson)?.slice(0, 120)} label=${decodeHtml(aboveHtml).includes(aiLabelText)} · below=${below?.slug}(${below?.n}) → ${JSON.stringify(belowJson)} · raised → ${JSON.stringify(raisedJson)}`,
+  );
+
+  // ── S5.3b Steam summary overrides: hide, approve, edit, back to automatic ──
+  let overrideOk = false;
+  let overrideDetail = 'no game above the threshold';
+  if (above) {
+    s5Restore.steamGames.push(above.slug);
+    const approve = await uiApi(modUi, `/admin/api/community-voice/${above.slug}/steam`, 'POST', {
+      approve: true,
+    });
+    const approvedJson = (await gameJson(above.slug))?.steamReviews;
+    const approvedHtml = decodeHtml(await html(`/games/${above.slug}`));
+    const edit = await uiApi(modUi, `/admin/api/community-voice/${above.slug}/steam`, 'POST', {
+      text: 'Recent reviews praise the 1.0 content and mention a few performance dips.',
+    });
+    const editedJson = (await gameJson(above.slug))?.steamReviews;
+    const hide = await uiApi(modUi, `/admin/api/community-voice/${above.slug}/steam`, 'POST', {
+      hidden: true,
+    });
+    const hiddenJson = (await gameJson(above.slug))?.steamReviews;
+    const back = await uiApi(modUi, `/admin/api/community-voice/${above.slug}/steam`, 'POST', {
+      hidden: false,
+      text: null,
+    });
+    const backJson = (await gameJson(above.slug))?.steamReviews;
+    const audits = Number(
+      psql(
+        `SELECT count(*) FROM audit_logs WHERE entity_type = 'steam-review-summary' AND created_at > now() - interval '10 minutes';`,
+      ),
+    );
+    overrideOk =
+      approve.status === 200 &&
+      approvedJson?.isAi === false &&
+      approvedHtml.includes(`Summary of ${above.n.toLocaleString('en-US')} Steam reviews`) &&
+      !approvedHtml.includes(aiLabelText) &&
+      edit.status === 200 &&
+      editedJson?.text?.startsWith('Recent reviews praise') &&
+      editedJson?.isAi === false &&
+      hide.status === 200 &&
+      hiddenJson === null &&
+      back.status === 200 &&
+      backJson?.text === above.text &&
+      audits >= 4;
+    overrideDetail = `approve=${approve.status}→isAi ${approvedJson?.isAi} · edit=${edit.status}→${editedJson?.isAi} · hide=${hide.status}→${JSON.stringify(hiddenJson)} · back=${back.status}→${backJson?.text === above.text} isAi=${backJson?.isAi} · audits=${audits}`;
+  }
+  check(
+    'S5.3b every Steam-summary value has an override (moderator, admin UI path, audited): approve the automatic text → editorial ("Summary of N Steam reviews…", no AI label); your own text → editorial; hide → gone; back to automatic → the AI text returns',
+    overrideOk,
+    overrideDetail,
+  );
+
+  // ── S5.4 (acc.4) team score off by default — nowhere public, never aggregated ─
+  const teamGame = psql(
+    'SELECT s.slug FROM game_reviews r JOIN games g ON g.id = r.game_id JOIN subjects s ON s.id = g.subject_id WHERE r.our_score IS NOT NULL AND r.verdict IS NOT NULL ORDER BY s.slug LIMIT 1;',
+  );
+  const ourDb = Number(
+    psql(
+      `SELECT r.our_score FROM game_reviews r JOIN games g ON g.id = r.game_id JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(teamGame)};`,
+    ),
+  );
+  const ourTen = (ourDb / 10).toFixed(1);
+  async function teamState() {
+    const g = await gameJson(teamGame);
+    const h = await html(`/games/${teamGame}`);
+    const ld = flatLd(h).find((x) => x['@type'] === 'VideoGame') ?? {};
+    const quick = (await api(BACK, `/public/game/${teamGame}/quick`)).json?.data;
+    const cat = (await api(BACK, `/public/catalog?page=1`)).json?.data;
+    const catHit = (cat?.games ?? cat?.items ?? []).find((x) => x.slug === teamGame);
+    return {
+      apiOur: g?.rating?.our ?? null,
+      apiReviewScore: g?.review?.ourScore ?? null,
+      apiVerdict: g?.review?.verdict ?? null,
+      reviewPresent: Boolean(g?.review),
+      reviewText: Boolean(g?.review?.body || (g?.review?.pros ?? []).length),
+      ssrReviewPanel: /aria-label="Our review of /u.test(h),
+      ssrOurPillar: /<span class="gk-pillar-label">Our score<\/span>|>Our score</u.test(h),
+      ssrOurVsCritics: /Our score ↔ Critics/u.test(h),
+      ldReviewRating: ld?.review?.reviewRating?.ratingValue ?? null,
+      ldReviewAuthor: ld?.review?.author?.['@type'] ?? null,
+      ldAggregate: ld?.aggregateRating?.ratingValue ?? null,
+      quickOur: quick?.layers?.our ?? null,
+      catalogOur: catHit ? (catHit.our ?? null) : 'n/a',
+      critics: g?.rating?.critics?.score ?? null,
+      community: g?.rating?.community?.score ?? null,
+    };
+  }
+  const off = await teamState();
+  const on1 = await uiApi(adminUi, '/admin/api/rules', 'PATCH', { editorial: { teamScore: true } });
+  const on = await teamState();
+  const on2 = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    editorial: { teamVerdict: true },
+  });
+  const onVerdict = await teamState();
+  await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    editorial: { teamScore: false, teamVerdict: false },
+  });
+  const offAgain = await teamState();
+  const headline = (x) =>
+    (x.critics ?? x.community) == null ? null : ((x.critics ?? x.community) / 10).toFixed(1);
+  check(
+    'S5.4 (acc.4) the team score is OFF by default: no our score in the game API, the rating block (no "Our score" pillar, no "Our score ↔ Critics" line), the review block, the quick view, the catalog or the JSON-LD (no Review rating) — the review text stays, the verdict is hidden; switched on (admin UI path, audited) our score shows as its own number and as a SEPARATE Review (author = our organisation, rating = our score) — the AggregateRating never changes (critics / community only); the verdict follows its own switch; a score / verdict-only review leaves no empty panel; off again restores the first state',
+    Boolean(teamGame) &&
+      off.apiOur === null &&
+      off.apiReviewScore === null &&
+      off.apiVerdict === null &&
+      // the review text stays; a score / verdict-only review has nothing left → no empty panel
+      (off.reviewText
+        ? off.reviewPresent && off.ssrReviewPanel
+        : !off.reviewPresent && !off.ssrReviewPanel) &&
+      !off.ssrOurPillar &&
+      !off.ssrOurVsCritics &&
+      off.ldReviewRating === null &&
+      off.quickOur === null &&
+      (off.catalogOur === null || off.catalogOur === 'n/a') &&
+      (off.ldAggregate === null || off.ldAggregate === headline(off)) &&
+      on1.status === 200 &&
+      on.apiOur?.score === ourDb &&
+      on.apiReviewScore === ourDb &&
+      on.apiVerdict === null &&
+      on.ssrOurPillar &&
+      on.ldReviewRating === ourTen &&
+      on.ldReviewAuthor === 'Organization' &&
+      on.ldAggregate === off.ldAggregate &&
+      on.quickOur === ourDb &&
+      on2.status === 200 &&
+      typeof onVerdict.apiVerdict === 'string' &&
+      offAgain.apiOur === null &&
+      offAgain.ldReviewRating === null &&
+      offAgain.apiVerdict === null,
+    `${teamGame} our=${ourDb} · off ${JSON.stringify(off)} · on ${JSON.stringify(on)} · verdict on=${onVerdict.apiVerdict ? 'shown' : 'hidden'} · off again our=${offAgain.apiOur} ld=${offAgain.ldReviewRating}`,
+  );
+
+  // ── S5.5 the locked AI label: automatic text labelled, editorial text not ──
+  const story = psql(
+    "SELECT t.id || E'\\t' || t.slug || E'\\t' || t.ai_summary FROM topics t WHERE t.bias_distribution IS NOT NULL AND t.ai_summary IS NOT NULL AND length(t.ai_summary) > 40 AND t.seo_index = 'auto' AND cardinality(t.locked_fields) = 0 AND t.ai_summary_approved_at IS NULL AND t.tldr_approved_at IS NULL ORDER BY t.last_activity_at DESC NULLS LAST LIMIT 1;",
+  ).split('\t');
+  const [storyId, storySlug, storySummary] = story;
+  s5Restore.topic = storyId ? { id: storyId, aiSummary: storySummary } : null;
+  const autoHtml = storySlug ? await html(`/topics/${storySlug}`) : '';
+  const autoSummaryBlock = (autoHtml.match(
+    /<section class="gk-panel gk-story-summary">[\s\S]*?<\/section>/,
+  ) ?? [''])[0];
+  const autoDesc = decodeHtml(metaContent(autoHtml, 'description'));
+  const autoOg = decodeHtml(metaContent(autoHtml, 'og:description'));
+  const autoLd = flatLd(autoHtml).find((x) => x['@type'] === 'NewsArticle') ?? {};
+  const aiStart = (storySummary ?? '').slice(0, 30);
+  const approve = storyId
+    ? await uiApi(modUi, `/admin/api/story-summaries/${storyId}/approve`, 'POST', {})
+    : { status: 0 };
+  const approvedRow = storyId
+    ? psql(
+        `SELECT coalesce(ai_summary_approved_by_label, '') || '|' || (ai_summary_approved_at IS NOT NULL) FROM topics WHERE id = ${lit(storyId)};`,
+      ).split('|')
+    : [];
+  const apprHtml = storySlug ? await html(`/topics/${storySlug}`) : '';
+  const apprSummaryBlock = (apprHtml.match(
+    /<section class="gk-panel gk-story-summary">[\s\S]*?<\/section>/,
+  ) ?? [''])[0];
+  const apprPublic = storySlug ? (await api(BACK, `/public/topic/${storySlug}`)).json?.data : null;
+  const apprDesc = decodeHtml(metaContent(apprHtml, 'description'));
+  // A later automatic regeneration brings the label back: the stored text changes,
+  // the summary is rebuilt from the articles (an article re-assigned to its own story).
+  psql(
+    `BEGIN;\nUPDATE topics SET ai_summary = 'An older approved summary.' WHERE id = ${lit(storyId ?? '00000000-0000-0000-0000-000000000000')};\n${auditSql({ entityType: 'topics', entityId: storyId ?? 'none', summary: `verify ${RUN}: simulate an approved summary that automation will regenerate (S5.5)` })}\nCOMMIT;`,
+  );
+  const memberArticle = storyId
+    ? psql(`SELECT article_id FROM article_topics WHERE topic_id = ${lit(storyId)} LIMIT 1;`)
+    : '';
+  const regen = memberArticle
+    ? await adminApi('/clustering/reassign', 'POST', {
+        articleId: memberArticle,
+        topicId: storyId,
+        makePrimary: true,
+      })
+    : { status: 0 };
+  const regenRow = storyId
+    ? psql(
+        `SELECT (ai_summary_approved_at IS NULL) || '|' || (ai_summary <> 'An older approved summary.') FROM topics WHERE id = ${lit(storyId)};`,
+      ).split('|')
+    : [];
+  const regenPublic = storySlug ? (await api(BACK, `/public/topic/${storySlug}`)).json?.data : null;
+  // An editor's edit makes it editorial too (who + when recorded, the field locks).
+  const edit = storyId
+    ? await uiApi(modUi, `/admin/api/topics/${storyId}`, 'PATCH', {
+        aiSummary: `${storySummary} (Edited.)`,
+      })
+    : { status: 0 };
+  const editRow = storyId
+    ? psql(
+        `SELECT coalesce(ai_summary_approved_by_label, '') || '|' || ('aiSummary' = ANY(locked_fields)) FROM topics WHERE id = ${lit(storyId)};`,
+      ).split('|')
+    : [];
+  const editPublic = storySlug ? (await api(BACK, `/public/topic/${storySlug}`)).json?.data : null;
+  // The newsletter digest labels automatic text too.
+  const digest = await uiApi(adminUi, '/admin/api/newsletter/digest', 'POST', {});
+  if (digest.json?.data?.id) s5Restore.campaignIds.push(digest.json.data.id);
+  const digestBody = digest.json?.data?.id
+    ? psql(`SELECT body FROM newsletter_campaigns WHERE id = ${lit(digest.json.data.id)};`)
+    : '';
+  const homeHtml = await html('/');
+  check(
+    'S5.5 the AI label (EU AI Act transparency) is LOCKED and follows the text: an automatic story summary shows "AI summary" (data-ai-label) and never reaches the meta description, the share card or the structured data; an editor’s Approve (admin UI path) makes it editorial — no label, who + when recorded, the meta may use it; a later automatic regeneration brings the label back; an editor’s edit makes it editorial again and locks it; the newsletter digest prefixes automatic text with "AI summary:"; the homepage spotlight / cards carry the label',
+    Boolean(storyId) &&
+      /data-ai-label/u.test(autoSummaryBlock) &&
+      /AI summary/u.test(autoSummaryBlock) &&
+      !autoDesc.includes(aiStart) &&
+      !autoOg.includes(aiStart) &&
+      !String(autoLd.description ?? '').includes(aiStart) &&
+      approve.status === 200 &&
+      approvedRow[0] === 'demo-moderator' &&
+      ['t', 'true'].includes(approvedRow[1]) &&
+      !/data-ai-label/u.test(apprSummaryBlock) &&
+      apprPublic?.summaryIsAi === false &&
+      regen.status === 200 &&
+      ['t', 'true'].includes(regenRow[0]) &&
+      ['t', 'true'].includes(regenRow[1]) &&
+      regenPublic?.summaryIsAi === true &&
+      edit.status === 200 &&
+      editRow[0] === 'demo-moderator' &&
+      ['t', 'true'].includes(editRow[1]) &&
+      editPublic?.summaryIsAi === false &&
+      digest.status === 201 &&
+      /AI summary: /u.test(digestBody) &&
+      /data-ai-label/u.test(homeHtml),
+    `story=${storySlug} auto label=${/data-ai-label/u.test(autoSummaryBlock)} meta has AI=${autoDesc.includes(aiStart)} og=${autoOg.includes(aiStart)} ld=${String(autoLd.description ?? '').includes(aiStart)} · approve=${approve.status} by=${approvedRow[0]} label after=${/data-ai-label/u.test(apprSummaryBlock)} isAi=${apprPublic?.summaryIsAi} meta="${apprDesc.slice(0, 40)}" · regen=${regen.status} approvalCleared=${regenRow[0]} rebuilt=${regenRow[1]} isAi=${regenPublic?.summaryIsAi} · edit=${edit.status} by=${editRow[0]} locked=${editRow[1]} isAi=${editPublic?.summaryIsAi} · digest=${digest.status} ai=${/AI summary: /u.test(digestBody)} home=${/data-ai-label/u.test(homeHtml)}`,
+  );
+
+  // ── S5.6 "Score this review": suggestions confirmed, nothing auto-published ─
+  const feed = await uiApi(modUi, '/admin/api/critic-feed');
+  const queue = feed.json?.data?.queue ?? [];
+  const byGuid = (g) => queue.find((q) => q.guid === g);
+  const gr = byGuid('s5-hades2-reviews-gamesradar');
+  const pcg = byGuid('s5-hades2-reviews-pc-gamer');
+  const vg = byGuid('s5-hades2-reviews-vg247');
+  const rps = byGuid('s5-hades2-reviews-rock-paper-shotgun');
+  const kot = byGuid('s5-hades2-reviews-kotaku');
+  const autoRows = Number(
+    psql(
+      "SELECT count(*) FROM game_critic_reviews WHERE source_article_guid LIKE 's5-hades2-reviews-%';",
+    ),
+  );
+  const tooHigh = gr
+    ? await uiApi(modUi, '/admin/api/critic-feed/score', 'POST', {
+        guid: gr.guid,
+        nativeScore: 11,
+        scaleMax: 10,
+      })
+    : { status: 0 };
+  const score = gr
+    ? await uiApi(modUi, '/admin/api/critic-feed/score', 'POST', {
+        guid: gr.guid,
+        nativeScore: gr.suggestion?.nativeScore,
+        scaleMax: gr.suggestion?.scaleMax,
+      })
+    : { status: 0 };
+  if (score.json?.data?.id) s5Restore.criticRows.push(score.json.data.id);
+  const ratingsJob = score.json?.jobId
+    ? await waitForJobLib('ratings', score.json.jobId, 120_000)
+    : { ok: false };
+  const again = gr
+    ? await uiApi(modUi, '/admin/api/critic-feed/score', 'POST', {
+        guid: gr.guid,
+        nativeScore: 9,
+        scaleMax: 10,
+      })
+    : { status: 0 };
+  const row = psql(
+    `SELECT score || '|' || native_score || '|' || native_scale_max || '|' || outlet_name FROM game_critic_reviews WHERE source_article_guid = 's5-hades2-reviews-gamesradar';`,
+  ).split('|');
+  const scoreAudit = psql(
+    "SELECT changes::text FROM audit_logs WHERE entity_type = 'game-critic-reviews' AND changes::text LIKE '%s5-hades2-reviews-gamesradar%' ORDER BY created_at DESC LIMIT 1;",
+  );
+  const hadesCritics = (await gameJson('hades-ii'))?.rating?.criticEntries ?? [];
+  const dismiss = rps
+    ? await uiApi(modUi, '/admin/api/critic-feed/dismiss', 'POST', { guid: rps.guid })
+    : { status: 0 };
+  if (dismiss.status === 200) s5Restore.dismissed.push(rps.guid);
+  const afterQueue = ((await uiApi(modUi, '/admin/api/critic-feed')).json?.data?.queue ?? []).map(
+    (q) => q.guid,
+  );
+  const restoreFeed = rps
+    ? await uiApi(modUi, '/admin/api/critic-feed/restore', 'POST', { guid: rps.guid })
+    : { status: 0 };
+  if (restoreFeed.status === 200)
+    s5Restore.dismissed = s5Restore.dismissed.filter((g) => g !== rps.guid);
+  const backQueue = ((await uiApi(modUi, '/admin/api/critic-feed')).json?.data?.queue ?? []).map(
+    (q) => q.guid,
+  );
+  check(
+    'S5.6 "Score this review" (moderator, admin UI path): ingested outlet reviews wait unscored (nothing auto-publishes); score patterns become SUGGESTIONS — "9/10" → 9/10, "4.5-star" → 4.5/5, "92/100" → 92/100; no score / two different scores → no suggestion; confirming creates one critic review (normalised 90, native 9/10, linked to the article — a second time is refused), audited with the suggestion and that it was accepted, the ratings recompute (a job id) and the game page lists it; a score above the scale → 400; "not a scored review" removes an item and undo brings it back; OpenCritic stays a dormant seam',
+    feed.status === 200 &&
+      autoRows === 0 &&
+      gr?.suggestion?.nativeScore === 9 &&
+      gr?.suggestion?.scaleMax === 10 &&
+      pcg?.suggestion?.nativeScore === 4.5 &&
+      pcg?.suggestion?.scaleMax === 5 &&
+      vg?.suggestion?.normalized === 92 &&
+      rps &&
+      rps.suggestion === null &&
+      kot &&
+      kot.suggestion === null &&
+      tooHigh.status === 400 &&
+      score.status === 201 &&
+      ratingsJob.ok &&
+      [404, 409].includes(again.status) &&
+      row[0] === '90' &&
+      row[1] === '9' &&
+      row[2] === '10' &&
+      /"suggestionAccepted":\s*true/u.test(scoreAudit) &&
+      hadesCritics.some((c) => /GamesRadar/iu.test(c.outlet ?? c.outletName ?? c.name ?? '')) &&
+      dismiss.status === 200 &&
+      !afterQueue.includes(rps?.guid) &&
+      restoreFeed.status === 200 &&
+      backQueue.includes(rps?.guid) &&
+      feed.json?.data?.provider?.live === false,
+    `queue=${queue.length} gr=${JSON.stringify(gr?.suggestion)} pcg=${JSON.stringify(pcg?.suggestion)} vg=${vg?.suggestion?.normalized} rps=${rps?.suggestion} kot=${kot?.suggestion} auto=${autoRows} · tooHigh=${tooHigh.status} score=${score.status} job=${ratingsJob.ok} again=${again.status} row=${row.join('/')} audit accepted=${/"suggestionAccepted":\s*true/u.test(scoreAudit)} gamePage=${hadesCritics.length} · dismiss=${dismiss.status} gone=${!afterQueue.includes(rps?.guid)} restore=${restoreFeed.status} back=${backQueue.includes(rps?.guid)} · provider=${JSON.stringify(feed.json?.data?.provider)}`,
+  );
+
+  // ── S5.7 settings, RBAC and audit through the admin UI path ────────────────
+  const cBefore = (await uiApi(adminUi, '/admin/api/community-settings')).json?.data?.values ?? {};
+  const rBefore = (await uiApi(adminUi, '/admin/api/reputation-settings')).json?.data?.values ?? {};
+  s5Restore.communityKnobs = cBefore;
+  s5Restore.reputationKnobs = rBefore;
+  const cBad = await uiApi(adminUi, '/admin/api/community-settings', 'PATCH', {
+    autoHideReports: 0,
+  });
+  const cUnknown = await uiApi(adminUi, '/admin/api/community-settings', 'PATCH', { nope: 1 });
+  const cGood = await uiApi(adminUi, '/admin/api/community-settings', 'PATCH', {
+    writesPerUser: Number(cBefore.writesPerUser ?? 60) + 1,
+  });
+  const rBad = await uiApi(adminUi, '/admin/api/reputation-settings', 'PATCH', {
+    levelThresholds: { contributor: 100, trusted: 50, veteran: 200, legend: 500 },
+  });
+  const rGood = await uiApi(adminUi, '/admin/api/reputation-settings', 'PATCH', {
+    tenureWeightPerDay: 0.2,
+  });
+  const repJob = rGood.json?.jobId
+    ? await waitForJobLib('reputation', rGood.json.jobId, 120_000)
+    : { ok: false };
+  await uiApi(adminUi, '/admin/api/community-settings', 'PATCH', {
+    writesPerUser: Number(cBefore.writesPerUser ?? 60),
+  });
+  await uiApi(adminUi, '/admin/api/reputation-settings', 'PATCH', {
+    tenureWeightPerDay: Number(rBefore.tenureWeightPerDay ?? 0.1),
+  });
+  const knobAudit = Number(
+    psql(
+      "SELECT count(*) FROM audit_logs WHERE entity_type = 'app-settings' AND entity_id IN ('community', 'reputation') AND created_at > now() - interval '10 minutes';",
+    ),
+  );
+  const crossBad = await uiApi(adminUi, '/admin/api/rules', 'PATCH', {
+    communityNote: { minSentences: 4 },
+  });
+  const modCv = await uiApi(modUi, '/admin/api/community-voice');
+  const modFeed = await uiApi(modUi, '/admin/api/critic-feed');
+  const modStories = await uiApi(modUi, '/admin/api/story-summaries');
+  const modKnobs = await uiApi(modUi, '/admin/api/community-settings', 'PATCH', {
+    writesPerUser: 5,
+  });
+  const modRep = await uiApi(modUi, '/admin/api/reputation-settings');
+  const modRules = await uiApi(modUi, '/admin/api/rules', 'PATCH', {
+    editorial: { teamScore: true },
+  });
+  const anonFeed = await api(FRONT, '/admin/api/critic-feed');
+  const pages = [];
+  for (const [who, path] of [
+    [modUi, '/admin/community-voice'],
+    [modUi, '/admin/critic-feed'],
+    [modUi, '/admin/story-summaries'],
+    [adminUi, '/admin/rules'],
+  ]) {
+    const r = await uiApi(who, path);
+    pages.push(
+      `${path}=${r.status}${path === '/admin/rules' ? (/data-community-knobs/u.test(r.text) ? '+knobs' : '-knobs') : ''}`,
+    );
+  }
+  check(
+    'S5.7 the S5 settings are validated and audited (community limits + reputation rules are now in the Control Panel: a 0 auto-hide, an unknown key and falling level thresholds → 400; a change is audited per field and a reputation change recomputes levels as a job; the community-note minimum can’t exceed the maximum); RBAC through the admin UI path — moderators work community voice, the critic feed and story AI text but get 403 on the knobs and rules; anonymous is refused; the Control Panel pages render',
+    cBad.status === 400 &&
+      cUnknown.status === 400 &&
+      cGood.status === 200 &&
+      rBad.status === 400 &&
+      rGood.status === 200 &&
+      repJob.ok &&
+      knobAudit >= 4 &&
+      crossBad.status === 400 &&
+      modCv.status === 200 &&
+      modFeed.status === 200 &&
+      modStories.status === 200 &&
+      modKnobs.status === 403 &&
+      modRep.status === 403 &&
+      modRules.status === 403 &&
+      [401, 403].includes(anonFeed.status) &&
+      pages.every((p) => /=200(\+knobs)?$/u.test(p)) &&
+      pages.some((p) => p.endsWith('+knobs')),
+    `community bad=${cBad.status} unknown=${cUnknown.status} good=${cGood.status} · reputation bad=${rBad.status} good=${rGood.status} job=${repJob.ok} · audit=${knobAudit} · cross=${crossBad.status} · mod cv=${modCv.status} feed=${modFeed.status} stories=${modStories.status} knobs=${modKnobs.status} rep=${modRep.status} rules=${modRules.status} anon=${anonFeed.status} · ${pages.join(' ')}`,
+  );
+
+  // ── S5.8 the demo note + the page carries no reviewer data anywhere ────────
+  const bg = await gameJson('baldurs-gate-3');
+  const bgHtml = await html('/games/baldurs-gate-3');
+  const reviewerOnPages = MOCK_PERSONAS.filter((p) => bgHtml.includes(p) || homeHtml.includes(p));
+  check(
+    'S5.8 the demo community note (mock, seeded once) shows on its game page with its source links and no AI label; no Steam reviewer name appears on any public page; no nested anchors',
+    typeof bg?.communityNote?.text === 'string' &&
+      (bg?.communityNote?.sources ?? []).length >= 1 &&
+      /What the community says/u.test(bgHtml) &&
+      reviewerOnPages.length === 0 &&
+      maxAnchorDepth(bgHtml) <= 1 &&
+      maxAnchorDepth(pageHtml) <= 1,
+    `note=${Boolean(bg?.communityNote)} sources=${bg?.communityNote?.sources?.length} block=${/What the community says/u.test(bgHtml)} reviewerNames=[${reviewerOnPages}] depth=${maxAnchorDepth(bgHtml)}/${maxAnchorDepth(pageHtml)}`,
+  );
+}
+
+async function restoreS5() {
+  if (s5Restore.rules) await adminApi('/rules', 'PATCH', s5Restore.rules);
+  if (s5Restore.communityKnobs && Object.keys(s5Restore.communityKnobs).length)
+    await adminApi('/community-settings', 'PATCH', s5Restore.communityKnobs);
+  if (s5Restore.reputationKnobs && Object.keys(s5Restore.reputationKnobs).length)
+    await adminApi('/reputation-settings', 'PATCH', s5Restore.reputationKnobs);
+  for (const slug of s5Restore.steamGames)
+    await adminApi(`/community-voice/${slug}/steam`, 'POST', { hidden: false, text: null });
+  const stmts = [];
+  if (s5Restore.noteGame) {
+    stmts.push(
+      `DELETE FROM game_community_notes WHERE game_id = (SELECT g.id FROM games g JOIN subjects s ON s.id = g.subject_id WHERE s.slug = ${lit(s5Restore.noteGame)});`,
+    );
+  }
+  for (const id of s5Restore.criticRows)
+    stmts.push(`DELETE FROM game_critic_reviews WHERE id = ${lit(id)};`);
+  for (const g of s5Restore.dismissed)
+    stmts.push(`DELETE FROM critic_feed_decisions WHERE article_guid = ${lit(g)};`);
+  for (const id of s5Restore.campaignIds)
+    stmts.push(`DELETE FROM newsletter_campaigns WHERE id = ${lit(id)};`);
+  if (s5Restore.topic) {
+    // Back to automation: the original text, no locks, no approval (the label returns).
+    stmts.push(
+      `UPDATE topics SET ai_summary = ${lit(s5Restore.topic.aiSummary)}, locked_fields = array_remove(locked_fields, 'aiSummary'), ai_summary_approved_by_label = NULL, ai_summary_approved_at = NULL, tldr_approved_by_label = NULL, tldr_approved_at = NULL WHERE id = ${lit(s5Restore.topic.id)};`,
+    );
+  }
+  if (stmts.length) {
+    stmts.push(
+      auditSql({
+        action: 'delete',
+        entityType: 'verify-run',
+        entityId: `verify-run-${RUN}`,
+        summary: `verify cleanup removed run ${RUN}'s S5 fixtures (note, critic score, dismissals, digest draft, story approval)`,
+      }),
+    );
+    psql(`BEGIN;\n${stmts.join('\n')}\nCOMMIT;`);
+  }
+  if (s5Restore.criticRows.length)
+    await runJobAndWait('/ratings/recompute', 'ratings', {}, 180_000);
+  if (s5Restore.settings) restoreSettings(s5Restore.settings);
+}
+
 async function main() {
   if (!check('0. Stack ready (backend + SSR frontend)', await waitForReady())) return print();
   try {
@@ -4920,7 +5654,9 @@ async function main() {
     await s3();
     await s3b();
     await s4();
+    await s5();
   } finally {
+    await restoreS5();
     await restoreS4();
     await restoreS3b();
     await restoreS3();

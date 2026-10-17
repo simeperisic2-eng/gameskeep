@@ -25,6 +25,7 @@ import { registerCatalogAdminRoutes } from './catalog-routes';
 import { registerTagAdminRoutes } from './tag-routes';
 import { registerRulesAdminRoutes } from './rules-routes';
 import { registerS4AdminRoutes } from './s4-routes';
+import { registerS5AdminRoutes } from './s5-routes';
 import { registerRatingAdminRoutes } from './rating-routes';
 import { registerReputationAdminRoutes } from './reputation-routes';
 import { deleteRow, getRow, insertRow, listRows, updateRow, type Row } from './crud';
@@ -112,10 +113,11 @@ async function runAfterWrite(
   kind: 'create' | 'update' | 'delete',
   row: Row | null,
   changed: string[],
+  actor?: Actor,
 ): Promise<void> {
   if (!resource.afterWrite) return;
   try {
-    await resource.afterWrite(kind, row, changed);
+    await resource.afterWrite(kind, row, changed, actor);
   } catch (err) {
     console.error(
       `[admin] afterWrite ${resource.name} failed:`,
@@ -126,7 +128,7 @@ async function runAfterWrite(
 
 async function createOne(resource: ResourceDef, body: unknown, actor: Actor): Promise<Row> {
   const row = await createOneRaw(resource, body, actor);
-  await runAfterWrite(resource, 'create', row, []);
+  await runAfterWrite(resource, 'create', row, [], actor);
   return row;
 }
 
@@ -231,7 +233,7 @@ async function updateOne(
         actor,
       });
     }
-    if (out) await runAfterWrite(resource, 'update', out, changedKeys);
+    if (out) await runAfterWrite(resource, 'update', out, changedKeys, actor);
     return out;
   }
   const before = await getRow(resource.table, id);
@@ -278,7 +280,7 @@ async function updateOne(
     summary: reason ? `import fix (${reason})` : undefined,
     actor,
   });
-  await runAfterWrite(resource, 'update', after, changed);
+  await runAfterWrite(resource, 'update', after, changed, actor);
   return redactRow(resource, after)!;
 }
 
@@ -289,7 +291,7 @@ async function deleteOne(
   rawReason?: unknown,
 ): Promise<Row | null> {
   const row = await deleteOneRaw(resource, id, actor, rawReason);
-  if (row) await runAfterWrite(resource, 'delete', row, []);
+  if (row) await runAfterWrite(resource, 'delete', row, [], actor);
   return row;
 }
 
@@ -564,6 +566,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       await registerRulesAdminRoutes(admin);
       // Phase P S4: editorial lists, news categories overview, search tools.
       await registerS4AdminRoutes(admin);
+      await registerS5AdminRoutes(admin);
 
       // ── generic resource CRUD ──────────────────────────────────────────────
       admin.get('/:resource', async (req, reply) => {

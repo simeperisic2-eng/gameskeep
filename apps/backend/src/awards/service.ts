@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AwardPhase } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
+import { rulesSettings } from '../rules/settings';
 import {
   awardCategories,
   awardEditionCategories,
@@ -595,7 +596,8 @@ async function nomineeScores(
   if (!r) return { scores: null, disconnect: null };
   const critics = r.criticsOverride ?? r.criticsAuto;
   const community = r.communityOverride ?? r.communityAuto;
-  const our = r.our ?? null;
+  // Phase P S5: the team score is public only with `editorial.teamScore` on.
+  const our = (await rulesSettings()).editorial.teamScore ? (r.our ?? null) : null;
   return {
     scores:
       our == null && critics == null && community == null ? null : { our, critics, community },

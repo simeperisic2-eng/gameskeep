@@ -190,6 +190,13 @@
       "when": 1792010871894,
       "tag": "0026_s4_homepage_more_section",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792227431547,
+      "tag": "0027_s5_community_voice_team_score",
+      "breakpoints": true
     }
   ]
 }

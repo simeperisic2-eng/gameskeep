@@ -1294,3 +1294,88 @@ export const listLexiconInput = z.object({
   patterns: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(100),
   gotyPatterns: z.array(z.string().trim().toLowerCase().min(2).max(80)).max(50),
 });
+
+// ── Phase P S5: community voice, Steam reviews summary, critic feed ───────────
+const isoDay = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'a date (YYYY-MM-DD)')
+  .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'a real date');
+/** One source behind a community note (a link is the evidence). */
+export const communityNoteSource = z.object({
+  url: httpsUrl,
+  label: z.string().trim().max(80).optional(),
+});
+
+/** Save a draft (nothing is public until it is published). */
+export const communityNoteDraft = z.object({
+  text: z.string().max(4000),
+  sources: z.array(communityNoteSource).max(5).default([]),
+  asOf: isoDay.nullable().optional(),
+});
+
+/** Ask for an AI polish of the editor's text — or check a rewrite made elsewhere. */
+export const communityNotePolishInput = z.object({
+  text: z.string().trim().min(1).max(4000),
+  candidate: z.string().trim().min(1).max(4000).optional(),
+});
+
+/** Editor override of the Steam reviews summary. */
+export const steamSummaryOverride = z
+  .object({
+    hidden: z.boolean().optional(),
+    /** An editor's own text (null = back to the automatic summary). */
+    text: z.string().trim().min(1).max(1200).nullable().optional(),
+    /** Approve the current automatic text (it becomes editorial). */
+    approve: z.literal(true).optional(),
+  })
+  .refine((o) => o.hidden !== undefined || o.text !== undefined || o.approve, 'nothing to change');
+
+/** Confirm a score for an ingested outlet review (nothing auto-publishes). */
+export const criticFeedScore = z.object({
+  nativeScore: z.number().min(0).max(100),
+  scaleMax: z.number().int().min(1).max(100),
+  outletName: z.string().trim().min(1).max(200).optional(),
+  reviewDate: isoDay.optional(),
+  url: httpsUrl.optional(),
+  gameSlug: z.string().trim().min(1).max(160).optional(),
+});
+
+export const criticFeedDismiss = z.object({
+  note: z.string().trim().max(300).optional(),
+});
+
+/** Community knobs (app_settings `community`) — Control Panel since S5. */
+export const communitySettingsPatch = z
+  .object({
+    writesPerUser: z.number().int().min(1).max(100_000),
+    writeWindowSec: z.number().int().min(60).max(86_400),
+    autoHideReports: z.number().int().min(1).max(10_000),
+  })
+  .partial()
+  .strict();
+
+/** Reputation knobs (app_settings `reputation`) — Control Panel since S5. */
+export const reputationSettingsPatch = z
+  .object({
+    helpfulWeight: z.number().min(0).max(1000),
+    reportWeight: z.number().min(0).max(1000),
+    tenureWeightPerDay: z.number().min(0).max(100),
+    tenureCapDays: z.number().int().min(1).max(36_500),
+    removedPenalty: z.number().min(0).max(100_000),
+    positiveReactions: z.array(z.enum(REACTION_KINDS)).min(1).max(REACTION_KINDS.length),
+    earlyVoterVotes: z.number().int().min(1).max(100_000),
+    levelThresholds: z
+      .object({
+        contributor: z.number().int().min(1).max(1e9),
+        trusted: z.number().int().min(1).max(1e9),
+        veteran: z.number().int().min(1).max(1e9),
+        legend: z.number().int().min(1).max(1e9),
+      })
+      .refine(
+        (t) => t.contributor < t.trusted && t.trusted < t.veteran && t.veteran < t.legend,
+        'level thresholds must rise: contributor < trusted < veteran < legend',
+      ),
+  })
+  .partial()
+  .strict();

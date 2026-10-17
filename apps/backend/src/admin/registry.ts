@@ -74,7 +74,8 @@ import * as schema from '../db/schema';
 import { db } from '../db/client';
 import { slugify } from '../lib/slug';
 import { DEFAULT_SECTION_RANK, SECTION_RANK_DEFAULTS } from './rbac';
-import { diffRows, writeAudit } from './audit';
+import { diffRows, writeAudit, type AuditActor } from './audit';
+import { recordSummaryEdit } from '../articles/summary-approval';
 import { sourceRuleViolation } from '../sources/rules';
 import { statusLockFor } from '../catalog/status';
 
@@ -193,6 +194,8 @@ export interface ResourceDef {
     kind: 'create' | 'update' | 'delete',
     row: Row | null,
     changed: string[],
+    /** Phase P S5: who made the change (approval records). */
+    actor?: AuditActor,
   ) => Promise<void>;
   /** Phase P S3b — changing any of `fields` sets the boolean column `column`. */
   boolLock?: { column: string; fields: readonly string[] };
@@ -552,7 +555,10 @@ export const RESOURCES: ResourceDef[] = [
       F.bool('searchHidden'),
     ],
     validate: async (next) => categoryExists(next.category),
-    afterWrite: async () => {
+    afterWrite: async (_kind, row, changed, actor) => {
+      // Phase P S5: an editor's edit of the TL;DR / AI summary makes it editorial
+      // (no AI label) — who + when recorded.
+      if (row && actor) await recordSummaryEdit(String(row.id), changed, actor);
       await requestSearchRefresh('topic-edit');
       await enqueueHomepageCompute({ reason: 'topic-edit' });
     },

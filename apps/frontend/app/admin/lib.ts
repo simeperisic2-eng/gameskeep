@@ -745,3 +745,123 @@ export interface NewsCategoryOverview {
 export async function getNewsOverview(): Promise<NewsCategoryOverview[]> {
   return (await adminGet<{ data: NewsCategoryOverview[] }>('/news/overview')).data;
 }
+
+// ── Phase P S5: community voice, critic feed, story summaries, community knobs ─
+export interface AdminNoteSource {
+  url: string;
+  label?: string;
+}
+export interface AdminCommunityNote {
+  game: { id: string; slug: string; name: string };
+  status: 'draft' | 'published';
+  text: string;
+  sources: AdminNoteSource[];
+  asOf: string | null;
+  editor: string | null;
+  publishedAt: string | null;
+  published: { text: string; sources: AdminNoteSource[]; asOf: string | null } | null;
+  polish: {
+    original: string;
+    candidate: string;
+    ok: boolean;
+    issues: { kind: string; token: string }[];
+    provider: string | null;
+    at: string | null;
+    diff: { op: 'same' | 'add' | 'del'; text: string }[];
+  } | null;
+}
+export interface AdminSteamSummary {
+  slug: string;
+  name: string;
+  reviewCount: number;
+  positivePct: number | null;
+  windowDays: number;
+  summaryText: string | null;
+  editedText: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  hidden: boolean;
+  computedAt: string | null;
+  publicState: 'shown-ai' | 'shown-editorial' | 'below-threshold' | 'hidden' | 'no-text';
+}
+export interface CommunityVoiceData {
+  notes: { slug: string; name: string; status: string; updatedAt: string; editor: string | null }[];
+  steam: AdminSteamSummary[];
+}
+export async function getCommunityVoiceData(): Promise<CommunityVoiceData> {
+  return (await adminGet<{ data: CommunityVoiceData }>('/community-voice')).data;
+}
+
+export interface CriticFeedItem {
+  guid: string;
+  title: string;
+  excerpt: string | null;
+  url: string | null;
+  reviewDate: string | null;
+  outlet: { name: string; slug: string | null };
+  game: { slug: string; name: string };
+  suggestion: { nativeScore: number; scaleMax: number; normalized: number; match: string } | null;
+}
+export interface CriticFeedData {
+  queue: CriticFeedItem[];
+  dismissed: { guid: string; note: string | null; decidedBy: string | null; decidedAt: string }[];
+  provider: { provider: string; live: boolean; description: string };
+}
+export async function getCriticFeedData(): Promise<CriticFeedData> {
+  return (await adminGet<{ data: CriticFeedData }>('/critic-feed')).data;
+}
+
+export interface StorySummaryRow {
+  id: string;
+  slug: string;
+  title: string;
+  tldr: string | null;
+  aiSummary: string | null;
+  tldrIsAi: boolean;
+  summaryIsAi: boolean;
+  tldrApprovedBy: string | null;
+  summaryApprovedBy: string | null;
+  approvedAt: string | null;
+  locked: string[];
+}
+export async function getStorySummaries(
+  filter: 'ai' | 'editorial' | 'all' = 'ai',
+): Promise<StorySummaryRow[]> {
+  return (await adminGet<{ data: StorySummaryRow[] }>(`/story-summaries?filter=${filter}`)).data;
+}
+
+export interface CommunityKnobs {
+  writesPerUser: number;
+  writeWindowSec: number;
+  autoHideReports: number;
+}
+export interface ReputationKnobs {
+  helpfulWeight: number;
+  reportWeight: number;
+  tenureWeightPerDay: number;
+  tenureCapDays: number;
+  removedPenalty: number;
+  positiveReactions: string[];
+  earlyVoterVotes: number;
+  levelThresholds: { contributor: number; trusted: number; veteran: number; legend: number };
+}
+export async function getCommunityKnobs(): Promise<{
+  values: CommunityKnobs;
+  defaults: CommunityKnobs;
+}> {
+  return (
+    await adminGet<{ data: { values: CommunityKnobs; defaults: CommunityKnobs } }>(
+      '/community-settings',
+    )
+  ).data;
+}
+export async function getReputationKnobs(): Promise<{
+  values: ReputationKnobs;
+  defaults: ReputationKnobs;
+}> {
+  return (
+    await adminGet<{ data: { values: ReputationKnobs; defaults: ReputationKnobs } }>(
+      '/reputation-settings',
+    )
+  ).data;
+}

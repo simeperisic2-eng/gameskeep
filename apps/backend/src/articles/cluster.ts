@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, type AnyColumn } from 'drizzle-orm';
 import type { EventKind } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
 import { articles, articleTopics, topics, topicTimelineEvents } from '../db/schema';
@@ -22,6 +22,12 @@ const lockedStatus = (next: string) =>
 const lockedText = (field: 'tldr' | 'aiSummary', next: string | null) => {
   const col = field === 'tldr' ? topics.tldr : topics.aiSummary;
   return sql`CASE WHEN ${field} = ANY(${topics.lockedFields}) THEN ${col} ELSE ${next} END`;
+};
+
+/** Phase P S5: an approval survives only while its field is locked or its text unchanged. */
+const keptApproval = (field: 'tldr' | 'aiSummary', next: string | null, approvalCol: AnyColumn) => {
+  const col = field === 'tldr' ? topics.tldr : topics.aiSummary;
+  return sql`CASE WHEN ${field} = ANY(${topics.lockedFields}) OR ${col} IS NOT DISTINCT FROM ${next} THEN ${approvalCol} ELSE NULL END`;
 };
 
 /**
@@ -339,11 +345,22 @@ export async function refreshTopicSummary(topicId: string): Promise<void> {
   const { tldr, summary } = await summarizeTopic(
     rows.map((r) => ({ title: r.title, excerpt: r.excerpt ?? '' })),
   );
+  const nextTldr = tldr.slice(0, 400) || null;
+  const nextSummary = summary || null;
   await db
     .update(topics)
     .set({
-      tldr: lockedText('tldr', tldr.slice(0, 400) || null),
-      aiSummary: lockedText('aiSummary', summary || null),
+      tldr: lockedText('tldr', nextTldr),
+      aiSummary: lockedText('aiSummary', nextSummary),
+      // Phase P S5: new automatic text → its approval lapses (the AI label is back).
+      tldrApprovedAt: keptApproval('tldr', nextTldr, topics.tldrApprovedAt),
+      tldrApprovedByLabel: keptApproval('tldr', nextTldr, topics.tldrApprovedByLabel),
+      aiSummaryApprovedAt: keptApproval('aiSummary', nextSummary, topics.aiSummaryApprovedAt),
+      aiSummaryApprovedByLabel: keptApproval(
+        'aiSummary',
+        nextSummary,
+        topics.aiSummaryApprovedByLabel,
+      ),
     })
     .where(eq(topics.id, topicId));
 }

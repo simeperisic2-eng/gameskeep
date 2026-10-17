@@ -8,6 +8,7 @@ import { startHomepageWorker } from './homepage/jobs';
 import { startTagsWorker } from './tags/jobs';
 import { startSearchWorker } from './search/jobs';
 import { startListsWorker } from './lists/jobs';
+import { startSteamReviewsWorker } from './steam/review-jobs';
 
 /**
  * Background-worker process entrypoint. Runs as its own container in compose
@@ -90,6 +91,15 @@ listsWorker.on('failed', (job, err) =>
   log(`list consensus ${job?.id ?? '?'} failed: ${err.message}`),
 );
 listsWorker.on('error', (err) => log(`lists worker error: ${err.message}`));
+// Phase P S5: the Steam reviews summary (mock reviews in demo).
+const steamReviewsWorker = startSteamReviewsWorker();
+steamReviewsWorker.on('completed', (job, result) =>
+  log(`steam reviews summary ${job.id} completed`, result),
+);
+steamReviewsWorker.on('failed', (job, err) =>
+  log(`steam reviews summary ${job?.id ?? '?'} failed: ${err.message}`),
+);
+steamReviewsWorker.on('error', (err) => log(`steam reviews worker error: ${err.message}`));
 
 log(
   'worker started — heartbeat + catalog + articles + ratings + reputation + steam + homepage processors waiting',
@@ -108,6 +118,7 @@ const shutdown = async (signal: string): Promise<void> => {
     tagsWorker.close(),
     searchWorker.close(),
     listsWorker.close(),
+    steamReviewsWorker.close(),
   ]);
   process.exit(0);
 };

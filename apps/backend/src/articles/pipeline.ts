@@ -124,7 +124,10 @@ async function resetFeed(): Promise<void> {
         t.locked_fields,
         jsonb_build_object('title', t.title, 'tldr', t.tldr, 'aiSummary', t.ai_summary,
           'status', t.status, 'typeId', t.type_id, 'category', t.category,
-          'seoIndex', t.seo_index, 'searchHidden', t.search_hidden)
+          'seoIndex', t.seo_index, 'searchHidden', t.search_hidden,
+          'tldrApprovedBy', t.tldr_approved_by_label, 'tldrApprovedAt', t.tldr_approved_at,
+          'aiSummaryApprovedBy', t.ai_summary_approved_by_label,
+          'aiSummaryApprovedAt', t.ai_summary_approved_at)
       FROM topics t
       LEFT JOIN article_topics at ON at.topic_id = t.id
       LEFT JOIN articles a ON a.id = at.article_id
@@ -203,9 +206,20 @@ async function restoreTopicCarryover(): Promise<number> {
     };
     for (const field of c.lockedFields) {
       if (field === 'title' && typeof f.title === 'string') set.title = f.title;
-      if (field === 'tldr') set.tldr = typeof f.tldr === 'string' ? f.tldr : null;
-      if (field === 'aiSummary')
+      if (field === 'tldr') {
+        set.tldr = typeof f.tldr === 'string' ? f.tldr : null;
+        // Phase P S5: the editorial record travels with the editor's text.
+        set.tldrApprovedByLabel = typeof f.tldrApprovedBy === 'string' ? f.tldrApprovedBy : null;
+        set.tldrApprovedAt =
+          typeof f.tldrApprovedAt === 'string' ? new Date(f.tldrApprovedAt) : null;
+      }
+      if (field === 'aiSummary') {
         set.aiSummary = typeof f.aiSummary === 'string' ? f.aiSummary : null;
+        set.aiSummaryApprovedByLabel =
+          typeof f.aiSummaryApprovedBy === 'string' ? f.aiSummaryApprovedBy : null;
+        set.aiSummaryApprovedAt =
+          typeof f.aiSummaryApprovedAt === 'string' ? new Date(f.aiSummaryApprovedAt) : null;
+      }
       if (field === 'status' && typeof f.status === 'string') set.status = f.status;
       if (field === 'typeId') set.typeId = typeof f.typeId === 'string' ? f.typeId : null;
       if (field === 'category') set.category = typeof f.category === 'string' ? f.category : null;

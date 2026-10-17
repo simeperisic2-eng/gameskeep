@@ -49,6 +49,10 @@ export const SECTION_RANK_DEFAULTS: Readonly<Record<string, number>> = {
   curation: RANK.moderator,
   // Phase P S4: editors run the editorial-list queue + editor (settings stay admin).
   'editorial-lists': RANK.moderator,
+  // Phase P S5 — editors' work (owner: moderators and up).
+  'community-voice': RANK.moderator,
+  'critic-feed': RANK.moderator,
+  'story-summaries': RANK.moderator,
   _meta: RANK.moderator,
   // NOTE: `bias` is deliberately NOT here — bias weights tune the engine behind
   // every public number on the site (system tuning, not day-to-day content

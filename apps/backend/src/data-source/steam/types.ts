@@ -28,3 +28,30 @@ export interface SteamProvider {
   /** Price / review / DLC snapshot from the storefront APIs. Null = unavailable. */
   getStorefrontSnapshot(appId: number): Promise<SteamStorefrontSnapshot | null>;
 }
+
+/**
+ * Phase P S5 — one recent Steam review as READ. The author fields exist only so
+ * their names can be scrubbed from every review text before the AI call; they
+ * are never stored (`steam/review-summary.ts`).
+ */
+export interface SteamRawReview {
+  text: string;
+  votedUp: boolean;
+  createdAt: number | null;
+  authorName: string | null;
+  authorId: string | null;
+}
+export interface SteamReviewBatch {
+  reviews: SteamRawReview[];
+  /** Reviews in the window per Steam's own summary (may exceed what was read). */
+  totalInWindow: number;
+  positiveInWindow: number;
+}
+export interface SteamReviewsProvider {
+  readonly name: 'mock' | 'live';
+  /** The last `days` of reviews (newest first, at most `max`). Null = unavailable. */
+  recentReviews(
+    appId: number,
+    opts: { days: number; max: number },
+  ): Promise<SteamReviewBatch | null>;
+}

@@ -650,6 +650,22 @@ export const COPY_DEFS: readonly CopyDef[] = [
   T('lists.eyebrow', 'sections', 'Lists · eyebrow', 'Editorial lists', 'text', 80),
   T('search.eyebrow', 'sections', 'Search · eyebrow', 'Search', 'text', 80),
   T(
+    'game.community.title',
+    'sections',
+    'Game page · community block title',
+    'What the community says',
+    'text',
+    80,
+  ),
+  T(
+    'game.community.sourcesNote',
+    'sections',
+    'Game page · community note sources line',
+    'Written by our editors from the sources linked here.',
+    'longtext',
+    200,
+  ),
+  T(
     'game.lists.note',
     'sections',
     'Game page · editorial lists note',

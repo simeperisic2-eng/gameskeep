@@ -29,6 +29,7 @@ import { AdSlot } from '../../_components/AdSlot';
 import { GameTags } from '../../_components/GameTags';
 import { TagVoting } from '../../_components/TagVoting';
 import { getSite, siteText } from '@/lib/site';
+import { CommunityVoice } from '../../_components/CommunityVoice';
 import { EditorialListsBlock } from '../../_components/EditorialListsBlock';
 import { brand, excerptRule, gameStatusLabel, label } from '@/lib/labels';
 
@@ -283,6 +284,14 @@ export default async function GamePage({
               </p>
             </section>
           )}
+
+          {/* Phase P S5: the editor note + the Steam reviews summary. */}
+          <CommunityVoice
+            note={game.communityNote ?? null}
+            steam={game.steamReviews ?? null}
+            title={siteText(site, 'game.community.title')}
+            sourcesNote={siteText(site, 'game.community.sourcesNote')}
+          />
 
           <PlayerActivity
             playerCount={game.playerCount}

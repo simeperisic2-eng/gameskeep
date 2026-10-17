@@ -2792,6 +2792,40 @@ const EVENTS_EXTRA: FeedEvent[] = [
       },
     ],
   },
+  // ── Phase P S5: scored outlet reviews for "Score this review" (suggestions only) ─
+  {
+    key: 's5-hades2-reviews',
+    gameRefs: ['Hades II'],
+    date: '2026-06-09',
+    type: 'review',
+    articles: [
+      {
+        source: 'gamesradar',
+        title: 'Hades II review: 9/10 — a sequel that sharpens every edge',
+        excerpt: 'The 1.0 release adds a full second act and the best boss fights in the series.',
+      },
+      {
+        source: 'pc-gamer',
+        title: 'Hades II review',
+        excerpt: 'A 4.5-star roguelike that respects your time and rewards every run.',
+      },
+      {
+        source: 'vg247',
+        title: 'Hades II review – our verdict, 92/100',
+        excerpt: 'Supergiant’s most generous game, with a soundtrack to match.',
+      },
+      {
+        source: 'rock-paper-shotgun',
+        title: 'Hades II review: one more run, forever',
+        excerpt: 'We don’t score games, but this one is hard to put down.',
+      },
+      {
+        source: 'kotaku',
+        title: 'Hades II review: from 7/10 in early access to 9/10 now',
+        excerpt: 'How the 1.0 update changed our mind about the late game.',
+      },
+    ],
+  },
 ];
 
 function buildFeed(): RawFeedItem[] {

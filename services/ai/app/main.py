@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from app.embedding import EMBEDDING_DIM, MODEL_NAME, embed, warmup
+from app.polish import polish
 from app.summarize import ArticleInput, summarize
 
 # The demo <-> production seam (mirrors the main app's APP_MODE).
@@ -83,6 +84,15 @@ class SummarizeResponse(BaseModel):
     sourceCount: int
 
 
+class PolishRequest(BaseModel):
+    text: str = Field(default="", max_length=4000)
+
+
+class PolishResponse(BaseModel):
+    text: str
+    model: str
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Liveness + model readiness, consumed by the main app and orchestration."""
@@ -121,3 +131,9 @@ def summarize_endpoint(req: SummarizeRequest) -> SummarizeResponse:
         model="extractive-v1",
         sourceCount=len(sources),
     )
+
+
+@app.post("/polish", response_model=PolishResponse)
+def polish_endpoint(req: PolishRequest) -> PolishResponse:
+    """Tidy an editor's text (Phase P S5). Adds nothing; the main app validates it."""
+    return PolishResponse(text=polish(req.text), model="tidy-v1")

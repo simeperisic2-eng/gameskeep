@@ -6,7 +6,7 @@
  * has scores), and BreadcrumbList. Every value is drawn from the SAME leak-proof
  * public DTO the page renders — the internal assessment is not in that shape.
  */
-import { distinctSubtitle, scoreToTen } from './format';
+import { editorialDescription, scoreToTen } from './format';
 import { brand } from './labels';
 import type {
   CatalogGame,
@@ -78,8 +78,8 @@ export function newsArticleLd(topic: TopicDetail, siteUrl: string): Record<strin
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
     headline: topic.title.slice(0, 110),
-    description:
-      distinctSubtitle(topic.title, topic.tldr) ?? topic.aiSummary?.slice(0, 250) ?? undefined,
+    // Phase P S5: structured data carries no AI label → editorial text or nothing.
+    description: editorialDescription(topic, 250) ?? undefined,
     url,
     mainEntityOfPage: { '@type': 'WebPage', '@id': url },
     image: [shareImage(siteUrl)],
@@ -105,7 +105,8 @@ export function videoGameRatingLd(
 ): Record<string, unknown> | null {
   const r = topic.gameRating;
   if (!r) return null;
-  const headline = r.critics ?? r.our ?? r.community;
+  // Phase P S5: our score never feeds an aggregate.
+  const headline = r.critics ?? r.community;
   const value = scoreToTen(headline);
   const count = (r.criticsOutletCount ?? 0) + (r.communityCount ?? 0);
   if (value == null || count < 1) return null;
@@ -150,7 +151,8 @@ export function videoGameLd(game: GameDetail, siteUrl: string): Record<string, u
   // AggregateRating — truthful only: a real headline score + a non-zero count.
   const r = game.rating;
   if (r) {
-    const headline = r.critics.score ?? r.our.score ?? r.community.score;
+    // Phase P S5 (owner): our score is NEVER part of an aggregate.
+    const headline = r.critics.score ?? r.community.score;
     const value = scoreToTen(headline);
     const count = (r.critics.count ?? 0) + (r.community.count ?? 0);
     if (value != null && count >= 1) {
@@ -164,7 +166,9 @@ export function videoGameLd(game: GameDetail, siteUrl: string): Record<string, u
     }
   }
 
-  // Our Review — only where we've actually published one with a score.
+  // Our Review — a SEPARATE Review (author = our organisation), only while the team
+  // score is switched on (the payload carries `ourScore` only then); never merged
+  // into the aggregate. Off → no Review rating.
   const ourValue = scoreToTen(game.review?.ourScore ?? null);
   if (game.review && ourValue != null) {
     node.review = compact({
@@ -201,7 +205,8 @@ export function gameCollectionLd(
     url: opts.url,
     numberOfItems: games.length,
     itemListElement: games.map((g, i) => {
-      const rating = 'critics' in g ? (g.critics ?? g.our ?? g.community ?? null) : null;
+      // Phase P S5: our score never feeds an AggregateRating.
+      const rating = 'critics' in g ? (g.critics ?? g.community ?? null) : null;
       const value = scoreToTen(rating);
       const node: Record<string, unknown> = compact({
         '@type': 'VideoGame',

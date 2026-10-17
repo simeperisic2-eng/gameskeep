@@ -42,6 +42,9 @@ const NAV: {
       { label: 'Tag taxonomy', href: '/admin/tag-taxonomy', minRank: 30 },
       { label: 'List curation', href: '/admin/curation', minRank: 30 },
       { label: 'Editorial lists', href: '/admin/editorial-lists', minRank: 30 },
+      { label: 'Community voice', href: '/admin/community-voice', minRank: 30 },
+      { label: 'Score this review', href: '/admin/critic-feed', minRank: 30 },
+      { label: 'Story AI text', href: '/admin/story-summaries', minRank: 30 },
     ],
   },
   {

@@ -8,6 +8,7 @@ import { getHomepageQueue } from '../homepage/jobs';
 import { getTagsQueue } from '../tags/jobs';
 import { getSearchQueue } from '../search/jobs';
 import { getListsQueue } from '../lists/jobs';
+import { getSteamReviewsQueue } from '../steam/review-jobs';
 import { sendError } from './http';
 
 /**
@@ -25,6 +26,7 @@ const QUEUES: Record<string, () => Queue> = {
   tags: getTagsQueue as () => Queue,
   search: getSearchQueue as () => Queue,
   lists: getListsQueue as () => Queue,
+  'steam-reviews': getSteamReviewsQueue as () => Queue,
 };
 
 export async function registerJobAdminRoutes(admin: FastifyInstance): Promise<void> {

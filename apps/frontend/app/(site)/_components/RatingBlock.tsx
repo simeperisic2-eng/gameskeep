@@ -201,8 +201,11 @@ export function RatingBlock({
         ) : null}
       </div>
 
-      <div className="gk-rating-layers">
-        <Pillar label="Our score" sub="Editorial" score={rating.our.score} amber />
+      {/* Phase P S5: our score shows only while the team score is on (its own number). */}
+      <div className={`gk-rating-layers${rating.our ? '' : ' is-two'}`}>
+        {rating.our ? (
+          <Pillar label="Our score" sub="Editorial" score={rating.our.score} amber />
+        ) : null}
         <Pillar
           label="Media Critics"
           sub={

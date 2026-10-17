@@ -150,6 +150,15 @@ export function rulesPatchErrors(patch: unknown): string[] {
   return errors;
 }
 
+/** Rules that only make sense together (pure; unit-tested). */
+export function crossRuleErrors(r: RulesSettings): string[] {
+  const out: string[] = [];
+  if (r.communityNote.minSentences > r.communityNote.maxSentences) {
+    out.push('communityNote: the minimum sentences cannot exceed the maximum');
+  }
+  return out;
+}
+
 export async function setRulesSettings(
   patch: unknown,
   actor: AuditActor,
@@ -160,6 +169,8 @@ export async function setRulesSettings(
   cache = null;
   const current = await rulesSettings();
   const next = coerceRules(merge(current as unknown as Tree, patch as Tree));
+  const cross = crossRuleErrors(next);
+  if (cross.length) throw new RulesError(cross.join('; '));
   const changes: Record<string, { from: unknown; to: unknown }> = {};
   diff(current as unknown as Tree, next as unknown as Tree, '', changes);
   if (Object.keys(changes).length) {

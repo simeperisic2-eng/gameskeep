@@ -88,7 +88,8 @@ export function GameTile({
         )}
         <div className="gk-tile-scores">
           <TileScore label="Critics" score={game.critics} />
-          <TileScore label="Our" score={game.our} amber />
+          {/* Phase P S5: only while the team score is on. */}
+          {game.our != null ? <TileScore label="Our" score={game.our} amber /> : null}
           <TileScore label="Players" score={game.community} />
         </div>
         {note ? <p className="gk-tile-note">{note}</p> : null}

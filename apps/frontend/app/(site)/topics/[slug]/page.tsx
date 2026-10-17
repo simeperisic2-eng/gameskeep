@@ -9,6 +9,7 @@ import {
   relativeTime,
   scoreToTen,
   truncateWords,
+  editorialDescription,
 } from '@/lib/format';
 import { breadcrumbLd, newsArticleLd, videoGameRatingLd } from '@/lib/schema';
 import { Breadcrumbs } from '../../_components/Breadcrumbs';
@@ -21,6 +22,7 @@ import { StoryTimeline } from '../../_components/StoryTimeline';
 import { CoverArt } from '../../_components/CoverArt';
 import { getSite } from '@/lib/site';
 import { brand, excerptRule } from '@/lib/labels';
+import { AiLabel } from '../../_components/AiLabel';
 
 // Live, server-rotated bias data — render per request so crawlers always get the
 // full story (SSR), not a cached shell.
@@ -41,9 +43,9 @@ export async function generateMetadata({
   if (!topic) return { title: 'Story not found', robots: { index: false } };
 
   const url = `${siteUrl}/topics/${topic.slug}`;
+  // Phase P S5: search results and share cards carry no AI label → editorial text only.
   const description =
-    distinctSubtitle(topic.title, topic.tldr) ??
-    truncateWords(topic.aiSummary, excerptRule('metaDescription')) ??
+    editorialDescription(topic, excerptRule('metaDescription')) ??
     `How ${topic.sourceCount} outlets are covering this story — and the coverage signals we found.`;
 
   return {
@@ -129,7 +131,12 @@ export default async function TopicPage({
               <h1 className="gk-story-title">{topic.title}</h1>
               <FollowButton entityType="topic" slug={topic.slug} />
             </div>
-            {subtitle ? <p className="gk-story-tldr">{subtitle}</p> : null}
+            {subtitle ? (
+              <p className="gk-story-tldr">
+                {topic.tldrIsAi !== false ? <AiLabel compact /> : null}
+                {subtitle}
+              </p>
+            ) : null}
             <div className="gk-story-meta">
               <span>
                 {topic.sourceCount} {topic.sourceCount === 1 ? 'outlet' : 'outlets'}
@@ -157,15 +164,24 @@ export default async function TopicPage({
           <div className="gk-story-main">
             {summary ? (
               <section className="gk-panel gk-story-summary">
-                <span className="gk-ai-label">
-                  <span className="gk-chip-dot" aria-hidden />
-                  AI summary
-                </span>
-                <p>{summary}</p>
-                <p className="gk-ai-note">
-                  Auto-generated neutral recap of what happened — not an opinion. Read the sources
-                  below for each outlet&apos;s framing.
-                </p>
+                {topic.summaryIsAi !== false ? (
+                  <>
+                    <AiLabel />
+                    <p>{summary}</p>
+                    <p className="gk-ai-note">
+                      Auto-generated neutral recap of what happened — not an opinion. Read the
+                      sources below for each outlet&apos;s framing.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <span className="gk-ai-label">
+                      <span className="gk-chip-dot" aria-hidden />
+                      Summary
+                    </span>
+                    <p>{summary}</p>
+                  </>
+                )}
               </section>
             ) : null}
 

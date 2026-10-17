@@ -17,6 +17,7 @@ import { CoverArt } from './CoverArt';
 import { BiasBar } from './BiasBar';
 import { PaidLabel } from './PaidLabel';
 import { TagChips } from './TagChips';
+import { AiLabel } from './AiLabel';
 
 /**
  * The homepage HERO (SPEC I5a) — the "wow".
@@ -199,10 +200,14 @@ export function Hero({
             );
           }
           const t: TopicCard = r.topic;
+          const fromSummary = stripLeadingTitle(t.aiSummary, t.title);
           const summary = truncateWords(
-            stripLeadingTitle(t.aiSummary, t.title) ?? distinctSubtitle(t.title, t.tldr),
+            fromSummary ?? distinctSubtitle(t.title, t.tldr),
             excerptRule('spotlight'),
           );
+          // Phase P S5: the AI label goes with automatic AI text only (an editor's
+          // TL;DR or an approved summary is editorial).
+          const summaryIsAi = fromSummary ? t.summaryIsAi !== false : t.tldrIsAi !== false;
           const coverage = (r.coverage ?? []).filter((c) => c.title);
           const status = publicTopicStatus(t.status);
           return (
@@ -240,10 +245,14 @@ export function Hero({
 
                 {summary ? (
                   <div>
-                    <span className="gk-ai-label">
-                      <span className="gk-chip-dot" aria-hidden />
-                      AI summary
-                    </span>
+                    {summaryIsAi ? (
+                      <AiLabel />
+                    ) : (
+                      <span className="gk-ai-label">
+                        <span className="gk-chip-dot" aria-hidden />
+                        Summary
+                      </span>
+                    )}
                     <p className="gk-spot-summary">{summary}</p>
                   </div>
                 ) : null}

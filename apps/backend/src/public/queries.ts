@@ -58,6 +58,9 @@ import {
   type TagFacet,
 } from '../tags/service';
 import { tagSettings } from '../tags/settings';
+import { summaryEditorialSql, tldrEditorialSql } from '../articles/summary-approval';
+import { publicCommunityNote, type PublicCommunityNote } from '../community/notes';
+import { publicSteamSummary, type PublicSteamSummary } from '../steam/review-summary';
 import { briefingOverrideToday, rulesSettings, rulesSnapshot } from '../rules/settings';
 import { curateList, curationFor, curationsOf, type Curation } from '../curation/service';
 import { brandName, copyState } from '../copy/settings';
@@ -125,6 +128,13 @@ export interface TopicCard {
   tldr: string | null;
   /** The stored I3 AI summary (neutral "what happened"); labeled AI on render. */
   aiSummary: string | null;
+  /**
+   * Phase P S5 (EU AI Act transparency): true while the text is automatic AI
+   * output → the locked "AI summary" label renders with it. False once an editor
+   * edited or approved it (editorial content).
+   */
+  tldrIsAi: boolean;
+  summaryIsAi: boolean;
   status: string;
   typeLabel: string | null;
   articleCount: number;
@@ -440,6 +450,8 @@ async function loadTopicCards(
       title: topics.title,
       tldr: topics.tldr,
       aiSummary: topics.aiSummary,
+      tldrEditorial: tldrEditorialSql,
+      summaryEditorial: summaryEditorialSql,
       status: topics.status,
       typeLabel: topicTypes.label,
       distribution: topics.biasDistribution,
@@ -473,6 +485,8 @@ async function loadTopicCards(
       title: t.title,
       tldr: t.tldr,
       aiSummary: t.aiSummary,
+      tldrIsAi: Boolean(t.tldr) && !t.tldrEditorial,
+      summaryIsAi: Boolean(t.aiSummary) && !t.summaryEditorial,
       status: t.status,
       typeLabel: t.typeLabel,
       articleCount: t.distribution.articleCount,
@@ -678,6 +692,17 @@ function effective(auto: number | null, override: number | null): number | null 
   return override ?? auto ?? null;
 }
 
+/**
+ * Phase P S5 — the team (our) score is public ONLY when `editorial.teamScore` is
+ * on (default off), and it never ranks, orders or qualifies anything — it is
+ * never part of an aggregate. One gate for every public payload.
+ */
+async function teamScoreOn(): Promise<boolean> {
+  return (await rulesSettings()).editorial.teamScore;
+}
+const teamOnly = (on: boolean, v: number | null | undefined): number | null =>
+  on ? (v ?? null) : null;
+
 /** Games with a rating summary — the ranking + disconnect rails. */
 async function loadRankedGames(): Promise<RankedGame[]> {
   const rows = await db
@@ -699,18 +724,19 @@ async function loadRankedGames(): Promise<RankedGame[]> {
     // Only games with at least one REAL score — the recompute writes a summary
     // row for every catalog game, so without this an unscored game would leak
     // into the public rankings (matches the admin's no-data filter).
+    // (Phase P S5: our score alone never qualifies a game — it is not an aggregate.)
     .where(
       or(
-        isNotNull(gameRatingSummaries.ourScore),
         isNotNull(gameRatingSummaries.criticsScore),
         isNotNull(gameRatingSummaries.communityOurScore),
       ),
     );
 
+  const team = await teamScoreOn();
   return rows.map((r) => ({
     slug: r.slug,
     name: r.name,
-    our: r.our ?? null,
+    our: teamOnly(team, r.our),
     critics: effective(r.criticsAuto, r.criticsOverride),
     community: effective(r.communityAuto, r.communityOverride),
     web: r.web ?? null,
@@ -1009,6 +1035,9 @@ export interface TopicDetail {
   title: string;
   tldr: string | null;
   aiSummary: string | null;
+  /** Phase P S5: automatic AI text → the locked "AI summary" label (false once editorial). */
+  tldrIsAi: boolean;
+  summaryIsAi: boolean;
   status: string;
   typeLabel: string | null;
   publishedAt: string | null;
@@ -1072,11 +1101,12 @@ async function gameRatingForSubject(subjectId: string): Promise<TopicGameRating 
   if (!r) return null;
   const critics = effective(r.criticsAuto, r.criticsOverride);
   const community = effective(r.communityAuto, r.communityOverride);
-  if (r.our == null && critics == null && community == null) return null;
+  const our = teamOnly(await teamScoreOn(), r.our);
+  if (our == null && critics == null && community == null) return null;
   return {
     slug: r.slug,
     name: r.name,
-    our: r.our ?? null,
+    our,
     critics,
     community,
     criticsOutletCount: r.criticsCount ?? null,
@@ -1130,6 +1160,7 @@ async function relatedGameCardsBySlug(slugs: string[]): Promise<Map<string, Rela
     .innerJoin(subjects, and(eq(games.subjectId, subjects.id), eq(subjects.type, 'game')))
     .leftJoin(gameRatingSummaries, eq(gameRatingSummaries.gameId, games.id))
     .where(inArray(subjects.slug, slugs));
+  const team = await teamScoreOn();
   return new Map(
     rows.map((r) => [
       r.slug,
@@ -1137,7 +1168,7 @@ async function relatedGameCardsBySlug(slugs: string[]): Promise<Map<string, Rela
         slug: r.slug,
         name: r.name,
         genres: r.genres ?? [],
-        our: r.our ?? null,
+        our: teamOnly(team, r.our),
         critics: effective(r.criticsAuto, r.criticsOverride),
         community: effective(r.communityAuto, r.communityOverride),
       },
@@ -1215,6 +1246,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
       title: topics.title,
       tldr: topics.tldr,
       aiSummary: topics.aiSummary,
+      tldrEditorial: tldrEditorialSql,
+      summaryEditorial: summaryEditorialSql,
       status: topics.status,
       typeLabel: topicTypes.label,
       distribution: topics.biasDistribution,
@@ -1300,6 +1333,8 @@ export async function getTopicDetail(slug: string): Promise<TopicDetail | null> 
     title: topic.title,
     tldr: topic.tldr,
     aiSummary: topic.aiSummary,
+    tldrIsAi: Boolean(topic.tldr) && !topic.tldrEditorial,
+    summaryIsAi: Boolean(topic.aiSummary) && !topic.summaryEditorial,
     status: topic.status,
     typeLabel: topic.typeLabel,
     publishedAt: topic.createdAt ? topic.createdAt.toISOString() : null,
@@ -1365,7 +1400,8 @@ export interface WebRatingEntry {
  * values and the burst-info internals (those stay in the admin DTO).
  */
 export interface PublicGameRating {
-  our: PublicRatingLayer;
+  /** Phase P S5: null while `editorial.teamScore` is off. */
+  our: PublicRatingLayer | null;
   critics: PublicRatingLayer;
   community: PublicRatingLayer;
   web: PublicRatingLayer;
@@ -1507,6 +1543,10 @@ export interface GameDetail {
   relatedTopics: RelatedTopic[];
   /** Phase P S4: this game on confirmed editorial lists ("#3 at IGN" + link out) + comparison lines. */
   editorialLists: GameEditorialLists;
+  /** Phase P S5: the published editor note (null = none). Editorial content — no AI label. */
+  communityNote: PublicCommunityNote | null;
+  /** Phase P S5: the Steam reviews summary (null below the threshold / hidden). */
+  steamReviews: PublicSteamSummary | null;
   /** Outlet review articles — their own block, pinned above the news (Phase P S1). */
   reviews: GameArticleRow[];
   /** Other coverage that mentions the game (reviews excluded). */
@@ -1632,14 +1672,28 @@ async function ourReviewFor(gameId: string): Promise<PublicReview | null> {
     .where(eq(gameReviews.gameId, gameId))
     .limit(1);
   if (!r) return null;
+  // Phase P S5: the text stays; the score follows `teamScore`, the verdict `teamVerdict`.
+  const ed = (await rulesSettings()).editorial;
+  const score = teamOnly(ed.teamScore, r.ourScore);
+  const verdict = ed.teamVerdict ? (r.verdict ?? null) : null;
+  // Nothing public left (a score / verdict-only review with both switched off) → no block.
+  if (
+    score == null &&
+    !verdict &&
+    !r.body?.trim() &&
+    !(r.pros ?? []).length &&
+    !(r.cons ?? []).length
+  ) {
+    return null;
+  }
   return {
-    verdict: r.verdict ?? null,
+    verdict,
     pros: r.pros ?? [],
     cons: r.cons ?? [],
     platformTested: r.platformTested ?? null,
     hoursPlayed: r.hoursPlayed ?? null,
     body: r.body ?? null,
-    ourScore: r.ourScore ?? null,
+    ourScore: score,
     author: r.author ?? null,
     publishedAt: r.publishedAt ? r.publishedAt.toISOString() : null,
   };
@@ -1774,12 +1828,13 @@ async function relatedGamesFor(
     .where(and(ne(games.id, gameId), or(...conds)))
     .limit(48);
   // Prefer same-series, then rated, then alphabetical — keep it to a tidy 6.
+  const team = await teamScoreOn();
   return rows
     .map((r) => ({
       slug: r.slug,
       name: r.name,
       genres: r.genres ?? [],
-      our: r.our ?? null,
+      our: teamOnly(team, r.our),
       critics: effective(r.criticsAuto, r.criticsOverride),
       community: effective(r.communityAuto, r.communityOverride),
       sameSeries: series != null && r.series === series,
@@ -1787,7 +1842,8 @@ async function relatedGamesFor(
     .sort(
       (a, b) =>
         Number(b.sameSeries) - Number(a.sameSeries) ||
-        (b.critics ?? b.our ?? -1) - (a.critics ?? a.our ?? -1),
+        // Phase P S5: critics, then community — our score never orders anything.
+        (b.critics ?? b.community ?? -1) - (a.critics ?? a.community ?? -1),
     )
     .map(({ slug, name, genres: g, our, critics, community }) => ({
       slug,
@@ -1956,7 +2012,9 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   // ── shape the leak-proof rating block (effective values only) ───────────────
   let rating: PublicGameRating | null = null;
   if (summary) {
-    const our = summary.ourScore ?? null;
+    // Phase P S5: our score only with `teamScore` on — its own layer, never an aggregate.
+    const team = await teamScoreOn();
+    const our = teamOnly(team, summary.ourScore);
     const critics = effective(summary.criticsScore, summary.criticsOverride);
     const community = effective(summary.communityOurScore, summary.communityOverride);
     const web = summary.communityWebScore ?? null;
@@ -1970,7 +2028,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
     if (hasAny) {
       const unusualActivity = summary.burstFlagOverride ?? summary.communityBurstFlag;
       rating = {
-        our: { score: our, count: null },
+        our: team ? { score: our, count: null } : null,
         critics: { score: critics, count: summary.criticsOutletCount ?? criticEntries.length },
         community: {
           score: community,
@@ -1986,7 +2044,7 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
                 value: summary.disconnectValue,
                 band: summary.disconnectBand as DisconnectBand,
                 contextTag: summary.disconnectContextTag ?? null,
-                ourVsCritics: summary.disconnectDetail?.ourVsCritics ?? null,
+                ourVsCritics: team ? (summary.disconnectDetail?.ourVsCritics ?? null) : null,
                 communityVsWeb: summary.disconnectDetail?.communityVsWeb ?? null,
               }
             : null,
@@ -1995,14 +2053,19 @@ export async function getGameDetail(slug: string): Promise<GameDetail | null> {
   }
 
   const player = playerRows[0];
-  const [recordedPeak, editorialLists] = await Promise.all([
+  const [recordedPeak, editorialLists, communityNote, steamReviews] = await Promise.all([
     recordedPlayerPeak(g.gameId),
     // Phase P S4: positions on confirmed lists + comparison lines (never a full list).
     gameEditorialLists(g.gameId, g.slug),
+    // Phase P S5: "What the community says" — the editor note + the Steam reviews summary.
+    publicCommunityNote(g.gameId),
+    publicSteamSummary(g.gameId, g.steamAppId ?? null),
   ]);
 
   return {
     editorialLists,
+    communityNote,
+    steamReviews,
     noindex: g.noindex,
     id: g.gameId, // I6 Slice 8: the community write components address the game by id
     slug: g.slug,
@@ -2289,6 +2352,7 @@ async function loadCatalogRows(): Promise<CatalogGame[]> {
     publicTagGroups(rows.map((r) => r.gameId)),
     tagSettings(),
   ]);
+  const team = await teamScoreOn();
   return rows.map((r) => ({
     slug: r.slug,
     name: r.name,
@@ -2297,7 +2361,7 @@ async function loadCatalogRows(): Promise<CatalogGame[]> {
     genres: r.genres ?? [],
     platforms: r.platforms ?? [],
     coverUrl: publicAssetUrl(r.coverUrl),
-    our: r.our ?? null,
+    our: teamOnly(team, r.our),
     critics: effective(r.criticsAuto, r.criticsOverride),
     community: effective(r.communityAuto, r.communityOverride),
     disconnectValue: r.disconnectValue ?? null,
@@ -2453,7 +2517,9 @@ export async function getQuickView(
 ): Promise<{ data: QuickViewData; cache: 'hit' | 'miss' | 'off' } | null> {
   if (!TAG_SLUG_RE.test(slug)) return null;
   const { quickViewCacheSeconds } = await tagSettings();
-  const key = `gk:quickview:v1:${slug}`;
+  const team = await teamScoreOn();
+  // Phase P S5: the team-score switch is part of the key (a toggle applies at once).
+  const key = `gk:quickview:v1:${team ? 't' : 'f'}:${slug}`;
   if (quickViewCacheSeconds > 0) {
     try {
       const hit = await redis.get(key);
@@ -2511,7 +2577,7 @@ export async function getQuickView(
     coverUrl: publicAssetUrl(g.coverUrl),
     layers: {
       critics: effective(g.criticsAuto, g.criticsOverride),
-      our: g.our ?? null,
+      our: teamOnly(team, g.our),
       community: effective(g.communityAuto, g.communityOverride),
     },
     disconnect: { value: g.disconnectValue ?? null, band: g.disconnectBand ?? null },

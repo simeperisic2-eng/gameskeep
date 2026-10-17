@@ -163,9 +163,14 @@ export const gameCriticReviews = pgTable(
     excerpt: text('excerpt'),
     url: text('url'),
     reviewDate: text('review_date'), // YYYY-MM-DD
+    /** Phase P S5: the ingested outlet article this score came from ("Score this review") — once only. */
+    sourceArticleGuid: varchar('source_article_guid', { length: 400 }),
     ...timestamps(),
   },
-  (t) => [index('game_critic_reviews_game_idx').on(t.gameId)],
+  (t) => [
+    index('game_critic_reviews_game_idx').on(t.gameId),
+    uniqueIndex('game_critic_reviews_article_unique').on(t.sourceArticleGuid),
+  ],
 );
 
 /**

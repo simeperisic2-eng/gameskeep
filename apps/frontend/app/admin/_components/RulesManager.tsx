@@ -34,6 +34,26 @@ const GROUPS: { key: string; title: string; sub: string }[] = [
     title: 'Editorial lists',
     sub: 'The consensus of outlets’ confirmed year-end lists.',
   },
+  {
+    key: 'editorial',
+    title: 'Team score',
+    sub: 'Our score and verdict on game pages — never part of an aggregate or a ranking.',
+  },
+  {
+    key: 'communityNote',
+    title: 'Community note',
+    sub: '“What the community says” — a source link is always required.',
+  },
+  {
+    key: 'steamReviews',
+    title: 'Steam reviews summary',
+    sub: 'The AI summary of recent Steam reviews (no reviewer data is stored).',
+  },
+  {
+    key: 'criticFeed',
+    title: 'Critic feed',
+    sub: '“Score this review” — which score patterns become suggestions.',
+  },
 ];
 
 const LABELS: Record<string, string> = {
@@ -101,6 +121,24 @@ const LABELS: Record<string, string> = {
   'editorialLists.lineCoverage': 'Comparison line · “On k of n lists”',
   'editorialLists.lineSpread': 'Comparison line · highest to lowest position',
   'editorialLists.showInNav': 'Show “Lists” in the site navigation',
+  'editorial.teamScore':
+    'Show our team score on game pages (its own number + a separate Review in structured data)',
+  'editorial.teamVerdict': 'Show the review verdict line',
+  'communityNote.minSentences': 'Sentences — at least',
+  'communityNote.maxSentences': 'Sentences — at most',
+  'communityNote.maxChars': 'Longest note (characters)',
+  'steamReviews.enabled': 'Show the Steam reviews summary',
+  'steamReviews.reviewsMin': 'Shown from this many reviews in the window',
+  'steamReviews.windowDays': 'Window (days)',
+  'steamReviews.maxReviews': 'Reviews read per game per run',
+  'steamReviews.intervalDays': 'The job runs every N days',
+  'steamReviews.summarySentences': 'Summary length (sentences)',
+  'criticFeed.scaleOutOf10': 'Suggest from “x/10” / “x out of 10”',
+  'criticFeed.scaleOutOf5': 'Suggest from “x/5”',
+  'criticFeed.scaleStars': 'Suggest from stars (“4.5 stars”, ★★★★☆)',
+  'criticFeed.scaleOutOf100': 'Suggest from “x/100”',
+  'criticFeed.scaleLetter': 'Suggest from letter grades (“Grade: B+”)',
+  'criticFeed.lookbackDays': 'List reviews from the last N days',
 };
 
 const isTree = (v: unknown): v is RuleTree =>

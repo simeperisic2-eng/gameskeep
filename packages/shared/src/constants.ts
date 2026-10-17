@@ -1107,6 +1107,41 @@ export const RULES_DEFAULTS = {
     /** "Lists" in the header navigation. */
     showInNav: true,
   },
+  /** Phase P S5: the team (our) score + verdict — public only when switched on. */
+  editorial: {
+    /** Our score shows (its own number + a separate Review in structured data — never an aggregate). */
+    teamScore: false,
+    /** The review verdict line shows. */
+    teamVerdict: false,
+  },
+  /** Phase P S5: the editor note "What the community says" (a source link is always required). */
+  communityNote: {
+    minSentences: 2,
+    maxSentences: 3,
+    maxChars: 600,
+  },
+  /** Phase P S5: the Steam reviews summary (AI; reviewer data never stored). */
+  steamReviews: {
+    enabled: true,
+    /** Shown only from this many reviews in the window. */
+    reviewsMin: 50,
+    windowDays: 30,
+    /** Reviews read per game per run (newest first). */
+    maxReviews: 200,
+    /** The job runs every N days. */
+    intervalDays: 7,
+    summarySentences: 3,
+  },
+  /** Phase P S5: "Score this review" — which score patterns become suggestions. */
+  criticFeed: {
+    scaleOutOf10: true,
+    scaleOutOf5: true,
+    scaleStars: true,
+    scaleOutOf100: true,
+    scaleLetter: false,
+    /** Review articles from the last N days are listed. */
+    lookbackDays: 365,
+  },
 };
 export type RulesSettings = typeof RULES_DEFAULTS;
 
@@ -1162,6 +1197,15 @@ export const RULE_BOUNDS: Record<string, readonly [number, number]> = {
   'editorialLists.deviationTopN': [3, 100],
   'editorialLists.indexMinLists': [1, 50],
   'editorialLists.gamePageMax': [0, 50],
+  'communityNote.minSentences': [1, 5],
+  'communityNote.maxSentences': [1, 8],
+  'communityNote.maxChars': [100, 2000],
+  'steamReviews.reviewsMin': [1, 100000],
+  'steamReviews.windowDays': [1, 90],
+  'steamReviews.maxReviews': [10, 1000],
+  'steamReviews.intervalDays': [1, 30],
+  'steamReviews.summarySentences': [1, 5],
+  'criticFeed.lookbackDays': [1, 3650],
 };
 
 // ── Phase P S4: news categories, indexing, editorial lists, search ──────────
@@ -1279,3 +1323,17 @@ export const LIST_DETECT_DEFAULTS: { patterns: string[]; gotyPatterns: string[] 
 /** Search result groups (studios arrive with S6). */
 export const SEARCH_GROUPS = ['games', 'stories', 'sources'] as const;
 export type SearchGroup = (typeof SEARCH_GROUPS)[number];
+
+/**
+ * Phase P S5 — the AI-transparency label (EU AI Act transparency rules apply from
+ * August 2026). Automatically published AI text (story TL;DR / summary, the Steam
+ * reviews summary) carries it wherever it shows. LOCKED like the paid label: not
+ * copy, not a setting, no role can hide it. Text an editor edited or approved is
+ * editorial content and carries none.
+ */
+export const AI_SUMMARY_LABEL = 'AI summary';
+export function steamAiSummaryLabel(reviews: number, days: number): string {
+  const n = Number.isFinite(reviews) ? Math.max(0, Math.floor(reviews)) : 0;
+  const d = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 30;
+  return `AI summary of ${n.toLocaleString('en-US')} Steam ${n === 1 ? 'review' : 'reviews'}, last ${d} ${d === 1 ? 'day' : 'days'}`;
+}

@@ -60,6 +60,9 @@ export interface TopicCard {
   title: string;
   tldr: string | null;
   aiSummary: string | null;
+  /** Phase P S5: automatic AI text → render the locked AI label with it (false = editorial). */
+  tldrIsAi?: boolean;
+  summaryIsAi?: boolean;
   status: string;
   typeLabel: string | null;
   articleCount: number;
@@ -269,6 +272,9 @@ export interface TopicDetail {
   title: string;
   tldr: string | null;
   aiSummary: string | null;
+  /** Phase P S5: automatic AI text → render the locked AI label with it (false = editorial). */
+  tldrIsAi?: boolean;
+  summaryIsAi?: boolean;
   status: string;
   typeLabel: string | null;
   publishedAt: string | null;
@@ -326,7 +332,8 @@ export interface WebRatingEntry {
   url: string | null;
 }
 export interface PublicGameRating {
-  our: PublicRatingLayer;
+  /** Phase P S5: null while the team score is switched off. */
+  our: PublicRatingLayer | null;
   critics: PublicRatingLayer;
   community: PublicRatingLayer;
   web: PublicRatingLayer;
@@ -454,6 +461,22 @@ export interface GameDetail {
   relatedTopics: RelatedTopic[];
   /** Phase P S4: positions on confirmed editorial lists + comparison lines. */
   editorialLists?: GameEditorialLists;
+  /** Phase P S5: the editor note "What the community says" (editorial — no AI label). */
+  communityNote?: {
+    text: string;
+    sources: { url: string; label?: string }[];
+    asOf: string | null;
+    editor: string | null;
+  } | null;
+  /** Phase P S5: the Steam reviews summary (shown from the admin threshold). */
+  steamReviews?: {
+    reviewCount: number;
+    positivePct: number | null;
+    windowDays: number;
+    text: string;
+    isAi: boolean;
+    storeUrl: string | null;
+  } | null;
   /** Outlet review articles — own block, pinned above the news (Phase P S1). */
   reviews: GameArticleRow[];
   /** Other coverage (reviews excluded). */

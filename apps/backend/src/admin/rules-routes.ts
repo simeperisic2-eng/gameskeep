@@ -19,6 +19,7 @@ import { enqueueHomepageCompute } from '../homepage/jobs';
 import { enqueueConsensus } from '../lists/jobs';
 import { enqueueReclassify } from '../articles/jobs';
 import { bumpSearchVersion } from '../search/index';
+import { armSteamSummaries } from '../steam/review-jobs';
 import { RANK } from './rbac';
 import { getAdminAuth } from './guard';
 import { actorOf, sendError } from './http';
@@ -60,7 +61,18 @@ export async function registerRulesAdminRoutes(admin: FastifyInstance): Promise<
         : null;
       if (changed.some((c) => c.startsWith('search.') || c.startsWith('news.')))
         await bumpSearchVersion();
-      reply.send({ data: settings, changed, recomputeJobId, consensusJobId, reclassifyJobId });
+      // Phase P S5: the Steam summary schedule follows its rule.
+      const steamIntervalDays = changed.includes('steamReviews.intervalDays')
+        ? await armSteamSummaries()
+        : null;
+      reply.send({
+        data: settings,
+        changed,
+        recomputeJobId,
+        consensusJobId,
+        reclassifyJobId,
+        steamIntervalDays,
+      });
     } catch (err) {
       if (err instanceof RulesError) {
         reply.code(400).send({ error: 'validation', message: err.message });

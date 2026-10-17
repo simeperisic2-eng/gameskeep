@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { HomepageSectionKey } from '@gameskeep/shared/constants';
 import { db } from '../db/client';
 import {
@@ -444,6 +444,11 @@ export async function computeHomepageSnapshots(now: Date = new Date()): Promise<
       .onConflictDoUpdate({
         target: homepageSectionSnapshots.sectionKey,
         set: { payload: p, computedAt: now },
+        // Last STARTED wins (Phase P S5 review): jobs recompute the homepage inline
+        // (ratings, tags, ingest…), so a compute that began before a change (e.g. a
+        // category switched to hide) can finish after a newer one — it must not
+        // overwrite the newer snapshot. `computedAt` is this compute's start time.
+        setWhere: sql`${homepageSectionSnapshots.computedAt} <= ${now}`,
       });
   }
   return written.length;

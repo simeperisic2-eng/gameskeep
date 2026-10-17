@@ -21,6 +21,8 @@ import { ensureListCategories } from './lists/service';
 import { enqueueConsensus } from './lists/jobs';
 import { enqueueSearchRebuild } from './search/jobs';
 import { seedS4Demo } from './demo/s4-seed';
+import { armSteamSummaries, enqueueSteamSummaries } from './steam/review-jobs';
+import { seedDemoCommunityNote } from './community/notes';
 
 /** API process entrypoint. */
 async function main(): Promise<void> {
@@ -83,6 +85,20 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     app.log.error({ err }, 'S4 boot steps failed');
+  }
+
+  // Phase P S5: the Steam reviews summary — the schedule from its rule + one run now
+  // (mock reviews in demo; the catalog import queues another once its games exist).
+  try {
+    const demoNote = await seedDemoCommunityNote();
+    const intervalDays = await armSteamSummaries();
+    const steamSummaryJobId = await enqueueSteamSummaries('boot');
+    app.log.info(
+      { intervalDays, steamSummaryJobId, demoNote },
+      'S5 Steam reviews summary armed + enqueued',
+    );
+  } catch (err) {
+    app.log.error({ err }, 'S5 boot steps failed');
   }
 
   // Game status derived from release dates (hygiene 3) — at boot and daily. A

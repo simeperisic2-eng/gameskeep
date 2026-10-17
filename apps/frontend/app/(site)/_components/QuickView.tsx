@@ -83,9 +83,9 @@ export function QuickView({ slug, name }: { slug: string; name: string }): React
           </p>
         ) : (
           <div className="gk-qv-body">
-            <div className="gk-qv-layers">
+            <div className={`gk-qv-layers${data.layers.our != null ? '' : ' is-two'}`}>
               {layer('Critics', data.layers.critics)}
-              {layer('Our', data.layers.our, true)}
+              {data.layers.our != null ? layer('Our', data.layers.our, true) : null}
               {layer('Players', data.layers.community)}
             </div>
             {data.disconnect.value != null ? (

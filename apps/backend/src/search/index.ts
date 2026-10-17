@@ -40,7 +40,10 @@ export async function rebuildSearchIndex(): Promise<{
   const stories = await db.execute(sql`
     INSERT INTO search_index (entity_type, entity_id, slug, title, title_norm, subtitle, tsv, category, hidden, sort_date, updated_at)
     SELECT 'topic', t.id, t.slug, t.title, lower(unaccent(t.title)),
-           left(t.tldr, 200),
+           -- Phase P S5: a result subtitle carries no AI label, so only editorial text (edited /
+           -- approved / locked) may appear there; automatic AI text is still searchable.
+           CASE WHEN t.tldr_approved_at IS NOT NULL OR 'tldr' = ANY(t.locked_fields)
+                THEN left(t.tldr, 200) END,
            ${doc(sql`t.title`, 'A')} || ${doc(sql`t.tldr`, 'C')},
            coalesce(t.category, 'news'), t.search_hidden, t.last_activity_at, now()
     FROM topics t

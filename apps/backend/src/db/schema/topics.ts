@@ -74,6 +74,15 @@ export const topics = pgTable(
     category: varchar('category', { length: 40 }),
     /** Phase P S4: an editor keeps this story out of site search. */
     searchHidden: boolean('search_hidden').notNull().default(false),
+    /**
+     * Phase P S5 (EU AI Act transparency): the automatic TL;DR / AI summary carry a
+     * visible "AI summary" label until an editor edits or approves the text — then
+     * it is editorial (who + when kept here). A later automatic regeneration clears it.
+     */
+    tldrApprovedByLabel: varchar('tldr_approved_by_label', { length: 120 }),
+    tldrApprovedAt: timestamp('tldr_approved_at', { withTimezone: true }),
+    aiSummaryApprovedByLabel: varchar('ai_summary_approved_by_label', { length: 120 }),
+    aiSummaryApprovedAt: timestamp('ai_summary_approved_at', { withTimezone: true }),
 
     lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
     ...timestamps(),

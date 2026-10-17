@@ -7,6 +7,7 @@ import { importCatalog, type CatalogImportResult } from './import';
 import { enqueueTagSync } from '../tags/jobs';
 import { seedS4Demo } from '../demo/s4-seed';
 import { requestSearchRefresh } from '../search/jobs';
+import { enqueueSteamSummaries } from '../steam/review-jobs';
 
 /**
  * Catalog-import background job (SPEC I2 §2; CLAUDE.md "nothing heavy on user
@@ -96,6 +97,8 @@ export function startCatalogWorker(): Worker<CatalogJobData> {
       // Phase P S4: imported games are searchable; the demo lists can now match them.
       await seedS4Demo('catalog').catch(() => undefined);
       await requestSearchRefresh('catalog');
+      // Phase P S5: newly imported games get their Steam reviews summary.
+      await enqueueSteamSummaries('catalog').catch(() => undefined);
       await recomputeHomepageQuietly('catalog');
       return result;
     },

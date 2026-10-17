@@ -13,6 +13,8 @@ import { env } from '../config/env';
 import { sendNewsletterEmail } from '../email/send';
 import { MARKETING_CONSENT_TYPE } from '../awards/subscribe';
 import { writeAudit, type AuditActor } from '../admin/audit';
+import { AI_SUMMARY_LABEL as AI_LABEL } from '@gameskeep/shared/constants';
+import { summaryEditorialSql, tldrEditorialSql } from '../articles/summary-approval';
 
 /**
  * Newsletter campaigns (SPEC I8, Slice 3; BLUEPRINT 2.8). Staff compose/segment/
@@ -111,6 +113,8 @@ export async function buildDigest(
       title: topics.title,
       tldr: topics.tldr,
       aiSummary: topics.aiSummary,
+      tldrEditorial: tldrEditorialSql,
+      summaryEditorial: summaryEditorialSql,
     })
     .from(topics)
     .where(
@@ -133,7 +137,11 @@ export async function buildDigest(
   const site = env.PUBLIC_SITE_URL.replace(/\/+$/, '');
   const brand = (await copyState()).values['brand.name'] ?? 'GamesKeep';
   const items = rows.map((t) => {
-    const summary = (t.tldr ?? t.aiSummary ?? '').trim();
+    // Phase P S5 (EU AI Act transparency): automatic AI text keeps its label in email too.
+    const fromTldr = Boolean(t.tldr?.trim());
+    const text = (t.tldr ?? t.aiSummary ?? '').trim();
+    const isAi = fromTldr ? !t.tldrEditorial : !t.summaryEditorial;
+    const summary = text && isAi ? `${AI_LABEL}: ${text}` : text;
     return [`▸ ${t.title}`, summary, `${site}/topics/${t.slug}`].filter(Boolean).join('\n');
   });
 
