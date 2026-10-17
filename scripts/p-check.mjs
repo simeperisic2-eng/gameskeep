@@ -146,6 +146,7 @@
  *   S4.12 settings validated + audited; RBAC by section (UI path)
  *   S4.13 heavy steps are background jobs with ids
  *   S4.14 low mode: "More from the feed" only + the game-page chip
+ *   S4.15 (follow-up) the phone menu: SSR contract (keyboard / screen reader: browser probe)
  */
 import './lib/netdiag.mjs'; // connection errors: full diagnostics, never retried (S2 review)
 import { execSync } from 'node:child_process';
@@ -4792,6 +4793,59 @@ async function s4() {
       badKey.status === 400 &&
       pages.every((p) => p.endsWith('=200')),
     `bad floor=${badFloor.status} min=${badMin.status} type=${badType.status} good=${good.status} audit ${auditBefore}→${auditAfter} · mod queue=${modQueue.status} news=${modNews.status} search=${modSearch.status} cat=${modCat.status} rules=${modRules.status} anon=${anon.status} · overview=${overview.status} test=${testQ.status} · news delete=${delNews.status} deactivate=${offNews.status} badKey=${badKey.status} · ${pages.join(' ')}`,
+  );
+
+  // ── S4.15 (S4 follow-up) the phone menu: SSR contract (keyboard / screen reader: browser probe) ─
+  const menuHtml = await html('/games');
+  const burger = (menuHtml.match(/<button[^>]*class="gk-burger"[^>]*>/) ?? [''])[0];
+  const panelOf = (h) => {
+    const i = h.indexOf('id="gk-mobilemenu"');
+    if (i < 0) return '';
+    const from = h.lastIndexOf('<div', i);
+    const navEnd = h.indexOf('</nav>', i);
+    return navEnd > 0 ? h.slice(from, h.indexOf('</div>', navEnd) + 6) : '';
+  };
+  const panel = panelOf(menuHtml);
+  const panelTag = panel.slice(0, panel.indexOf('>') + 1);
+  const NAV_HREFS = [
+    '/',
+    '/games',
+    '/topics',
+    '/upcoming',
+    '/awards',
+    '/lists',
+    '/sources',
+    '/feed',
+  ];
+  const menuHrefs = [...panel.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]);
+  const anchorTags = [...panel.matchAll(/<a [^>]*>/g)].map((m) => m[0]);
+  const currentGames = anchorTags.some(
+    (a) => a.includes('href="/games"') && a.includes('aria-current="page"'),
+  );
+  const searchForm = (panel.match(/<form[^>]*>/) ?? [''])[0];
+  const navOff = await rulesPatch({ editorialLists: { showInNav: false } });
+  const panelNoLists = panelOf(await html('/games'));
+  await rulesPatch({
+    editorialLists: { showInNav: s4Restore.rules.editorialLists.showInNav ?? true },
+  });
+  check(
+    'S4.15 (S4 follow-up) the phone menu button is real: "Menu" with aria-expanded="false" + aria-controls on a hidden panel that holds a labelled search form (GET /search), the main navigation ("Main menu", every section, the current one marked) and the account area; the Lists entry follows its admin rule; the old decorative button is gone; no anchor inside an anchor',
+    burger.includes('aria-label="Menu"') &&
+      burger.includes('aria-expanded="false"') &&
+      burger.includes('aria-controls="gk-mobilemenu"') &&
+      /\shidden(=""|\s|>)/.test(panelTag) &&
+      searchForm.includes('role="search"') &&
+      searchForm.includes('action="/search"') &&
+      panel.includes('for="gk-mobilemenu-q"') &&
+      panel.includes('aria-label="Main menu"') &&
+      NAV_HREFS.every((h) => menuHrefs.includes(h)) &&
+      currentGames &&
+      navOff.status === 200 &&
+      !panelNoLists.includes('href="/lists"') &&
+      panelNoLists.includes('href="/games"') &&
+      !menuHtml.includes('aria-label="Open menu"') &&
+      maxAnchorDepth(menuHtml) <= 1,
+    `button=${burger.length > 0} panel=${panel.length > 0} tag=${panelTag.slice(0, 60)} hrefs=[${menuHrefs.join(',')}] current=${currentGames} form=${searchForm} · lists off=${navOff.status} → ${panelNoLists.includes('href="/lists"')} · old=${menuHtml.includes('aria-label="Open menu"')} depth=${maxAnchorDepth(menuHtml)}`,
   );
 }
 

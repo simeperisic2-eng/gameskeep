@@ -1,6 +1,7 @@
 import { NavLinks } from './NavLinks';
 import { HeaderAuth } from './HeaderAuth';
 import { HeaderSearch } from './HeaderSearch';
+import { MobileMenu } from './MobileMenu';
 import { siteText, type PublicSite } from '@/lib/site';
 
 function SearchIcon(): React.JSX.Element {
@@ -47,16 +48,7 @@ export function SiteHeader({ site }: { site: PublicSite }): React.JSX.Element {
             <SearchIcon />
           </a>
           <HeaderAuth />
-          <button className="gk-burger" type="button" aria-label="Open menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M4 7h16M4 12h16M4 17h16"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+          <MobileMenu />
         </div>
       </div>
     </header>

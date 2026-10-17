@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiPost, resetCsrf } from '@/lib/client';
 import { safeNext } from '@/lib/nav';
+import { refreshMe } from '@/lib/me-store';
 
 /** Auth forms (SPEC I6, Slice 8) — thin clients over the same-origin auth BFF. */
 
@@ -46,6 +47,8 @@ export function LoginForm(): React.JSX.Element {
     setBusy(false);
     if (r.ok) {
       resetCsrf();
+      // The header (pill + phone menu) stays mounted across client navigations — re-read who is signed in.
+      void refreshMe(true);
       // Read ?next at submit-time (client) so this form has NO useSearchParams and
       // renders server-side immediately — no "Loading…" flash on first paint.
       // safeNext() rejects off-site targets (open-redirect guard, review #3).
@@ -175,7 +178,10 @@ export function VerifyEmail(): React.JSX.Element {
     }
     apiPost('/api/auth/verify-email', { token }).then((r) => {
       setState(r.ok ? 'ok' : 'bad');
-      if (r.ok) resetCsrf();
+      if (r.ok) {
+        resetCsrf();
+        void refreshMe(true);
+      }
     });
   }, [token]);
 

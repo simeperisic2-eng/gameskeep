@@ -149,8 +149,9 @@ export interface HomepageSectionItem {
   /** An editorial pin — never paid, never labeled. */
   pinned: boolean;
   /**
-   * A PAID insert (any section — owner decision). The label is render-forced:
-   * "Promoted" for a game, "Sponsored" for a story. Organic entries: null.
+   * A PAID insert (any section — owner decision). The label is render-forced and
+   * always "Promoted" (game or story — "Sponsored" is the outlet's own signal).
+   * Organic entries: null.
    */
   paid: PaidInfo | null;
   delta: Delta | null;
@@ -1029,7 +1030,7 @@ export interface AdPlacementView {
   ctaUrl: string | null;
   ctaLabel: string | null;
   advertiser: string;
-  /** What is promoted (drives the label: story → "Sponsored", else "Promoted"). */
+  /** What is promoted (the label is "Promoted" either way). */
   game: { slug: string; name: string } | null;
   story: { slug: string; title: string } | null;
 }

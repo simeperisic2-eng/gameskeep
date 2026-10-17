@@ -574,7 +574,7 @@ export type UnmatchedStatus = (typeof UNMATCHED_STATUSES)[number];
  * Section kinds — an INFORMATIONAL label since the owner decision that any list
  * may carry paid placements (data = ranked from our data; discovery = curated
  * discovery; block = no items). What stays fixed in code: every paid item carries
- * the render-forced label ("Promoted" game / "Sponsored" story), and payment
+ * the render-forced label (always "Promoted"), and payment
  * never changes data (paid items are inserted; the organic list is untouched).
  */
 export const HOMEPAGE_SECTION_KINDS = ['data', 'discovery', 'block'] as const;

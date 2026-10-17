@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiPost, fetchMe, resetCsrf, type MeUser } from '@/lib/client';
+import { signOutMe, useMe } from '@/lib/me-store';
 
 /**
  * Header auth affordance (SPEC I6, Slice 8): a signed-out visitor sees "Sign in";
@@ -12,13 +12,9 @@ import { apiPost, fetchMe, resetCsrf, type MeUser } from '@/lib/client';
  */
 export function HeaderAuth(): React.JSX.Element {
   const router = useRouter();
-  const [me, setMe] = useState<MeUser | null | undefined>(undefined);
+  const me = useMe();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetchMe().then(setMe);
-  }, []);
 
   useEffect(() => {
     const onClick = (e: MouseEvent): void => {
@@ -29,9 +25,7 @@ export function HeaderAuth(): React.JSX.Element {
   }, []);
 
   async function signOut(): Promise<void> {
-    await apiPost('/api/auth/logout');
-    resetCsrf();
-    setMe(null);
+    await signOutMe();
     setOpen(false);
     router.push('/');
     router.refresh();
